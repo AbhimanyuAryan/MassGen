@@ -1,0 +1,162 @@
+{
+  "agent2.1": {
+    "type": "answer",
+    "label": "agent2.1",
+    "agent_id": "agent_2",
+    "timestamp": "20251026_001753_545903",
+    "iteration": 12,
+    "round": 0,
+    "path": "agent_2/20251026_001753_545903/answer.txt"
+  },
+  "agent3.1": {
+    "type": "answer",
+    "label": "agent3.1",
+    "agent_id": "agent_3",
+    "timestamp": "20251026_001753_663463",
+    "iteration": 16,
+    "round": 0,
+    "path": "agent_3/20251026_001753_663463/answer.txt"
+  },
+  "agent5.1": {
+    "type": "answer",
+    "label": "agent5.1",
+    "agent_id": "agent_5",
+    "timestamp": "20251026_001753_705061",
+    "iteration": 19,
+    "round": 0,
+    "path": "agent_5/20251026_001753_705061/answer.txt"
+  },
+  "agent4.1": {
+    "type": "answer",
+    "label": "agent4.1",
+    "agent_id": "agent_4",
+    "timestamp": "20251026_001755_527148",
+    "iteration": 32,
+    "round": 0,
+    "path": "agent_4/20251026_001755_527148/answer.txt"
+  },
+  "agent4.vote1": {
+    "type": "vote",
+    "label": "agent4.vote1",
+    "agent_id": "agent_4",
+    "timestamp": "20251026_001850_950657",
+    "voted_for": "agent_2",
+    "voted_for_label": "agent2.1",
+    "iteration": 42,
+    "round": 1,
+    "path": "agent_4/20251026_001850_950657/vote.json"
+  },
+  "agent1.1": {
+    "type": "answer",
+    "label": "agent1.1",
+    "agent_id": "agent_1",
+    "timestamp": "20251026_001850_959416",
+    "iteration": 44,
+    "round": 0,
+    "path": "agent_1/20251026_001850_959416/answer.txt"
+  },
+  "agent7.1": {
+    "type": "answer",
+    "label": "agent7.1",
+    "agent_id": "agent_7",
+    "timestamp": "20251026_001851_062405",
+    "iteration": 57,
+    "round": 0,
+    "path": "agent_7/20251026_001851_062405/answer.txt"
+  },
+  "agent6.1": {
+    "type": "answer",
+    "label": "agent6.1",
+    "agent_id": "agent_6",
+    "timestamp": "20251026_001851_089714",
+    "iteration": 61,
+    "round": 0,
+    "path": "agent_6/20251026_001851_089714/answer.txt"
+  },
+  "agent4.vote2": {
+    "type": "vote",
+    "label": "agent4.vote2",
+    "agent_id": "agent_4",
+    "timestamp": "20251026_001950_923869",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 89,
+    "round": 3,
+    "path": "agent_4/20251026_001950_923869/vote.json"
+  },
+  "agent3.vote1": {
+    "type": "vote",
+    "label": "agent3.vote1",
+    "agent_id": "agent_3",
+    "timestamp": "20251026_001950_928088",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 90,
+    "round": 3,
+    "path": "agent_3/20251026_001950_928088/vote.json"
+  },
+  "agent2.vote1": {
+    "type": "vote",
+    "label": "agent2.vote1",
+    "agent_id": "agent_2",
+    "timestamp": "20251026_001950_931121",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 90,
+    "round": 3,
+    "path": "agent_2/20251026_001950_931121/vote.json"
+  },
+  "agent5.vote1": {
+    "type": "vote",
+    "label": "agent5.vote1",
+    "agent_id": "agent_5",
+    "timestamp": "20251026_001950_933613",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 90,
+    "round": 3,
+    "path": "agent_5/20251026_001950_933613/vote.json"
+  },
+  "agent6.vote1": {
+    "type": "vote",
+    "label": "agent6.vote1",
+    "agent_id": "agent_6",
+    "timestamp": "20251026_001950_948316",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 91,
+    "round": 1,
+    "path": "agent_6/20251026_001950_948316/vote.json"
+  },
+  "agent1.vote1": {
+    "type": "vote",
+    "label": "agent1.vote1",
+    "agent_id": "agent_1",
+    "timestamp": "20251026_001956_644254",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 97,
+    "round": 2,
+    "path": "agent_1/20251026_001956_644254/vote.json"
+  },
+  "agent7.vote1": {
+    "type": "vote",
+    "label": "agent7.vote1",
+    "agent_id": "agent_7",
+    "timestamp": "20251026_002000_902518",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 104,
+    "round": 2,
+    "path": "agent_7/20251026_002000_902518/vote.json"
+  },
+  "agent6.final": {
+    "type": "final_answer",
+    "label": "agent6.final",
+    "agent_id": "agent_6",
+    "timestamp": "final",
+    "iteration": 155,
+    "round": 5,
+    "path": "final/agent_6/answer.txt"
+  }
+}

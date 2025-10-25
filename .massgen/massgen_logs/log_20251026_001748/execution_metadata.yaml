@@ -1,0 +1,74 @@
+query: France has had a lot of capital in past. Which one is the most popular and
+  why?
+timestamp: '2025-10-26T00:17:50.788689'
+config_path: test_7_gemini_agents.yaml
+config:
+  agents:
+  - id: agent_1
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.7
+  - id: agent_2
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.8
+  - id: agent_3
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.9
+  - id: agent_4
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.6
+  - id: agent_5
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.5
+  - id: agent_6
+    backend:
+      type: gemini
+      model: gemini-2.5-pro
+      temperature: 0.7
+  - id: agent_7
+    backend:
+      type: gemini
+      model: gemini-2.5-pro
+      temperature: 0.8
+  orchestrator:
+    max_duration: 600
+    consensus_threshold: 0.6
+    max_debate_rounds: 2
+  ui:
+    display_type: rich_terminal
+    logging_enabled: true
+cli_args:
+  question: France has had a lot of capital in past. Which one is the most popular
+    and why?
+  config: test_7_gemini_agents.yaml
+  select: false
+  backend: null
+  model: null
+  system_message: null
+  base_url: null
+  no_display: false
+  no_logs: false
+  debug: false
+  init: false
+  setup: false
+  list_examples: false
+  example: null
+  show_schema: false
+  schema_backend: null
+  with_examples: false
+  orchestrator_timeout: null
+git:
+  commit: e1e7d686bd520db0f3e2609748df19d08bbfa362
+  branch: rate-limit-gemini
+python_version: 3.11.7 (main, Jan 13 2024, 14:28:47) [Clang 15.0.0 (clang-1500.1.0.2.5)]
+massgen_version: 0.1.1
+working_directory: /Users/abhi/Git/MassGen

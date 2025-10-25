@@ -1,0 +1,43 @@
+{
+  "voter_id": "agent_2",
+  "voter_anon_id": "agent2",
+  "voted_for": "agent_6",
+  "voted_for_anon": "agent6",
+  "reason": "Agent 6 provides a comprehensive answer, correctly identifying Paris as the most popular capital and offering strong reasons. It also effectively addresses the 'France has had a lot of capital in past' aspect by detailing other notable historical and temporary capitals, which adds valuable context and fully satisfies the prompt.",
+  "timestamp": "20251026_001950_931121",
+  "unix_timestamp": 1761434390.931207,
+  "iteration": 90,
+  "coordination_round": 3,
+  "available_options": [
+    "agent_1",
+    "agent_2",
+    "agent_3",
+    "agent_4",
+    "agent_5",
+    "agent_6",
+    "agent_7"
+  ],
+  "available_options_anon": [
+    "agent1",
+    "agent2",
+    "agent3",
+    "agent4",
+    "agent5",
+    "agent6",
+    "agent7"
+  ],
+  "agent_mapping": {
+    "agent1": "agent_1",
+    "agent2": "agent_2",
+    "agent3": "agent_3",
+    "agent4": "agent_4",
+    "agent5": "agent_5",
+    "agent6": "agent_6",
+    "agent7": "agent_7"
+  },
+  "vote_context": {
+    "total_agents": 7,
+    "agents_with_answers": 7,
+    "current_task": "France has had a lot of capital in past. Which one is the most popular and why?"
+  }
+}

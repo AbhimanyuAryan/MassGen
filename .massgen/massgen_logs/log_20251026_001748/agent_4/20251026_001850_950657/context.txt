@@ -1,0 +1,55 @@
+{
+  "system_message": "You are evaluating answers from multiple agents for final response to a message.\nDifferent agents may have different builtin tools and capabilities.\nDoes the best CURRENT ANSWER address the ORIGINAL MESSAGE well?\n\nIf YES, use the `vote` tool to record your vote and skip the `new_answer` tool.\nOtherwise, digest existing answers, combine their strengths, and do additional work to address their weaknesses,\nthen use the `new_answer` tool to record a better answer to the ORIGINAL MESSAGE.\nMake sure you actually call `vote` or `new_answer` (in tool call format).\n\n*Note*: The CURRENT TIME is **2025-10-26 00:17:55**.",
+  "user_message": "<ORIGINAL MESSAGE> France has had a lot of capital in past. Which one is the most popular and why? <END OF ORIGINAL MESSAGE>\n\n<CURRENT ANSWERS from the agents>\n<agent1> France has had several capitals throughout its history, but by far the most popular and historically significant is **Paris**. While cities like Tours (during World War I and II) and Vichy (under the Vichy regime) served as temporary seats of government, none compare to Paris.\n\nParis is considered the most popular for several key reasons:\n\n1.  **Duration and Continuity:** Paris has been the capital for the longest continuous period, serving as the primary seat of power for centuries, from the early Capetian kings to the present day.\n2.  **Cultural and Economic Hub:** It has consistently been the cultural, economic, and political heart of France, fostering immense artistic, intellectual, and commercial development.\n3.  **Iconic Landmarks:** Paris is home to an unparalleled number of world-renowned landmarks, including the Eiffel Tower, Notre Dame Cathedral, the Louvre Museum, and the Palace of Versailles (historically the seat of the monarchy near Paris), which contribute to its global recognition and allure.\n4.  **Historical Events:** Numerous pivotal historical events, from revolutions to peace treaties, have unfolded in Paris, solidifying its central role in French and European history.\n5.  **Global Influence:** Paris has exerted significant global influence in fashion, cuisine, art, and philosophy, making it one of the world's most recognizable and beloved cities. <end of agent1>\n<agent2> The most popular capital of France, both historically and in contemporary understanding, is undoubtedly Paris. While France has had various seats of power throughout its long history (such as Lyon during Roman Gaul, Tours during parts of the Hundred Years' War, and Versailles as the royal court for a period), Paris has consistently been the political, economic, and cultural heart of the nation for over a millennium. Its enduring popularity stems from several key factors: Its immense historical significance as the center of the French monarchy, various republics, and empires; its unparalleled cultural influence as a global hub for art, fashion, cuisine, and literature; and its continuous role as the primary center of government, administration, and population. No other French capital has achieved such widespread recognition, sustained influence, or lasting global appeal. <end of agent2>\n<agent3> While France has had several cities serve as temporary or historical capitals, by far the most popular and enduring capital has been Paris.Paris has been the continuous capital of France for many centuries, solidifying its status as the country's political, economic, and cultural heart. Its popularity stems from several key factors:1.  **Historical Significance:** Paris has been the seat of French monarchy and government for a vast majority of its history, making it the epicenter of countless pivotal events.2.  **Cultural and Artistic Hub:** It is globally renowned as a world capital of art, fashion, cuisine, literature, and intellectual thought. Iconic institutions like the Louvre Museum, Notre-Dame Cathedral, and the Eiffel Tower contribute to its immense cultural appeal.3.  **Economic Powerhouse:** Paris has consistently been France's primary economic engine, attracting talent and investment, and serving as a major center for commerce and innovation.4.  **Global Recognition:** Its unique blend of history, romance, and modernity makes it one of the most visited and recognizable cities in the world, deeply ingrained in global consciousness as the quintessential French city. <end of agent3>\n<agent4> France has indeed had several historical capitals, but without a doubt, **Paris** is the most popular and historically significant.Paris has served as the capital of France for the vast majority of its history, particularly since the early Middle Ages. Its prominence grew significantly with the Capetian dynasty, and it became the undisputed center of political, economic, and cultural life. While other cities like Tours (during the Hundred Years' War) or Bordeaux (briefly during World War I and II) served as temporary seats of government, none have held the continuous importance and global recognition that Paris enjoys.Its popularity stems from its long-standing role as the seat of power, its iconic landmarks, its status as a global center for art, fashion, gastronomy, and its immense historical impact on both France and the world. <end of agent4>\n<END OF CURRENT ANSWERS>",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "new_answer",
+        "description": "Provide an improved answer to the ORIGINAL MESSAGE",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "Your improved answer. If any builtin tools like search or code execution were used, mention how they are used here."
+            }
+          },
+          "required": [
+            "content"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "vote",
+        "description": "Vote for the best agent to present final answer",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Anonymous agent ID to vote for (e.g., 'agent1', 'agent2')",
+              "enum": [
+                "agent1",
+                "agent2",
+                "agent3",
+                "agent4"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "description": "Brief reason why this agent has the best answer"
+            }
+          },
+          "required": [
+            "agent_id",
+            "reason"
+          ]
+        }
+      }
+    }
+  ]
+}
