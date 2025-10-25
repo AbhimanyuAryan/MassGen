@@ -1,0 +1,151 @@
+{
+  "agent5.1": {
+    "type": "answer",
+    "label": "agent5.1",
+    "agent_id": "agent_5",
+    "timestamp": "20251025_225516_026946",
+    "iteration": 9,
+    "round": 0,
+    "path": "agent_5/20251025_225516_026946/answer.txt"
+  },
+  "agent1.1": {
+    "type": "answer",
+    "label": "agent1.1",
+    "agent_id": "agent_1",
+    "timestamp": "20251025_225516_091756",
+    "iteration": 12,
+    "round": 0,
+    "path": "agent_1/20251025_225516_091756/answer.txt"
+  },
+  "agent4.1": {
+    "type": "answer",
+    "label": "agent4.1",
+    "agent_id": "agent_4",
+    "timestamp": "20251025_225516_865116",
+    "iteration": 17,
+    "round": 0,
+    "path": "agent_4/20251025_225516_865116/answer.txt"
+  },
+  "agent2.1": {
+    "type": "answer",
+    "label": "agent2.1",
+    "agent_id": "agent_2",
+    "timestamp": "20251025_225517_653523",
+    "iteration": 22,
+    "round": 0,
+    "path": "agent_2/20251025_225517_653523/answer.txt"
+  },
+  "agent3.1": {
+    "type": "answer",
+    "label": "agent3.1",
+    "agent_id": "agent_3",
+    "timestamp": "20251025_225613_429136",
+    "iteration": 31,
+    "round": 0,
+    "path": "agent_3/20251025_225613_429136/answer.txt"
+  },
+  "agent7.1": {
+    "type": "answer",
+    "label": "agent7.1",
+    "agent_id": "agent_7",
+    "timestamp": "20251025_225613_723293",
+    "iteration": 46,
+    "round": 0,
+    "path": "agent_7/20251025_225613_723293/answer.txt"
+  },
+  "agent6.1": {
+    "type": "answer",
+    "label": "agent6.1",
+    "agent_id": "agent_6",
+    "timestamp": "20251025_225613_798892",
+    "iteration": 55,
+    "round": 0,
+    "path": "agent_6/20251025_225613_798892/answer.txt"
+  },
+  "agent6.vote1": {
+    "type": "vote",
+    "label": "agent6.vote1",
+    "agent_id": "agent_6",
+    "timestamp": "20251025_225618_931289",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 83,
+    "round": 1,
+    "path": "agent_6/20251025_225618_931289/vote.json"
+  },
+  "agent3.vote1": {
+    "type": "vote",
+    "label": "agent3.vote1",
+    "agent_id": "agent_3",
+    "timestamp": "20251025_225713_824667",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 95,
+    "round": 2,
+    "path": "agent_3/20251025_225713_824667/vote.json"
+  },
+  "agent5.vote1": {
+    "type": "vote",
+    "label": "agent5.vote1",
+    "agent_id": "agent_5",
+    "timestamp": "20251025_225713_830703",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 95,
+    "round": 3,
+    "path": "agent_5/20251025_225713_830703/vote.json"
+  },
+  "agent4.vote1": {
+    "type": "vote",
+    "label": "agent4.vote1",
+    "agent_id": "agent_4",
+    "timestamp": "20251025_225713_836390",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 95,
+    "round": 3,
+    "path": "agent_4/20251025_225713_836390/vote.json"
+  },
+  "agent2.vote1": {
+    "type": "vote",
+    "label": "agent2.vote1",
+    "agent_id": "agent_2",
+    "timestamp": "20251025_225713_841841",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 95,
+    "round": 3,
+    "path": "agent_2/20251025_225713_841841/vote.json"
+  },
+  "agent7.vote1": {
+    "type": "vote",
+    "label": "agent7.vote1",
+    "agent_id": "agent_7",
+    "timestamp": "20251025_225721_932134",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 102,
+    "round": 2,
+    "path": "agent_7/20251025_225721_932134/vote.json"
+  },
+  "agent1.vote1": {
+    "type": "vote",
+    "label": "agent1.vote1",
+    "agent_id": "agent_1",
+    "timestamp": "20251025_230832_025503",
+    "voted_for": "agent_6",
+    "voted_for_label": "agent6.1",
+    "iteration": 111,
+    "round": 3,
+    "path": "agent_1/20251025_230832_025503/vote.json"
+  },
+  "agent6.final": {
+    "type": "final_answer",
+    "label": "agent6.final",
+    "agent_id": "agent_6",
+    "timestamp": "final",
+    "iteration": 169,
+    "round": 5,
+    "path": "final/agent_6/answer.txt"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "system_message": "You are evaluating answers from multiple agents for final response to a message.\nDifferent agents may have different builtin tools and capabilities.\nDoes the best CURRENT ANSWER address the ORIGINAL MESSAGE well?\n\nIf YES, use the `vote` tool to record your vote and skip the `new_answer` tool.\nOtherwise, digest existing answers, combine their strengths, and do additional work to address their weaknesses,\nthen use the `new_answer` tool to record a better answer to the ORIGINAL MESSAGE.\nMake sure you actually call `vote` or `new_answer` (in tool call format).\n\n*Note*: The CURRENT TIME is **2025-10-25 22:55:13**.",
+  "user_message": "<ORIGINAL MESSAGE> France has changed it's capital multiple times in history. Which capital was most recognised and loved by French historically? <END OF ORIGINAL MESSAGE>\n\n<CURRENT ANSWERS from the agents>\n(no answers available yet)\n<END OF CURRENT ANSWERS>",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "new_answer",
+        "description": "Provide an improved answer to the ORIGINAL MESSAGE",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "Your improved answer. If any builtin tools like search or code execution were used, mention how they are used here."
+            }
+          },
+          "required": [
+            "content"
+          ]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "vote",
+        "description": "Vote for the best agent to present final answer",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "description": "Anonymous agent ID to vote for (e.g., 'agent1', 'agent2')"
+            },
+            "reason": {
+              "type": "string",
+              "description": "Brief reason why this agent has the best answer"
+            }
+          },
+          "required": [
+            "agent_id",
+            "reason"
+          ]
+        }
+      }
+    }
+  ]
+}

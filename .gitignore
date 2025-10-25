@@ -155,8 +155,8 @@ Thumbs.db
 # MassGen specific files
 backends/.env
 swarm/.env
-*.log
-*logs/
+#*.log
+#*logs/
 bandit-report.json
 traces/
 summaries/
@@ -207,7 +207,7 @@ uv.lock
 
 
 # Filesystem
-.massgen/
+#.massgen/
 claude_code_workspace*/
 claude_code*/
 

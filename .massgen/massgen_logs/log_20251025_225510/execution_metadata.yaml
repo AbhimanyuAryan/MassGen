@@ -1,0 +1,74 @@
+query: France has changed it's capital multiple times in history. Which capital was
+  most recognised and loved by French historically?
+timestamp: '2025-10-25T22:55:13.162640'
+config_path: test_7_gemini_agents.yaml
+config:
+  agents:
+  - id: agent_1
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.7
+  - id: agent_2
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.8
+  - id: agent_3
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.9
+  - id: agent_4
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.6
+  - id: agent_5
+    backend:
+      type: gemini
+      model: gemini-2.5-flash
+      temperature: 0.5
+  - id: agent_6
+    backend:
+      type: gemini
+      model: gemini-2.5-pro
+      temperature: 0.7
+  - id: agent_7
+    backend:
+      type: gemini
+      model: gemini-2.5-pro
+      temperature: 0.8
+  orchestrator:
+    max_duration: 600
+    consensus_threshold: 0.6
+    max_debate_rounds: 2
+  ui:
+    display_type: rich_terminal
+    logging_enabled: true
+cli_args:
+  question: France has changed it's capital multiple times in history. Which capital
+    was most recognised and loved by French historically?
+  config: test_7_gemini_agents.yaml
+  select: false
+  backend: null
+  model: null
+  system_message: null
+  base_url: null
+  no_display: false
+  no_logs: false
+  debug: false
+  init: false
+  setup: false
+  list_examples: false
+  example: null
+  show_schema: false
+  schema_backend: null
+  with_examples: false
+  orchestrator_timeout: null
+git:
+  commit: e1e7d686bd520db0f3e2609748df19d08bbfa362
+  branch: rate-limit-gemini
+python_version: 3.13.9 (main, Oct 14 2025, 21:22:32) [MSC v.1944 64 bit (AMD64)]
+massgen_version: 0.1.1
+working_directory: D:\MassGen
