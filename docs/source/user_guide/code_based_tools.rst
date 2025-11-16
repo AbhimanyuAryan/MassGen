@@ -111,7 +111,7 @@ Custom tools in ``massgen/tool/`` include ``TOOL.md`` files with YAML frontmatte
 API Key Management
 ~~~~~~~~~~~~~~~~~~
 
-MassGen uses ``.env`` files for API key management. Keys are automatically passed to Docker containers:
+MassGen uses ``.env`` files for API key management. Keys must be explicitly configured to be passed to Docker containers.
 
 **1. Create .env file in project root:**
 
@@ -123,13 +123,55 @@ MassGen uses ``.env`` files for API key management. Keys are automatically passe
    GOOGLE_API_KEY=...
    GEMINI_API_KEY=...
 
-**2. Check which tools require which keys:**
+See ``.env.example`` in the project root for a template of all supported API keys.
+
+**2. Configure Docker to pass API keys:**
+
+When using ``command_line_execution_mode: docker``, you **must** configure credentials to pass API keys:
+
+.. code-block:: yaml
+
+   backend:
+     enable_code_based_tools: true
+     enable_mcp_command_line: true
+     command_line_execution_mode: "docker"
+
+     # IMPORTANT: Pass API keys to Docker
+     command_line_docker_credentials:
+       env_file: ".env"  # Load from .env file
+       env_vars_from_file:
+         - "OPENAI_API_KEY"
+         - "ANTHROPIC_API_KEY"
+         - "GOOGLE_API_KEY"
+         - "GEMINI_API_KEY"
+
+**Without this configuration**, custom tools requiring API keys will fail inside Docker containers.
+
+**Alternative approaches:**
+
+.. code-block:: yaml
+
+   # Option A: Load ALL variables from .env (simpler, less secure)
+   command_line_docker_credentials:
+     env_file: ".env"
+
+   # Option B: Pass specific vars from host environment
+   command_line_docker_credentials:
+     env_vars:
+       - "OPENAI_API_KEY"
+       - "ANTHROPIC_API_KEY"
+
+   # Option C: Dangerous - pass ALL host env vars (NOT RECOMMENDED)
+   command_line_docker_credentials:
+     pass_all_env: true
+
+**3. Check which tools require which keys:**
 
 .. code-block:: bash
 
    rg "^requires_api_keys:" massgen/tool/*/TOOL.md
 
-**3. Filter tools by available API keys:**
+**4. Filter tools by available API keys:**
 
 .. code-block:: bash
 
@@ -142,13 +184,37 @@ MassGen uses ``.env`` files for API key management. Keys are automatically passe
    # Find tools that need no API keys
    rg "^requires_api_keys: \[\]" massgen/tool/*/TOOL.md -l
 
-**Environment variables are automatically:**
+.. note::
 
-* Loaded from ``.env`` file in project root
-* Passed to Docker containers when ``command_line_execution_mode: docker``
-* Available to all tools and MCP servers
+   **For local execution mode** (``command_line_execution_mode: local``), environment variables from your shell are automatically available. You only need to configure ``command_line_docker_credentials`` when using Docker.
 
-See ``.env.example`` in the project root for a template of all supported API keys.
+**Automatic Tool Exclusion:**
+
+MassGen automatically excludes tools based on unavailable API keys to prevent runtime failures:
+
+* When you configure ``command_line_docker_credentials``, MassGen reads the ``requires_api_keys`` field from each tool's TOOL.md
+* Tools requiring API keys not listed in your credentials configuration are automatically excluded
+* Excluded tools won't be copied to your workspace and won't appear in tool listings
+* Exclusion is logged during setup: ``"Excluding tool_name: missing API keys: KEY_NAME"``
+
+**Example:**
+
+.. code-block:: yaml
+
+   # Only configure OpenAI key
+   command_line_docker_credentials:
+     env_file: ".env"
+     env_vars_from_file:
+       - "OPENAI_API_KEY"  # Only this key
+
+**Result:**
+- ``_multimodal_tools`` (requires ``OPENAI_API_KEY``) → ✅ **Available**
+- ``_computer_use`` (requires ``OPENAI_API_KEY``) → ✅ **Available**
+- ``_claude_computer_use`` (requires ``ANTHROPIC_API_KEY``) → ❌ **Excluded** (missing key)
+- ``_gemini_computer_use`` (requires ``GOOGLE_API_KEY``) → ❌ **Excluded** (missing key)
+- ``_web_tools`` (requires no API keys: ``[]``) → ✅ **Available**
+
+You can override or supplement automatic exclusion with manual ``exclude_custom_tools`` configuration.
 
 Configuration
 -------------
@@ -186,13 +252,29 @@ If you have existing Python tools you want visible in the workspace:
 
    backend:
      enable_code_based_tools: true
-     custom_tools_path: "path/to/your/custom_tools"  # Copied to workspace/custom_tools/
+     custom_tools_path: "massgen/tool/_code_based_example"  # Copied to workspace/custom_tools/
+     enable_mcp_command_line: true
+     command_line_execution_mode: "docker"
+
+     # IMPORTANT: Most custom tools require API keys
+     command_line_docker_credentials:
+       env_file: ".env"
+       env_vars_from_file:
+         - "OPENAI_API_KEY"
+         - "ANTHROPIC_API_KEY"
+         - "GOOGLE_API_KEY"
 
      mcp_servers:
        - name: "weather"
          # ... MCP config
 
 Your custom tools directory will be copied into ``workspace/custom_tools/`` where agents can read and use them.
+
+.. note::
+
+   **Automatic Tool Filtering**: When using Docker execution mode, MassGen automatically excludes custom tools whose required API keys are not configured in ``command_line_docker_credentials``. For example, if you only configure ``OPENAI_API_KEY``, tools requiring ``ANTHROPIC_API_KEY`` will be automatically excluded and won't appear in your workspace.
+
+   Use ``rg "^requires_api_keys:" massgen/tool/*/TOOL.md`` to check which tools need which API keys.
 
 Agent Usage Patterns
 --------------------
@@ -229,6 +311,10 @@ Custom tools include TOOL.md files with searchable YAML frontmatter:
 
    # Read full documentation
    cat custom_tools/TOOL.md
+
+.. important::
+
+   **Docker Users**: If tools show ``requires_api_keys: [OPENAI_API_KEY]`` or similar, you must configure ``command_line_docker_credentials`` in your YAML to pass API keys to Docker containers. See the API Key Management section above for details.
 
 **MCP Tools (Filesystem Discovery)**
 
@@ -547,6 +633,26 @@ Since agents have command-line access, file operations can use standard tools (`
      exclude_file_operation_mcps: true  # Use CLI for file operations
 
 This reduces tool overhead and simplifies the environment.
+
+.. important::
+
+   **File Creation Tools Kept:** When ``exclude_file_operation_mcps: true`` is set, ``write_file`` and ``edit_file`` are **still available** as MCP tools. This is intentional:
+
+   * **Avoids shell escaping nightmares** - Creating Python scripts with heredocs/echo leads to complex escaping issues
+   * **Clean file creation** - Use ``write_file`` to create ``.py`` files, then execute via command-line
+   * **Best of both worlds** - Write files via MCP, read/list via command-line
+
+   Example of the problem this solves:
+
+   .. code-block:: bash
+
+      # Shell approach (FAILS with escaping issues):
+      echo 'async def main():\n    result = await func("text with \"quotes\"")\n' > script.py
+
+      # MCP approach (WORKS cleanly):
+      mcp__filesystem__write_file(path="script.py", content="async def main():\n    ...")
+
+   All other filesystem tools (read, list, search, etc.) are excluded and should use command-line equivalents.
 
 Complete Example Config
 ------------------------

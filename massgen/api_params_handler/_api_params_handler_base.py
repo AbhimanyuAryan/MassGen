@@ -81,6 +81,7 @@ class APIParamsHandlerBase(ABC):
             "enable_code_based_tools",
             "custom_tools_path",
             "auto_discover_custom_tools",
+            "exclude_custom_tools",
             "shared_tools_directory",
             # Backend identification (handled by orchestrator)
             "type",

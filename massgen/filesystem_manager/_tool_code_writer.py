@@ -46,6 +46,7 @@ class ToolCodeWriter:
         workspace_path: Path,
         mcp_servers: List[Dict[str, Any]],
         custom_tools_path: Optional[Path] = None,
+        exclude_custom_tools: Optional[List[str]] = None,
     ) -> None:
         """Set up complete code-based tools directory structure.
 
@@ -53,13 +54,15 @@ class ToolCodeWriter:
             workspace_path: Path to agent workspace
             mcp_servers: List of MCP server configurations
             custom_tools_path: Optional path to custom tools directory to copy
+            exclude_custom_tools: Optional list of directory names to exclude when copying custom tools
 
         Example:
             >>> writer = ToolCodeWriter()
             >>> writer.setup_code_based_tools(
             ...     Path("workspace"),
             ...     [{"name": "weather", "tools": [...]}],
-            ...     Path("my_custom_tools")
+            ...     Path("my_custom_tools"),
+            ...     exclude_custom_tools=["_claude_computer_use"]
             ... )
         """
         workspace_path = Path(workspace_path)
@@ -71,7 +74,7 @@ class ToolCodeWriter:
 
         # Copy custom_tools/ if provided
         if custom_tools_path:
-            self.copy_custom_tools(workspace_path, custom_tools_path)
+            self.copy_custom_tools(workspace_path, custom_tools_path, exclude_custom_tools)
         else:
             # Create empty custom_tools/ with __init__.py
             self.create_empty_custom_tools(workspace_path)
@@ -153,12 +156,14 @@ class ToolCodeWriter:
         self,
         workspace_path: Path,
         custom_tools_path: Path,
+        exclude_custom_tools: Optional[List[str]] = None,
     ) -> None:
         """Copy custom tools directory to workspace.
 
         Args:
             workspace_path: Path to agent workspace
             custom_tools_path: Path to source custom tools directory
+            exclude_custom_tools: Optional list of directory names to exclude (in addition to defaults)
         """
         if not custom_tools_path.exists():
             logger.warning(f"[ToolCodeWriter] Custom tools path does not exist: {custom_tools_path}")
@@ -170,15 +175,21 @@ class ToolCodeWriter:
         if dest_path.exists():
             shutil.rmtree(dest_path)
 
-        # Directories to exclude when copying (internal/example/orchestration tools)
-        excluded_dirs = {
+        # Default directories to exclude (internal/example/orchestration tools)
+        default_excluded_dirs = {
             "workflow_toolkits",  # Orchestration tools (new_answer, vote, post_evaluation)
             "_code_based_example",  # Example tools
             "_basic",  # Basic/deprecated tools
             "_file_handlers",  # Internal file handling utilities
+            "_web_tools",  # Prefer using crawl4ai directly
             "docs",  # Documentation
             "__pycache__",  # Python cache
         }
+
+        # Combine default exclusions with user-specified ones
+        excluded_dirs = default_excluded_dirs.copy()
+        if exclude_custom_tools:
+            excluded_dirs.update(exclude_custom_tools)
 
         def ignore_patterns(_directory, contents):
             """Filter out excluded directories and files."""
@@ -187,12 +198,97 @@ class ToolCodeWriter:
         # Copy directory with filtering
         shutil.copytree(custom_tools_path, dest_path, ignore=ignore_patterns)
 
-        # Ensure __init__.py exists
-        init_file = dest_path / "__init__.py"
-        if not init_file.exists():
-            init_file.write_text('"""Custom tools provided by user."""\n')
+        # Replace ALL __init__.py files with minimal versions
+        # The original __init__.py files auto-import tools, triggering imports before dependencies are ready
+        self._replace_init_files(dest_path)
 
-        logger.info(f"[ToolCodeWriter] Copied custom tools from {custom_tools_path} (excluded: {', '.join(excluded_dirs)})")
+        # Copy required dependencies that tools import
+        self._copy_tool_dependencies(custom_tools_path, dest_path)
+
+        logger.info(f"[ToolCodeWriter] Copied custom tools from {custom_tools_path} (excluded: {', '.join(sorted(excluded_dirs))})")
+
+    def _replace_init_files(self, dest_path: Path) -> None:
+        """Replace all __init__.py files with minimal versions.
+
+        The original __init__.py files from massgen/tool/ auto-import all tools,
+        which triggers imports before massgen dependencies are available.
+        This replaces them with minimal versions that don't auto-import.
+
+        Args:
+            dest_path: Destination custom_tools path
+        """
+        # Replace top-level __init__.py
+        init_file = dest_path / "__init__.py"
+        init_file.write_text('"""Custom tools provided by user."""\n')
+
+        # Replace all subdirectory __init__.py files recursively
+        for init_file in dest_path.rglob("__init__.py"):
+            if init_file != dest_path / "__init__.py":  # Skip top-level (already done)
+                # Get the directory name for the docstring
+                dir_name = init_file.parent.name
+                init_file.write_text(f'"""Tools from {dir_name}."""\n')
+
+        logger.debug("[ToolCodeWriter] Replaced all __init__.py files with minimal versions")
+
+    def _copy_tool_dependencies(self, source_path: Path, dest_path: Path) -> None:
+        """Copy required tool dependencies (_result.py, logger stub).
+
+        Tools in massgen/tool/ import from massgen.tool._result and massgen.logger_config.
+        This copies those dependencies so tools can run standalone.
+
+        Args:
+            source_path: Source custom_tools_path (e.g., massgen/tool)
+            dest_path: Destination custom_tools path in workspace
+        """
+        # Copy _result.py if it exists
+        result_file = source_path / "_result.py"
+        if result_file.exists():
+            shutil.copy2(result_file, dest_path / "_result.py")
+            logger.debug("[ToolCodeWriter] Copied _result.py dependency")
+
+        # Copy _decorators.py if it exists (some tools use @context_params)
+        decorators_file = source_path / "_decorators.py"
+        if decorators_file.exists():
+            shutil.copy2(decorators_file, dest_path / "_decorators.py")
+            logger.debug("[ToolCodeWriter] Copied _decorators.py dependency")
+
+        # Create a minimal logger stub for tools that import from massgen.logger_config
+        # This creates a massgen/ directory with logger_config.py
+        massgen_dir = dest_path.parent / "massgen"
+        massgen_dir.mkdir(exist_ok=True)
+
+        # Create __init__.py
+        (massgen_dir / "__init__.py").write_text("")
+
+        # Create logger_config.py with a simple logger
+        logger_stub = '''"""Minimal logger for standalone custom tools."""
+import logging
+import sys
+
+# Create simple logger
+logger = logging.getLogger("custom_tools")
+logger.setLevel(logging.INFO)
+
+# Add console handler if not already present
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+    logger.addHandler(handler)
+'''
+        (massgen_dir / "logger_config.py").write_text(logger_stub)
+
+        # Create tool/ directory with __init__.py so "from massgen.tool._result" works
+        tool_dir = massgen_dir / "tool"
+        tool_dir.mkdir(exist_ok=True)
+        (tool_dir / "__init__.py").write_text("")
+
+        # Symlink _result.py and _decorators.py into massgen/tool/
+        if result_file.exists():
+            (tool_dir / "_result.py").write_text(result_file.read_text())
+        if decorators_file.exists():
+            (tool_dir / "_decorators.py").write_text(decorators_file.read_text())
+
+        logger.debug("[ToolCodeWriter] Created massgen/ stub directory for imports")
 
     def create_empty_custom_tools(self, workspace_path: Path) -> None:
         """Create empty custom_tools/ directory with __init__.py.

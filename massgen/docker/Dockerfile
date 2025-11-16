@@ -59,13 +59,29 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 WORKDIR /app
 
 # Install Python dependencies
-# Core requirements: pytest for testing
+# Core requirements: pytest for testing, python-dotenv for .env file support
 # Common tools: requests, pandas, numpy for typical data science tasks
+# Custom tool dependencies (massgen/tool/):
+# - openai, anthropic, google-genai: AI SDK packages for multimodal/computer use tools
+# - Pillow: Image processing for _multimodal_tools
+# - opencv-python-headless: Video processing for _video_tools (headless = no GUI deps)
+# - playwright, crawl4ai: Browser automation and web scraping for _browser_automation/_web_tools
 RUN pip install --no-cache-dir \
     'pytest>=7.0.0' \
+    'python-dotenv>=1.0.0' \
     'requests>=2.31.0' \
     'numpy>=1.24.0' \
-    'pandas>=2.0.0'
+    'pandas>=2.0.0' \
+    'openai>=1.0.0' \
+    'anthropic>=0.18.0' \
+    'google-genai>=0.2.0' \
+    'Pillow>=10.0.0' \
+    'opencv-python-headless>=4.8.0' \
+    'playwright>=1.40.0' \
+    'crawl4ai>=0.2.0'
+
+# Install Playwright browsers (chromium for browser automation tools)
+RUN python -m playwright install --with-deps chromium
 
 # Create workspace and context directories
 # These will be mounted as volumes at runtime

@@ -11,6 +11,14 @@
 # - Data filtering (process large datasets before returning)
 # - Shared tools directory (tools generated once, not duplicated in snapshots)
 #
+# Prerequisites:
+# 1. Create .env file with API keys (see .env.example)
+# 2. Docker running (for docker execution mode)
+#
+# IMPORTANT: This example uses auto_discover_custom_tools which includes tools
+# requiring API keys. Ensure you have configured .env and command_line_docker_credentials
+# to pass keys to Docker, otherwise tools will fail with authentication errors.
+#
 # Run with:
 # uv run massgen --automation \
 #   --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
@@ -25,11 +33,25 @@ agents:
 
       # Enable code-based tools (CodeAct paradigm)
       enable_code_based_tools: true          # MCP tools → Python code in servers/
-      exclude_file_operation_mcps: true      # Use command-line for file ops
+      exclude_file_operation_mcps: true      # Use command-line for file ops (write_file/edit_file kept for clean file creation)
       enable_mcp_command_line: true          # Enable execute_command
 
       # Command line execution (required for code-based tools)
       command_line_execution_mode: "docker"
+
+      # IMPORTANT: Pass API keys to Docker (required for most custom tools)
+      # Most tools in massgen/tool/ need API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
+      # Check requirements: rg "^requires_api_keys:" massgen/tool/*/TOOL.md
+      command_line_docker_credentials:
+        env_file: ".env"  # Load from .env file in project root
+        env_vars_from_file:
+          - "OPENAI_API_KEY"
+          - "GOOGLE_API_KEY"
+          - "GEMINI_API_KEY"
+
+      # Alternative: Load ALL env vars from .env (simpler but less secure)
+      # command_line_docker_credentials:
+      #   env_file: ".env"
 
       # Shared tools directory (optional) - tools generated once, shared across agents
       # If not specified, tools are generated in each agent's workspace
@@ -41,6 +63,20 @@ agents:
 
       # Option 2: Specify custom path (takes precedence over auto_discover)
       # custom_tools_path: "massgen/tool/_code_based_example"
+
+      # Exclude specific custom tools (optional)
+      # NOTE: Tools requiring unavailable API keys are AUTOMATICALLY excluded
+      # This option is for manual exclusions (e.g., heavy dependencies, unwanted features)
+      exclude_custom_tools:
+        - "_claude_computer_use"  # Manual exclusion: Requires ANTHROPIC_API_KEY
+        - "_gemini_computer_use"   # Manual exclusion: Requires GOOGLE_API_KEY
+        # - "_browser_automation"    # Manual exclusion: Requires Playwright installation
+        # - "_video_tools"           # Manual exclusion: Heavy FFmpeg dependencies
+      #
+      # Automatic exclusions based on API keys:
+      # - If ANTHROPIC_API_KEY not in credentials → _claude_computer_use excluded
+      # - If GOOGLE_API_KEY not in credentials → _gemini_computer_use excluded
+      # - See logs for: "Excluding tool_name: missing API keys: KEY_NAME"
 
       # MCP servers - these will be converted to Python wrappers in servers/
       mcp_servers:

@@ -64,6 +64,7 @@ class FilesystemManager:
         enable_code_based_tools: bool = False,
         custom_tools_path: Optional[str] = None,
         auto_discover_custom_tools: bool = False,
+        exclude_custom_tools: Optional[List[str]] = None,
         shared_tools_directory: Optional[str] = None,
         instance_id: Optional[str] = None,
     ):
@@ -94,6 +95,7 @@ class FilesystemManager:
                                      Agents discover and call tools via filesystem (CodeAct paradigm).
             custom_tools_path: Optional path to custom tools directory to copy into workspace
             auto_discover_custom_tools: If True and custom_tools_path is not set, automatically use default path 'massgen/tool/'
+            exclude_custom_tools: Optional list of directory names to exclude when copying custom tools (e.g., ['_claude_computer_use', '_gemini_computer_use'])
             shared_tools_directory: Optional shared directory for code-based tools (servers/, custom_tools/, .mcp/).
                                     If provided, tools are generated once in shared location (read-only for all agents).
                                     If None, tools are generated in each agent's workspace (per-agent, in snapshots).
@@ -105,6 +107,7 @@ class FilesystemManager:
         self.enable_mcp_command_line = enable_mcp_command_line
         self.exclude_file_operation_mcps = exclude_file_operation_mcps
         self.enable_code_based_tools = enable_code_based_tools
+        self.exclude_custom_tools = exclude_custom_tools if exclude_custom_tools else []
 
         # Handle custom_tools_path with auto-discovery
         if custom_tools_path:
@@ -456,10 +459,19 @@ class FilesystemManager:
             logger.info(f"[FilesystemManager] Generating code-based tools in agent workspace: {target_path}")
 
         try:
+            # Auto-exclude tools based on missing API keys
+            auto_excluded = []
+            if self.custom_tools_path:
+                auto_excluded = self._get_auto_excluded_tools_by_api_keys(self.custom_tools_path)
+
+            # Combine manual exclusions with auto-generated ones
+            all_exclusions = list(set(self.exclude_custom_tools + auto_excluded))
+
             writer.setup_code_based_tools(
                 workspace_path=target_path,
                 mcp_servers=servers_with_tools,
                 custom_tools_path=self.custom_tools_path,
+                exclude_custom_tools=all_exclusions,
             )
             logger.info(f"[FilesystemManager] Code-based tools setup complete in {target_path}")
 
@@ -470,6 +482,121 @@ class FilesystemManager:
         except Exception as e:
             logger.error(f"[FilesystemManager] Error setting up code-based tools: {e}", exc_info=True)
             raise
+
+    def _get_auto_excluded_tools_by_api_keys(
+        self,
+        custom_tools_path: Path,
+    ) -> List[str]:
+        """Automatically exclude tools based on unavailable API keys.
+
+        Reads TOOL.md files to check requires_api_keys, compares against
+        configured Docker credentials to determine which tools to exclude.
+
+        Args:
+            custom_tools_path: Path to custom tools directory
+
+        Returns:
+            List of tool directory names to exclude
+        """
+        import yaml
+
+        if not custom_tools_path or not custom_tools_path.exists():
+            return []
+
+        # Get list of available API keys
+        available_keys = self._get_available_api_keys()
+
+        # If no credential config, assume all env vars available (local mode or pass_all_env)
+        if available_keys is None:
+            logger.debug("[FilesystemManager] No credential filtering - all API keys assumed available")
+            return []
+
+        excluded = []
+
+        # Check each subdirectory for TOOL.md
+        for tool_dir in custom_tools_path.iterdir():
+            if not tool_dir.is_dir() or tool_dir.name.startswith("."):
+                continue
+
+            tool_md = tool_dir / "TOOL.md"
+            if not tool_md.exists():
+                continue
+
+            try:
+                # Parse TOOL.md YAML frontmatter
+                content = tool_md.read_text()
+                if not content.startswith("---"):
+                    continue
+
+                parts = content.split("---", 2)
+                if len(parts) < 3:
+                    continue
+
+                metadata = yaml.safe_load(parts[1])
+                required_keys = metadata.get("requires_api_keys", [])
+
+                # Skip if tool doesn't require any keys
+                if not required_keys:
+                    continue
+
+                # Check if all required keys are available
+                missing_keys = [key for key in required_keys if key not in available_keys]
+
+                if missing_keys:
+                    excluded.append(tool_dir.name)
+                    logger.info(
+                        f"[FilesystemManager] Excluding {tool_dir.name}: " f"missing API keys: {', '.join(missing_keys)}",
+                    )
+
+            except Exception as e:
+                logger.warning(f"[FilesystemManager] Error reading {tool_md}: {e}")
+                continue
+
+        return excluded
+
+    def _get_available_api_keys(self) -> Optional[set]:
+        """Get set of API keys that will be available in Docker container.
+
+        Returns:
+            Set of available API key names, or None if no filtering needed
+        """
+        if not self.command_line_docker_credentials:
+            # No credentials config - can't filter
+            return None
+
+        creds = self.command_line_docker_credentials
+        available = set()
+
+        # Check pass_all_env - if true, all keys available
+        if creds.get("pass_all_env"):
+            return None  # No filtering needed
+
+        # Get keys from env_file
+        if creds.get("env_file"):
+            env_file_path = Path(creds["env_file"]).expanduser().resolve()
+            if env_file_path.exists():
+                # Parse .env file
+                with open(env_file_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            key = line.split("=", 1)[0].strip()
+                            # Check if filtering by env_vars_from_file
+                            filter_list = creds.get("env_vars_from_file")
+                            if filter_list:
+                                if key in filter_list:
+                                    available.add(key)
+                            else:
+                                # All keys from env file
+                                available.add(key)
+
+        # Add keys from env_vars (host environment)
+        if creds.get("env_vars"):
+            for var in creds["env_vars"]:
+                if var in os.environ:
+                    available.add(var)
+
+        return available
 
     def _extract_mcp_tool_schemas(self, mcp_client) -> List[Dict[str, Any]]:
         """Extract tool schemas from MCP client, organized by server.
@@ -705,9 +832,15 @@ class FilesystemManager:
 
         return workspace
 
-    def get_mcp_filesystem_config(self) -> Dict[str, Any]:
+    def get_mcp_filesystem_config(self, include_only_write_tools: bool = False) -> Dict[str, Any]:
         """
         Generate MCP filesystem server configuration.
+
+        Args:
+            include_only_write_tools: If True, only include write_file and edit_file tools.
+                                     Used with code-based tools to provide clean file creation
+                                     without shell escaping issues, while using command-line
+                                     for other file operations.
 
         Returns:
             Dictionary with MCP server configuration for filesystem access
@@ -726,10 +859,17 @@ class FilesystemManager:
             ]
             + paths,
             "cwd": str(self.cwd),  # Set working directory for filesystem server (important for relative paths)
-            # Exclude read_media_file since we have our own implementation in workspace_tools
-            # Note: Tool names here are unprefixed (before server name is added)
-            "exclude_tools": ["read_media_file"],
         }
+
+        if include_only_write_tools:
+            # Code-based tools mode: Only include write_file and edit_file
+            # This avoids shell escaping nightmares when creating Python scripts
+            # Other file operations use command-line tools (more efficient for CodeAct)
+            config["allowed_tools"] = ["write_file", "edit_file"]
+        else:
+            # Normal mode: Exclude read_media_file since we have our own implementation
+            # Note: Tool names here are unprefixed (before server name is added)
+            config["exclude_tools"] = ["read_media_file"]
 
         return config
 
@@ -900,13 +1040,19 @@ class FilesystemManager:
         # Tool filtering happens later in the backend after conversion to Function objects
 
         try:
-            # Add filesystem server if missing and not excluded
-            if not self.exclude_file_operation_mcps and "filesystem" not in existing_names:
-                mcp_servers.append(self.get_mcp_filesystem_config())
-            elif not self.exclude_file_operation_mcps:
+            # Add filesystem server if missing
+            if "filesystem" not in existing_names:
+                # When exclude_file_operation_mcps is True, only include write_file and edit_file
+                # This provides clean file creation without shell escaping issues
+                mcp_servers.append(
+                    self.get_mcp_filesystem_config(
+                        include_only_write_tools=self.exclude_file_operation_mcps,
+                    ),
+                )
+                if self.exclude_file_operation_mcps:
+                    logger.info("[FilesystemManager.inject_filesystem_mcp] Added filesystem MCP with write_file and edit_file only (exclude_file_operation_mcps=True)")
+            else:
                 logger.warning("[FilesystemManager.inject_filesystem_mcp] Custom filesystem MCP server already present")
-            elif "filesystem" in existing_names:
-                logger.info("[FilesystemManager.inject_filesystem_mcp] Skipping filesystem MCP (exclude_file_operation_mcps=True)")
 
             # Add workspace tools server based on configuration
             if "workspace_tools" not in existing_names:
