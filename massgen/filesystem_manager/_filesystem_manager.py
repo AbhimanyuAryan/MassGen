@@ -569,11 +569,11 @@ class FilesystemManager:
         logger.info(f"[FilesystemManager] Added shared tools directory to read-only paths: {shared_tools_path}")
 
         # Create symlinks in workspace for Python imports
-        # This allows agents to import from servers/, custom_tools/, utils/ as if they were local
+        # This allows agents to import from servers/, custom_tools/ as if they were local
         workspace = self.cwd
 
-        # Directories to symlink
-        tool_dirs = ["servers", "custom_tools", "utils", ".mcp"]
+        # Directories to symlink (utils/ NOT included - agents create that in their workspace)
+        tool_dirs = ["servers", "custom_tools", ".mcp"]
 
         for dir_name in tool_dirs:
             source_dir = shared_tools_path / dir_name

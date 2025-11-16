@@ -341,6 +341,15 @@ class CodeBasedToolsSection(SystemPromptSection):
         if self.shared_tools_path:
             location_note = f"\n\n**Note**: Tools are in a shared read-only location (`{self.shared_tools_path}`) accessible to all agents."
 
+        # Read ExecutionResult class definition for custom tools
+        from pathlib import Path
+
+        result_file = Path(__file__).parent / "tool" / "_result.py"
+        try:
+            execution_result_code = result_file.read_text()
+        except Exception:
+            execution_result_code = "# ExecutionResult definition not available"
+
         return f"""## Available Tools (Code-Based Access)
 
 Tools are available as **Python code** in your workspace filesystem. Discover and call them like regular Python modules (e.g., use normal search tools such as `rg` or `sg`){location_note}
@@ -348,7 +357,7 @@ Tools are available as **Python code** in your workspace filesystem. Discover an
 **Directory Structure:**
 ```
 {self.tools_location}/
-├── servers/              # MCP tool wrappers (auto-generated)
+├── servers/              # MCP tool wrappers (auto-generated, read-only)
 │   ├── __init__.py      # Package marker (import from here)
 │   ├── weather/
 │   │   ├── __init__.py  # Exports: get_forecast, get_current
@@ -357,10 +366,12 @@ Tools are available as **Python code** in your workspace filesystem. Discover an
 │   └── github/
 │       ├── __init__.py  # Exports: create_issue
 │       └── create_issue.py
-├── custom_tools/         # Full Python implementations
-│   └── [user-provided tools]
-└── utils/               # YOUR scripts (workflows, async, filtering)
-    └── [create your own scripts here]
+└── custom_tools/         # Full Python implementations (read-only)
+    └── [user-provided tools]
+
+Your workspace/
+└── utils/               # CREATE THIS - for your scripts (workflows, async, filtering)
+    └── [write your own scripts here as needed]
 ```
 
 **Tool Discovery (Filesystem-Based):**
@@ -380,13 +391,24 @@ grep -r "temperature" servers/
 
 **Usage Pattern:**
 ```python
-# Import tools directly
+# Import MCP tools from servers/
 from servers.weather import get_forecast
 from servers.github import create_issue
 
+# Import custom tools from custom_tools/
+from custom_tools.string_utils import reverse_string
+
 # Use the tools
 weather = get_forecast("San Francisco", days=3)
-issue = create_issue(repo="myrepo", title="Bug fix")
+reversed_text = reverse_string("hello")
+```
+
+**Custom Tools Return Type:**
+
+Custom tools MUST return `ExecutionResult`. Here's the definition from `massgen/tool/_result.py`:
+
+```python
+{execution_result_code}
 ```
 
 **Creating Workflows (utils/):**

@@ -154,8 +154,7 @@ class TestCodeBasedToolsIntegration:
         assert (workspace / "servers" / "weather" / "__init__.py").exists()
         assert (workspace / "servers" / "github").exists()
         assert (workspace / "servers" / "github" / "__init__.py").exists()
-        assert (workspace / "utils").exists()
-        assert (workspace / "utils" / "README.md").exists()
+        # utils/ NOT pre-created - agents create in their workspace as needed
         assert (workspace / ".mcp").exists()
         assert (workspace / ".mcp" / "client.py").exists()
         assert (workspace / ".mcp" / "servers.json").exists()
@@ -281,25 +280,6 @@ class TestCodeBasedToolsIntegration:
         assert "from .get_forecast import get_forecast" in content
         assert "from .get_current import get_current" in content
         assert '__all__ = ["get_forecast", "get_current"]' in content
-
-    @pytest.mark.asyncio
-    async def test_utils_directory_has_readme(
-        self,
-        filesystem_manager,
-        mock_mcp_client,
-        temp_workspace,
-    ):
-        """Test that utils/ directory is created with README."""
-        await filesystem_manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
-
-        workspace = Path(temp_workspace["workspace"])
-        readme = workspace / "utils" / "README.md"
-
-        assert readme.exists()
-
-        content = readme.read_text()
-        assert "Utils Directory" in content
-        assert "workflow" in content.lower()
 
     @pytest.mark.asyncio
     async def test_custom_tools_directory_created(
@@ -438,7 +418,7 @@ class TestCodeBasedToolsIntegration:
         # Verify all directories created
         assert (workspace / "servers").exists()
         assert (workspace / "servers" / "weather").exists()
-        assert (workspace / "utils").exists()
+        # utils/ NOT created - agents create in their workspace as needed
         assert (workspace / ".mcp").exists()
         assert (workspace / "custom_tools").exists()
 

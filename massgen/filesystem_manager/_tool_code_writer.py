@@ -76,8 +76,7 @@ class ToolCodeWriter:
             # Create empty custom_tools/ with __init__.py
             self.create_empty_custom_tools(workspace_path)
 
-        # Create empty utils/ for agent scripts
-        self.create_utils_directory(workspace_path)
+        # Note: utils/ is NOT pre-created - agents create it in their workspace as needed
 
         # Create hidden .mcp/ directory with client
         self.create_mcp_client(workspace_path, mcp_servers)
