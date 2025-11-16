@@ -124,6 +124,7 @@ class LLMBackend(ABC):
                     "exclude_file_operation_mcps": kwargs.get("exclude_file_operation_mcps", False),
                     "enable_code_based_tools": kwargs.get("enable_code_based_tools", False),
                     "custom_tools_path": kwargs.get("custom_tools_path"),
+                    "auto_discover_custom_tools": kwargs.get("auto_discover_custom_tools", False),
                     "shared_tools_directory": kwargs.get("shared_tools_directory"),
                     # Instance ID for parallel execution (Docker container naming)
                     "instance_id": self._instance_id,
@@ -226,6 +227,7 @@ class LLMBackend(ABC):
             # Code-based tools (CodeAct paradigm)
             "enable_code_based_tools",
             "custom_tools_path",
+            "auto_discover_custom_tools",
             "shared_tools_directory",
             # Backend identification (handled by orchestrator)
             "type",

@@ -73,6 +73,83 @@ When ``enable_code_based_tools: true`` is set, MassGen:
 * ``utils/`` - Agent workspace for creating workflows and scripts
 * ``.mcp/`` - Hidden infrastructure (agents don't see this)
 
+TOOL.md Format & API Keys
+--------------------------
+
+Custom Tool Documentation
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Custom tools in ``massgen/tool/`` include ``TOOL.md`` files with YAML frontmatter for discoverability:
+
+.. code-block:: yaml
+
+   ---
+   name: multimodal-tools
+   description: Vision, audio, video, and file processing tools
+   category: multimodal
+   requires_api_keys: [OPENAI_API_KEY]
+   tasks:
+     - "Analyze and understand images with vision models"
+     - "Understand and transcribe audio files"
+     - "Process and understand various file formats (PDF, DOCX, etc.)"
+   keywords: [vision, audio, video, multimodal, image-analysis]
+   ---
+
+   # Multimodal Tools
+
+   [Detailed documentation follows...]
+
+**YAML Fields:**
+
+* ``name`` - Tool package identifier (matches directory name)
+* ``description`` - One-line summary
+* ``category`` - Primary category (text-processing, web-scraping, multimodal, automation, etc.)
+* ``requires_api_keys`` - List of required API keys, or empty list ``[]`` if none needed
+* ``tasks`` - Action-oriented task descriptions (searchable)
+* ``keywords`` - Searchable terms
+
+API Key Management
+~~~~~~~~~~~~~~~~~~
+
+MassGen uses ``.env`` files for API key management. Keys are automatically passed to Docker containers:
+
+**1. Create .env file in project root:**
+
+.. code-block:: bash
+
+   # .env file
+   OPENAI_API_KEY=sk-...
+   ANTHROPIC_API_KEY=sk-ant-...
+   GOOGLE_API_KEY=...
+   GEMINI_API_KEY=...
+
+**2. Check which tools require which keys:**
+
+.. code-block:: bash
+
+   rg "^requires_api_keys:" massgen/tool/*/TOOL.md
+
+**3. Filter tools by available API keys:**
+
+.. code-block:: bash
+
+   # Check what API keys you have
+   env | grep "API_KEY"
+
+   # Find tools that need OPENAI_API_KEY
+   rg "^requires_api_keys:.*OPENAI_API_KEY" massgen/tool/*/TOOL.md -l
+
+   # Find tools that need no API keys
+   rg "^requires_api_keys: \[\]" massgen/tool/*/TOOL.md -l
+
+**Environment variables are automatically:**
+
+* Loaded from ``.env`` file in project root
+* Passed to Docker containers when ``command_line_execution_mode: docker``
+* Available to all tools and MCP servers
+
+See ``.env.example`` in the project root for a template of all supported API keys.
+
 Configuration
 -------------
 
@@ -123,21 +200,56 @@ Agent Usage Patterns
 1. Tool Discovery
 ~~~~~~~~~~~~~~~~~
 
-Agents discover tools via filesystem exploration:
+Agents discover tools through two mechanisms: **TOOL.md files** for custom tool packages and **filesystem exploration** for MCP tools.
+
+**Custom Tool Packages (TOOL.md Discovery)**
+
+Custom tools include TOOL.md files with searchable YAML frontmatter:
 
 .. code-block:: bash
 
-   # Discover available servers
+   # List all available custom tool packages
+   rg "^name: " */TOOL.md
+
+   # Search by task description
+   rg "tasks:" -A 5 */TOOL.md | rg -i "scrape|image|automate"
+
+   # Search by keyword
+   rg "^keywords:.*web|vision" */TOOL.md -l
+
+   # Search by category
+   rg "^category: automation" */TOOL.md -l
+
+   # Check API key requirements
+   rg "^requires_api_keys:" */TOOL.md
+   env | grep "API_KEY"  # Check which API keys you have
+
+   # Semantic search (if available)
+   search "process videos" . --glob "*/TOOL.md" --top-k 5
+
+   # Read full documentation
+   cat custom_tools/TOOL.md
+
+**MCP Tools (Filesystem Discovery)**
+
+MCP tools are discovered by exploring the servers/ directory:
+
+.. code-block:: bash
+
+   # Discover available MCP servers
    ls servers/
 
-   # See tools in a server
+   # See tools in a server (each .py file is a tool)
    ls servers/weather/
 
-   # Read tool documentation and code
+   # Read tool documentation from docstring
    cat servers/weather/get_forecast.py
 
-   # Search for specific functionality
-   grep -r "temperature" servers/
+   # Search for functionality across all MCP tools
+   rg "temperature|forecast" servers/ --type py
+
+   # Semantic search within MCP tools
+   search "get weather data" servers/ --type py
 
 2. Direct Tool Usage
 ~~~~~~~~~~~~~~~~~~~~

@@ -460,6 +460,7 @@ class DockerManager:
         context_paths: Optional[List[Dict[str, Any]]] = None,
         skills_directory: Optional[str] = None,
         massgen_skills: Optional[List[str]] = None,
+        shared_tools_directory: Optional[Path] = None,
     ) -> Optional[Path]:
         """
         Create and start a persistent Docker container for an agent.
@@ -478,6 +479,7 @@ class DockerManager:
                           (each mounted at its host path)
             skills_directory: Path to skills directory (e.g., .agent/skills) to mount read-only
             massgen_skills: List of MassGen built-in skills to enable (optional)
+            shared_tools_directory: Path to shared tools directory (servers/, custom_tools/, .mcp/) to mount read-only
 
         Returns:
             Path to temporary merged skills directory if skills are enabled, None otherwise
@@ -543,6 +545,12 @@ class DockerManager:
             temp_workspace_path = temp_workspace_path.resolve()
             volumes[str(temp_workspace_path)] = {"bind": str(temp_workspace_path), "mode": "ro"}
             mount_info.append(f"      {temp_workspace_path} ← {temp_workspace_path} (ro)")
+
+        # Mount shared tools directory (read-only) at the SAME path as host
+        if shared_tools_directory:
+            shared_tools_directory = shared_tools_directory.resolve()
+            volumes[str(shared_tools_directory)] = {"bind": str(shared_tools_directory), "mode": "ro"}
+            mount_info.append(f"      {shared_tools_directory} ← {shared_tools_directory} (ro)")
 
         # Mount context paths at the SAME paths as host
         if context_paths:

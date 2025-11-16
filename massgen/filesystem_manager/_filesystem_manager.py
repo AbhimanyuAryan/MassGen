@@ -63,6 +63,7 @@ class FilesystemManager:
         exclude_file_operation_mcps: bool = False,
         enable_code_based_tools: bool = False,
         custom_tools_path: Optional[str] = None,
+        auto_discover_custom_tools: bool = False,
         shared_tools_directory: Optional[str] = None,
         instance_id: Optional[str] = None,
     ):
@@ -92,6 +93,7 @@ class FilesystemManager:
             enable_code_based_tools: If True, generate Python wrapper code for MCP tools in servers/ directory.
                                      Agents discover and call tools via filesystem (CodeAct paradigm).
             custom_tools_path: Optional path to custom tools directory to copy into workspace
+            auto_discover_custom_tools: If True and custom_tools_path is not set, automatically use default path 'massgen/tool/'
             shared_tools_directory: Optional shared directory for code-based tools (servers/, custom_tools/, .mcp/).
                                     If provided, tools are generated once in shared location (read-only for all agents).
                                     If None, tools are generated in each agent's workspace (per-agent, in snapshots).
@@ -103,7 +105,22 @@ class FilesystemManager:
         self.enable_mcp_command_line = enable_mcp_command_line
         self.exclude_file_operation_mcps = exclude_file_operation_mcps
         self.enable_code_based_tools = enable_code_based_tools
-        self.custom_tools_path = Path(custom_tools_path) if custom_tools_path else None
+
+        # Handle custom_tools_path with auto-discovery
+        if custom_tools_path:
+            # Explicit path takes precedence
+            self.custom_tools_path = Path(custom_tools_path)
+        elif auto_discover_custom_tools:
+            # Auto-discover from default location (massgen/tool/)
+            default_path = Path("massgen/tool")
+            if default_path.exists():
+                self.custom_tools_path = default_path
+                logger.info(f"[FilesystemManager] Auto-discovered custom tools at {default_path}")
+            else:
+                logger.warning(f"[FilesystemManager] auto_discover_custom_tools enabled but default path does not exist: {default_path}")
+                self.custom_tools_path = None
+        else:
+            self.custom_tools_path = None
 
         # Convert shared_tools_directory to absolute path if provided
         if shared_tools_directory:
@@ -235,6 +252,7 @@ class FilesystemManager:
                 context_paths=context_paths,
                 skills_directory=skills_directory,
                 massgen_skills=massgen_skills,
+                shared_tools_directory=self.shared_tools_directory,
             )
             logger.info(f"[FilesystemManager] Docker container created for agent {self.agent_id}")
 

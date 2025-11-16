@@ -170,15 +170,29 @@ class ToolCodeWriter:
         if dest_path.exists():
             shutil.rmtree(dest_path)
 
-        # Copy directory
-        shutil.copytree(custom_tools_path, dest_path)
+        # Directories to exclude when copying (internal/example/orchestration tools)
+        excluded_dirs = {
+            "workflow_toolkits",  # Orchestration tools (new_answer, vote, post_evaluation)
+            "_code_based_example",  # Example tools
+            "_basic",  # Basic/deprecated tools
+            "_file_handlers",  # Internal file handling utilities
+            "docs",  # Documentation
+            "__pycache__",  # Python cache
+        }
+
+        def ignore_patterns(_directory, contents):
+            """Filter out excluded directories and files."""
+            return [name for name in contents if name in excluded_dirs]
+
+        # Copy directory with filtering
+        shutil.copytree(custom_tools_path, dest_path, ignore=ignore_patterns)
 
         # Ensure __init__.py exists
         init_file = dest_path / "__init__.py"
         if not init_file.exists():
             init_file.write_text('"""Custom tools provided by user."""\n')
 
-        logger.info(f"[ToolCodeWriter] Copied custom tools from {custom_tools_path}")
+        logger.info(f"[ToolCodeWriter] Copied custom tools from {custom_tools_path} (excluded: {', '.join(excluded_dirs)})")
 
     def create_empty_custom_tools(self, workspace_path: Path) -> None:
         """Create empty custom_tools/ directory with __init__.py.

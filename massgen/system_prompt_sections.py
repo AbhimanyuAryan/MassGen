@@ -374,19 +374,71 @@ Your workspace/
     └── [write your own scripts here as needed]
 ```
 
-**Tool Discovery (Filesystem-Based):**
+**Tool Discovery:**
+
+**Method 1: Discover Custom Tool Packages (TOOL.md files)**
+
+Custom tools have TOOL.md files with searchable metadata:
+
 ```bash
-# Discover available servers
+# List all available custom tool packages
+rg "^name: " */TOOL.md
+
+# Search by task description
+rg "tasks:" -A 5 */TOOL.md | rg -i "scrape|image|automate"
+
+# Search by keyword
+rg "^keywords:.*web|vision" */TOOL.md -l
+
+# Search by category
+rg "^category: automation|multimodal" */TOOL.md -l
+
+# Check API key requirements
+rg "^requires_api_keys:" */TOOL.md
+env | grep "API_KEY"  # Check which API keys you have available
+
+# Semantic search (if available)
+search "process videos" . --glob "*/TOOL.md" --top-k 5
+
+# Read full documentation
+cat custom_tools/TOOL.md
+```
+
+**Method 2: Discover MCP Tools (servers/ directory)**
+
+MCP tools don't have TOOL.md, but each file in a server directory is a tool:
+
+```bash
+# List all available MCP servers
 ls servers/
 
-# See tools in a server
+# See what tools a server provides (each .py file is a tool)
 ls servers/weather/
+# Shows: get_forecast.py, get_current.py, __init__.py
 
-# Read tool documentation and code
+# Read tool documentation from docstring
 cat servers/weather/get_forecast.py
 
-# Search for specific functionality
-grep -r "temperature" servers/
+# Search for functionality across all MCP tools
+rg "temperature|forecast" servers/ --type py
+
+# Semantic search within MCP tools
+search "get weather data" servers/ --type py
+
+# Search by task/purpose in docstrings
+rg '\"\"\".*weather.*\"\"\"' servers/ -A 5
+```
+
+**Method 3: Quick Overview**
+
+```bash
+# Show all available tools at a glance
+ls servers/     # MCP servers
+ls */TOOL.md    # Custom tool packages
+
+# Count available tools
+ls servers/*/*.py | wc -l      # MCP tools
+ls */TOOL.md | wc -l           # Custom tool packages
 ```
 
 **Usage Pattern:**

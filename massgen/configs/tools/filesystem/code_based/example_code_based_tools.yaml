@@ -29,14 +29,18 @@ agents:
       enable_mcp_command_line: true          # Enable execute_command
 
       # Command line execution (required for code-based tools)
-      command_line_execution_mode: "local"   # or "docker"
+      command_line_execution_mode: "docker"
 
       # Shared tools directory (optional) - tools generated once, shared across agents
       # If not specified, tools are generated in each agent's workspace
       shared_tools_directory: "shared_tools"
 
-      # Custom tools directory - full Python implementations
-      custom_tools_path: "massgen/tool/_code_based_example"
+      # Custom tools - choose one approach:
+      # Option 1: Auto-discover all tools from massgen/tool/ directory
+      auto_discover_custom_tools: true
+
+      # Option 2: Specify custom path (takes precedence over auto_discover)
+      # custom_tools_path: "massgen/tool/_code_based_example"
 
       # MCP servers - these will be converted to Python wrappers in servers/
       mcp_servers:
