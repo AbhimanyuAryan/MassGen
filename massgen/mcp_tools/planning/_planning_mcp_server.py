@@ -292,7 +292,11 @@ async def create_server() -> fastmcp.FastMCP:
                 preparation_tasks.append(
                     {
                         "id": "prep_skills",
-                        "description": "Check available skills for relevant capabilities",
+                        "description": (
+                            "Review available skills listed in your context and think creatively about which could help "
+                            "with this task. Consider both direct applications and creative uses. Document your reasoning "
+                            "about which skills to use or why you're building from scratch."
+                        ),
                         "priority": "high",
                     },
                 )
@@ -300,7 +304,11 @@ async def create_server() -> fastmcp.FastMCP:
                 preparation_tasks.append(
                     {
                         "id": "prep_tools",
-                        "description": "Review available custom tools and MCP servers in custom_tools/ and servers/",
+                        "description": (
+                            "List contents of custom_tools/ and servers/ directories to understand available capabilities. "
+                            "Think about both obvious and creative applications of these tools for your task. Document which "
+                            "specific tools you plan to use and why, or explain your decision to build manually."
+                        ),
                         "priority": "high",
                     },
                 )
@@ -308,7 +316,7 @@ async def create_server() -> fastmcp.FastMCP:
                 preparation_tasks.append(
                     {
                         "id": "prep_memory",
-                        "description": "Check long-term memory for relevant context",
+                        "description": "Check long-term memories for relevant context from previous work. Consider patterns, decisions, or discoveries that could inform your approach to this task.",
                         "priority": "high",
                     },
                 )

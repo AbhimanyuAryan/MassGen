@@ -23,6 +23,8 @@
 # uv run massgen --automation \
 #   --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
 #   "List all available tools by exploring the workspace filesystem. Show what MCP tools and custom tools are available."
+# or to show power of skills (e.g., anthropic's website creation skill):
+#   uv run massgen --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml "Create a website about Bob Dylan, ensuring that it is visually appealing and user friendly"
 
 agents:
   - id: "agent_a"
