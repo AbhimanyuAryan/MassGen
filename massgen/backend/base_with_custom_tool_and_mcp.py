@@ -31,6 +31,7 @@ import httpx
 from pydantic import BaseModel
 
 from ..logger_config import log_backend_activity, logger
+from ..mcp_tools.server_registry import get_auto_discovery_servers, get_registry_info
 from ..nlip.schema import (
     NLIPControlField,
     NLIPFormatField,
@@ -39,7 +40,6 @@ from ..nlip.schema import (
     NLIPTokenField,
     NLIPToolCall,
 )
-from ..mcp_tools.server_registry import get_auto_discovery_servers, get_registry_info
 from ..tool import ToolManager
 from ..utils import CoordinationStage
 from .base import LLMBackend, StreamChunk
