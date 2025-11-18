@@ -1122,6 +1122,7 @@ Based on the coordination process above, present your final answer:"""
         broadcast_mode: str,
         wait_by_default: bool = True,
         response_mode: str = "inline",
+        sensitivity: str = "medium",
     ) -> str:
         """Generate guidance for using broadcast/communication tools.
 
@@ -1129,6 +1130,7 @@ Based on the coordination process above, present your final answer:"""
             broadcast_mode: "agents" or "human"
             wait_by_default: Whether ask_others() blocks by default
             response_mode: "inline" or "background"
+            sensitivity: How frequently to use ask_others() ("low", "medium", "high")
 
         Returns:
             Formatted guidance string to append to system messages
@@ -1147,7 +1149,22 @@ You have access to the `ask_others()` tool for collaborative problem-solving.
             guidance += " and the human user"
         guidance += """. Use it strategically to work effectively as a team.**
 
-**When to use ask_others():**
+"""
+        # Add sensitivity-specific guidance
+        if sensitivity == "high":
+            guidance += """**Collaboration frequency: HIGH - Use ask_others() frequently whenever you're considering options, proposing approaches, or could benefit from input.**
+
+"""
+        elif sensitivity == "low":
+            guidance += """**Collaboration frequency: LOW - Use ask_others() only when blocked or for critical architectural decisions.**
+
+"""
+        else:  # medium
+            guidance += """**Collaboration frequency: MEDIUM - Use ask_others() for significant decisions, design choices, or when confirmation would be valuable.**
+
+"""
+
+        guidance += """**When to use ask_others():**
 - **When the user explicitly asks you to**: If the prompt says "ask_others for..." then CALL THE TOOL
 - **Before making a key decision**: "Which framework should we use: Next.js or React?"
 - **When you need clarification**: "What's our approach for authentication?"

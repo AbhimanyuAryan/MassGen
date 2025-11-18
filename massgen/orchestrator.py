@@ -279,6 +279,10 @@ class Orchestrator(ChatAgent):
                 wait_by_default = True
                 logger.info("[Orchestrator] Using blocking broadcasts (wait=True) with priority system to prevent deadlocks")
 
+                # Get broadcast sensitivity setting
+                broadcast_sensitivity = getattr(self.config.coordination_config, "broadcast_sensitivity", "medium")
+                logger.info(f"[Orchestrator] Broadcast sensitivity: {broadcast_sensitivity}")
+
                 # Recreate workflow tools with broadcast enabled
                 self.workflow_tools = get_workflow_tools(
                     valid_agent_ids=list(self.agents.keys()),
@@ -291,13 +295,13 @@ class Orchestrator(ChatAgent):
                 logger.info(f"[Orchestrator] Broadcast tools added to workflow ({len(self.workflow_tools)} total tools)")
 
                 # Register broadcast tools as custom tools with backends for recursive execution
-                self._register_broadcast_custom_tools(broadcast_mode, wait_by_default)
+                self._register_broadcast_custom_tools(broadcast_mode, wait_by_default, broadcast_sensitivity)
             else:
                 logger.info("[Orchestrator] Broadcasting disabled")
         else:
             logger.info("[Orchestrator] Broadcast config not found")
 
-    def _register_broadcast_custom_tools(self, broadcast_mode: str, wait_by_default: bool) -> None:
+    def _register_broadcast_custom_tools(self, broadcast_mode: str, wait_by_default: bool, sensitivity: str = "medium") -> None:
         """
         Register broadcast tools as custom tools with all agent backends.
 
@@ -307,6 +311,7 @@ class Orchestrator(ChatAgent):
         Args:
             broadcast_mode: "agents" or "human"
             wait_by_default: Default waiting behavior for broadcasts
+            sensitivity: How frequently to use ask_others() ("low", "medium", "high")
         """
         from .tool.workflow_toolkits.broadcast import BroadcastToolkit
 
@@ -315,6 +320,7 @@ class Orchestrator(ChatAgent):
             orchestrator=self,
             broadcast_mode=broadcast_mode,
             wait_by_default=wait_by_default,
+            sensitivity=sensitivity,
         )
 
         # Register with each agent's backend as custom tool functions
@@ -2346,11 +2352,13 @@ Your answer:"""
                 # Use blocking mode for both agents and human (priority system prevents deadlocks)
                 broadcast_mode = self.config.coordination_config.broadcast
                 wait_by_default = True
+                broadcast_sensitivity = getattr(self.config.coordination_config, "broadcast_sensitivity", "medium")
 
                 broadcast_guidance = self.message_templates.get_broadcast_guidance(
                     broadcast_mode=broadcast_mode,
                     wait_by_default=wait_by_default,
                     response_mode=self.config.coordination_config.broadcast_response_mode,
+                    sensitivity=broadcast_sensitivity,
                 )
                 agent_system_message = f"{agent_system_message}{broadcast_guidance}" if agent_system_message else broadcast_guidance.strip()
                 print(f"📢 [{agent_id}] Adding broadcast communication guidance to system message", flush=True)
@@ -2434,11 +2442,13 @@ Your answer:"""
                 # Use blocking mode for both agents and human (priority system prevents deadlocks)
                 broadcast_mode = self.config.coordination_config.broadcast
                 wait_by_default = True
+                broadcast_sensitivity = getattr(self.config.coordination_config, "broadcast_sensitivity", "medium")
 
                 broadcast_guidance = self.message_templates.get_broadcast_guidance(
                     broadcast_mode=broadcast_mode,
                     wait_by_default=wait_by_default,
                     response_mode=self.config.coordination_config.broadcast_response_mode,
+                    sensitivity=broadcast_sensitivity,
                 )
                 system_message = system_message + broadcast_guidance
                 logger.info(f"📢 [{agent_id}] Added broadcast guidance to system message")

@@ -17,6 +17,7 @@ class BroadcastToolkit(BaseToolkit):
         orchestrator: Optional[Any] = None,
         broadcast_mode: str = "agents",
         wait_by_default: bool = True,
+        sensitivity: str = "medium",
     ):
         """
         Initialize the Broadcast toolkit.
@@ -25,10 +26,12 @@ class BroadcastToolkit(BaseToolkit):
             orchestrator: Reference to orchestrator (for accessing BroadcastChannel)
             broadcast_mode: "agents" or "human"
             wait_by_default: Default waiting behavior for ask_others()
+            sensitivity: How frequently to use ask_others() ("low", "medium", "high")
         """
         self.orchestrator = orchestrator
         self.broadcast_mode = broadcast_mode
         self.wait_by_default = wait_by_default
+        self.sensitivity = sensitivity
 
     @property
     def toolkit_id(self) -> str:
@@ -61,6 +64,20 @@ class BroadcastToolkit(BaseToolkit):
         """
         self.orchestrator = orchestrator
 
+    def _get_sensitivity_guidance(self) -> str:
+        """
+        Get sensitivity-specific guidance for when to use ask_others().
+
+        Returns:
+            Guidance string based on sensitivity level
+        """
+        if self.sensitivity == "high":
+            return "Use this frequently - whenever you're considering options, proposing approaches, or could benefit from input."
+        elif self.sensitivity == "low":
+            return "Use this only when blocked or for critical architectural decisions."
+        else:  # medium (default)
+            return "Use this for significant decisions, design choices, or when confirmation would be valuable."
+
     def get_tools(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Get broadcast tool definitions based on API format.
@@ -75,6 +92,9 @@ class BroadcastToolkit(BaseToolkit):
 
         tools = []
 
+        # Get sensitivity guidance
+        sensitivity_guidance = self._get_sensitivity_guidance()
+
         # Tool 1: ask_others
         if api_format == "claude":
             ask_others_tool = {
@@ -83,7 +103,8 @@ class BroadcastToolkit(BaseToolkit):
                     "Call this tool to ask a question to other agents"
                     + (" and the human user" if self.broadcast_mode == "human" else "")
                     + " for collaborative problem-solving. Use this when you need input, coordination, or decisions from the team. "
-                    + "Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
+                    + sensitivity_guidance
+                    + " Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -114,7 +135,8 @@ class BroadcastToolkit(BaseToolkit):
                         "Call this tool to ask a question to other agents"
                         + (" and the human user" if self.broadcast_mode == "human" else "")
                         + " for collaborative problem-solving. Use this when you need input, coordination, or decisions from the team. "
-                        + "Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
+                        + sensitivity_guidance
+                        + " Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
                     ),
                     "parameters": {
                         "type": "object",

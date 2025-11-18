@@ -48,6 +48,10 @@ class CoordinationConfig:
                   - False: Broadcasting disabled (default)
                   - "agents": Agent-to-agent communication only
                   - "human": Agents can ask agents + human (human gets prompted)
+        broadcast_sensitivity: How frequently agents should use ask_others() for collaboration.
+                             - "low": Only for critical decisions/when blocked
+                             - "medium": For significant decisions and design choices (default)
+                             - "high": Frequently - whenever considering options or proposing approaches
         broadcast_timeout: Maximum time to wait for broadcast responses (seconds).
         broadcast_wait_by_default: If True, ask_others() blocks until responses collected (blocking mode).
                                    If False, ask_others() returns immediately for polling (polling mode).
@@ -65,6 +69,7 @@ class CoordinationConfig:
     enable_agent_task_planning: bool = False
     max_tasks_per_plan: int = 10
     broadcast: Any = False  # False | "agents" | "human"
+    broadcast_sensitivity: str = "medium"  # "low" | "medium" | "high"
     broadcast_timeout: int = 300
     broadcast_wait_by_default: bool = True
     broadcast_response_mode: str = "inline"  # "inline" | "background"

@@ -2527,6 +2527,29 @@ class ConfigBuilder:
                 console.print()
                 console.print("  ✅ Agent and human communication enabled - you'll be prompted when agents ask questions")
 
+            # Broadcast Sensitivity (if broadcasts enabled)
+            if broadcast_input in ["a", "h"]:
+                console.print()
+                console.print("  [dim]Broadcast Sensitivity: How frequently agents use ask_others()[/dim]")
+                console.print("  [dim]• Low: Only for critical decisions or when blocked[/dim]")
+                console.print("  [dim]• Medium: For significant decisions and design choices (recommended)[/dim]")
+                console.print("  [dim]• High: Frequently - whenever considering options or proposing approaches[/dim]")
+                console.print()
+
+                sensitivity_input = Prompt.ask(
+                    "  [prompt]Broadcast sensitivity level?[/prompt]",
+                    choices=["l", "m", "h"],
+                    default="m",
+                    show_choices=False,
+                )
+
+                console.print("  [dim]Choices: (l) Low / (m) Medium / (h) High[/dim]")
+
+                sensitivity_map = {"l": "low", "m": "medium", "h": "high"}
+                orchestrator_config["coordination"]["broadcast_sensitivity"] = sensitivity_map[sensitivity_input]
+                console.print()
+                console.print(f"  ✅ Broadcast sensitivity set to: {sensitivity_map[sensitivity_input]}")
+
             # Orchestration Restart Feature
             console.print()
             console.print("  [dim]Orchestration Restart: Automatic quality checks with self-correction[/dim]")
