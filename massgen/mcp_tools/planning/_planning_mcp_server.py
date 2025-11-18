@@ -329,7 +329,7 @@ async def create_server() -> fastmcp.FastMCP:
                 cleanup_tasks.append(
                     {
                         "id": "save_memories",
-                        "description": "Save important findings and learnings to memory",
+                        "description": "Document decisions to optimize future work: skill/tool effectiveness, approach patterns, lessons learned, user preferences",
                         "priority": "medium",
                     },
                 )
@@ -348,6 +348,7 @@ async def create_server() -> fastmcp.FastMCP:
                     description=task_spec["description"],
                     task_id=task_spec["id"],
                     depends_on=task_spec.get("depends_on", []),
+                    priority=task_spec.get("priority", "medium"),
                 )
                 created_tasks.append(task.to_dict())
 
@@ -378,6 +379,7 @@ async def create_server() -> fastmcp.FastMCP:
         description: str,
         after_task_id: Optional[str] = None,
         depends_on: Optional[List[str]] = None,
+        priority: str = "medium",
     ) -> Dict[str, Any]:
         """
         Add a new task to the plan.
@@ -386,24 +388,36 @@ async def create_server() -> fastmcp.FastMCP:
             description: Task description
             after_task_id: Optional ID to insert after (otherwise appends)
             depends_on: Optional list of task IDs this task depends on
+            priority: Task priority (low/medium/high, defaults to medium)
 
         Returns:
             Dictionary with new task details
 
         Example:
-            # Add task with dependencies
+            # Add high-priority task with dependencies
             add_task(
                 "Deploy to production",
-                depends_on=["run_tests", "update_docs"]
+                depends_on=["run_tests", "update_docs"],
+                priority="high"
             )
         """
         try:
+            # Validate priority
+            valid_priorities = ["low", "medium", "high"]
+            if priority not in valid_priorities:
+                return {
+                    "success": False,
+                    "operation": "add_task",
+                    "error": f"Invalid priority '{priority}'. Must be one of: {', '.join(valid_priorities)}",
+                }
+
             plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id)
 
             task = plan.add_task(
                 description=description,
                 after_task_id=after_task_id,
                 depends_on=depends_on or [],
+                priority=priority,
             )
 
             # Save to filesystem if configured

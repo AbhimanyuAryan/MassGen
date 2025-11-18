@@ -959,6 +959,39 @@ class CustomToolAndMCPBackend(LLMBackend):
             # Append result to messages
             self._append_tool_result_message(updated_messages, call, result, config.tool_type)
 
+            # Check for reminder in tool result and inject as separate user message
+            reminder_text = None
+            if config.tool_type == "mcp" and result_obj:
+                # MCP results are CallToolResult objects - need to parse JSON from content
+                try:
+                    import json
+
+                    json_str = None
+                    if hasattr(result_obj, "content") and isinstance(result_obj.content, list):
+                        if len(result_obj.content) > 0 and hasattr(result_obj.content[0], "text"):
+                            json_str = result_obj.content[0].text
+                    elif isinstance(result_obj, dict):
+                        # Already a dict (some MCP servers return dicts directly)
+                        reminder_text = result_obj.get("reminder")
+
+                    if json_str:
+                        result_dict = json.loads(json_str)
+                        if isinstance(result_dict, dict):
+                            reminder_text = result_dict.get("reminder")
+                except (json.JSONDecodeError, AttributeError, IndexError, TypeError) as e:
+                    logger.debug(f"Could not parse MCP result for reminder: {e}")
+            elif config.tool_type == "custom" and isinstance(result, dict):
+                reminder_text = result.get("reminder")
+
+            if reminder_text and isinstance(reminder_text, str):
+                # Inject reminder as a user message (appears prominently, not buried in JSON)
+                reminder_message = {
+                    "role": "user",
+                    "content": f"\n{'='*60}\n⚠️  SYSTEM REMINDER\n{'='*60}\n\n{reminder_text}\n\n{'='*60}\n",
+                }
+                updated_messages.append(reminder_message)
+                logger.info(f"[Tool Reminder] Injected reminder from {tool_name}: {reminder_text[:100]}...")
+
             # Yield results chunk
             # For MCP tools, try to extract text from result_obj if available
             display_result = result_str
@@ -1462,6 +1495,8 @@ class CustomToolAndMCPBackend(LLMBackend):
         # Convert result to string for compatibility and return tuple
         if isinstance(result, dict) and "error" in result:
             return f"Error: {result['error']}", result
+
+        # Note: Reminder injection happens in _execute_tool_with_logging, not here
         return str(result), result
 
     async def _process_upload_files(
