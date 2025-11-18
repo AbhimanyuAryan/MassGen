@@ -507,13 +507,17 @@ class GeminiBackend(CustomToolAndMCPBackend):
 
                                         # Create call record
                                         call_id = f"call_{len(captured_function_calls)}"
-                                        captured_function_calls.append(
-                                            {
-                                                "call_id": call_id,
-                                                "name": tool_name,
-                                                "arguments": json.dumps(tool_args),
-                                            },
-                                        )
+                                        call_record = {
+                                            "call_id": call_id,
+                                            "name": tool_name,
+                                            "arguments": json.dumps(tool_args),
+                                        }
+
+                                        # Capture thought_signature if present (required for Gemini 3.x models)
+                                        if hasattr(part, "thought_signature") and part.thought_signature:
+                                            call_record["thought_signature"] = part.thought_signature
+
+                                        captured_function_calls.append(call_record)
 
                                         logger.info(f"[Gemini] Function call detected: {tool_name}")
 
@@ -826,12 +830,14 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                 args_payload = {}
                         if not isinstance(args_payload, dict):
                             args_payload = {}
-                        model_parts.append(
-                            types.Part.from_function_call(
-                                name=call.get("name", ""),
-                                args=args_payload,
-                            ),
+                        part = types.Part.from_function_call(
+                            name=call.get("name", ""),
+                            args=args_payload,
                         )
+                        # Preserve thought_signature if present (required for Gemini 3.x models)
+                        if "thought_signature" in call:
+                            part.thought_signature = call["thought_signature"]
+                        model_parts.append(part)
                     if model_parts:
                         conversation_history.append(types.Content(parts=model_parts, role="model"))
 
@@ -874,13 +880,17 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                                 tool_name = part.function_call.name
                                                 tool_args = dict(part.function_call.args) if part.function_call.args else {}
                                                 call_id = f"call_{len(new_function_calls)}"
-                                                new_function_calls.append(
-                                                    {
-                                                        "call_id": call_id,
-                                                        "name": tool_name,
-                                                        "arguments": json.dumps(tool_args),
-                                                    },
-                                                )
+                                                call_record = {
+                                                    "call_id": call_id,
+                                                    "name": tool_name,
+                                                    "arguments": json.dumps(tool_args),
+                                                }
+
+                                                # Capture thought_signature if present (required for Gemini 3.x models)
+                                                if hasattr(part, "thought_signature") and part.thought_signature:
+                                                    call_record["thought_signature"] = part.thought_signature
+
+                                                new_function_calls.append(call_record)
 
                         if hasattr(chunk, "text") and chunk.text:
                             chunk_text = chunk.text
@@ -1089,12 +1099,14 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                     args_payload = {}
                             if not isinstance(args_payload, dict):
                                 args_payload = {}
-                            model_parts.append(
-                                types.Part.from_function_call(
-                                    name=call.get("name", ""),
-                                    args=args_payload,
-                                ),
+                            part = types.Part.from_function_call(
+                                name=call.get("name", ""),
+                                args=args_payload,
                             )
+                            # Preserve thought_signature if present (required for Gemini 3.x models)
+                            if "thought_signature" in call:
+                                part.thought_signature = call["thought_signature"]
+                            model_parts.append(part)
                         if model_parts:
                             conversation_history.append(types.Content(parts=model_parts, role="model"))
 
