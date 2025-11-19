@@ -129,8 +129,7 @@ Quick Start
 Get started with MassGen in minutes. First, ensure you have Python 3.11+ and pip installed, then create a virtual environment with uv:
 .. code-block:: bash
 
-   uv venv create massgen-env python=3.11
-   uv venv activate massgen-env
+   uv venv
 
 **Install:**
 
