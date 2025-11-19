@@ -51,7 +51,7 @@ class FilesystemManager:
         command_line_allowed_commands: List[str] = None,
         command_line_blocked_commands: List[str] = None,
         command_line_execution_mode: str = "local",
-        command_line_docker_image: str = "massgen/mcp-runtime:latest",
+        command_line_docker_image: str = "ghcr.io/massgen/mcp-runtime:latest",
         command_line_docker_memory_limit: Optional[str] = None,
         command_line_docker_cpu_limit: Optional[float] = None,
         command_line_docker_network_mode: str = "none",
