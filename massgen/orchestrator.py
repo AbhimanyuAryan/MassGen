@@ -417,7 +417,9 @@ class Orchestrator(ChatAgent):
             self.agent_states[agent_id].paraphrase = paraphrase
 
         # Log at INFO level so users know paraphrasing is active
-        logger.info(f" DSPy paraphrasing enabled: {len(variants)} variant(s) generated and assigned to {len(agent_ids)} agent(s)")
+        logger.info(f"DSPy paraphrasing enabled: {len(variants)} variant(s) generated and assigned to {len(agent_ids)} agent(s)")
+        for agent_id, paraphrase in self._agent_paraphrases.items():
+            logger.info(f"  {agent_id}: {paraphrase}")
 
         log_coordination_step(
             "DSPy paraphrases prepared",
@@ -1953,6 +1955,13 @@ Your answer:"""
         - agent_id/timestamp/vote.json - Contains the vote data (if provided)
         - agent_id/timestamp/context.txt - Contains the context used (if provided)
 
+        Note on vote-only snapshots:
+            When saving a vote without an answer (vote_data only), workspace snapshots are
+            intentionally skipped. During voting, agents may create temporary verification
+            files (e.g., check.py, test scripts) to help evaluate answers. Saving these would
+            overwrite the actual deliverable files from the previous answer snapshot. The
+            vote.json and context.txt are still saved for tracking purposes.
+
         Args:
             agent_id: ID of the agent
             answer_content: The answer content to save (if provided)
@@ -2056,14 +2065,19 @@ Your answer:"""
                 logger.error(f"[Orchestrator._save_agent_snapshot] Traceback: {traceback.format_exc()}")
 
         # Save workspace snapshot with the same timestamp
+        # Skip workspace saving for votes - workspace should be preserved from previous answer
         if agent.backend.filesystem_manager:
-            logger.info(f"[Orchestrator._save_agent_snapshot] Agent {agent_id} has filesystem_manager, calling save_snapshot with timestamp={timestamp if not is_final else None}")
-            await agent.backend.filesystem_manager.save_snapshot(timestamp=timestamp if not is_final else None, is_final=is_final)
+            if vote_data and not answer_content and not is_final:
+                # Vote only - skip workspace snapshot to preserve previous answer's workspace
+                logger.info("[Orchestrator._save_agent_snapshot] Skipping workspace snapshot for vote (preserving previous workspace)")
+            else:
+                logger.info(f"[Orchestrator._save_agent_snapshot] Agent {agent_id} has filesystem_manager, calling save_snapshot with timestamp={timestamp if not is_final else None}")
+                await agent.backend.filesystem_manager.save_snapshot(timestamp=timestamp if not is_final else None, is_final=is_final)
 
-            # Clear workspace after saving snapshot (but not for final snapshots)
-            if not is_final:
-                agent.backend.filesystem_manager.clear_workspace()
-                logger.info(f"[Orchestrator._save_agent_snapshot] Cleared workspace for {agent_id} after saving snapshot")
+                # Clear workspace after saving snapshot (but not for final snapshots)
+                if not is_final:
+                    agent.backend.filesystem_manager.clear_workspace()
+                    logger.info(f"[Orchestrator._save_agent_snapshot] Cleared workspace for {agent_id} after saving snapshot")
         else:
             logger.info(f"[Orchestrator._save_agent_snapshot] Agent {agent_id} does not have filesystem_manager")
 

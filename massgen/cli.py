@@ -124,6 +124,56 @@ MASSGEN_QUESTIONARY_STYLE = Style(
 )
 
 
+def read_multiline_input(prompt: str) -> str:
+    """Read user input with support for multi-line input using triple quotes.
+
+    If input starts with ''' or \""", continues reading until closing quotes.
+    Otherwise returns single line input.
+
+    Args:
+        prompt: The prompt to display to the user
+
+    Returns:
+        The complete user input (single or multi-line)
+    """
+    first_line = input(prompt).strip()
+
+    # Check for multi-line delimiters
+    if first_line.startswith('"""'):
+        delimiter = '"""'
+        content = first_line[3:]  # Remove opening delimiter
+    elif first_line.startswith("'''"):
+        delimiter = "'''"
+        content = first_line[3:]  # Remove opening delimiter
+    else:
+        # Single line input
+        return first_line
+
+    # Check if closing delimiter is on the same line
+    if delimiter in content:
+        return content[: content.index(delimiter)]
+
+    # Multi-line mode: read until closing delimiter
+    lines = [content] if content else []
+    print(f"   {BRIGHT_CYAN}(Multi-line mode: enter {delimiter} on a new line to finish){RESET}", flush=True)
+
+    while True:
+        try:
+            line = input("   ")
+            if delimiter in line:
+                # Found closing delimiter
+                before_delimiter = line[: line.index(delimiter)]
+                if before_delimiter:
+                    lines.append(before_delimiter)
+                break
+            lines.append(line)
+        except EOFError:
+            # Handle Ctrl+D
+            break
+
+    return "\n".join(lines)
+
+
 class ConfigurationError(Exception):
     """Configuration error for CLI."""
 
@@ -2475,6 +2525,7 @@ def print_help_messages():
 
     help_content = """[dim]💬  Type your questions below
 💡  Use slash commands: [cyan]/help[/cyan], [cyan]/quit[/cyan], [cyan]/reset[/cyan], [cyan]/status[/cyan], [cyan]/config[/cyan]
+📝  For multi-line input: start with [cyan]\"\"\"[/cyan] or [cyan]\'\'\'[/cyan]
 ⌨️   Press [cyan]Ctrl+C[/cyan] to exit[/dim]"""
 
     help_panel = Panel(
@@ -2699,7 +2750,7 @@ async def run_interactive_mode(
                     rich_console.print(f"\n[bold blue]👤 User:[/bold blue] {question}")
                     initial_question = None  # Clear so we prompt on subsequent turns
                 else:
-                    question = input(f"\n{BRIGHT_BLUE}👤 User:{RESET} ").strip()
+                    question = read_multiline_input(f"\n{BRIGHT_BLUE}👤 User:{RESET} ")
 
                 # Handle slash commands
                 if question.startswith("/"):
@@ -2731,6 +2782,12 @@ async def run_interactive_mode(
                         )
                         print("   /status              - Show current status", flush=True)
                         print("   /config              - Open config file in editor", flush=True)
+                        print(f"\n{BRIGHT_CYAN}💡 Multi-line Input:{RESET}", flush=True)
+                        print("   Start with \"\"\" or ''' and end with the same delimiter", flush=True)
+                        print('   Example: """', flush=True)
+                        print("            Your multi-line", flush=True)
+                        print("            input here", flush=True)
+                        print('            """', flush=True)
                         continue
                     elif command == "/status":
                         print(f"\n{BRIGHT_CYAN}📊 Current Status:{RESET}", flush=True)

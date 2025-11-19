@@ -322,9 +322,19 @@ class CodeBasedToolsSection(SystemPromptSection):
     Agents discover tools by exploring servers/, read docstrings, and call via imports.
 
     MEDIUM priority - important for tool discovery and usage.
+
+    Args:
+        workspace_path: Path to agent's workspace
+        shared_tools_path: Optional path to shared tools directory
+        mcp_servers: List of MCP server configurations (for fetching descriptions)
     """
 
-    def __init__(self, workspace_path: str, shared_tools_path: str = None):
+    def __init__(
+        self,
+        workspace_path: str,
+        shared_tools_path: str = None,
+        mcp_servers: List[Dict[str, Any]] = None,
+    ):
         super().__init__(
             title="Code-Based Tools",
             priority=Priority.MEDIUM,
@@ -332,6 +342,7 @@ class CodeBasedToolsSection(SystemPromptSection):
         )
         self.workspace_path = workspace_path
         self.shared_tools_path = shared_tools_path
+        self.mcp_servers = mcp_servers or []
         # Use shared tools path if available, otherwise workspace
         self.tools_location = shared_tools_path if shared_tools_path else workspace_path
 
@@ -371,6 +382,27 @@ class CodeBasedToolsSection(SystemPromptSection):
             if tool_descriptions:
                 custom_tools_list = "\n\n**Available Custom Tools:**\n" + "\n".join(tool_descriptions)
 
+        # Fetch MCP server descriptions from registry
+        mcp_servers_list = ""
+        if self.mcp_servers:
+            try:
+                from massgen.mcp_tools.registry_client import (
+                    get_mcp_server_descriptions,
+                )
+
+                mcp_descriptions = get_mcp_server_descriptions(self.mcp_servers)
+                if mcp_descriptions:
+                    mcp_items = [f"- **{name}**: {desc}" for name, desc in mcp_descriptions.items()]
+                    mcp_servers_list = "\n\n**Available MCP Servers:**\n" + "\n".join(mcp_items)
+            except Exception as e:
+                import logging
+
+                logging.getLogger(__name__).warning(f"Failed to fetch MCP descriptions: {e}")
+                # Fall back to just showing server names
+                server_names = [s.get("name", "unknown") for s in self.mcp_servers]
+                if server_names:
+                    mcp_servers_list = "\n\n**Available MCP Servers:** " + ", ".join(server_names)
+
         return f"""## Available Tools (Code-Based Access)
 
 Tools are available as **Python code** in your workspace filesystem. Discover and call them like regular Python modules (e.g., use normal search tools such as `rg` or `sg`){location_note}
@@ -393,7 +425,7 @@ Tools are available as **Python code** in your workspace filesystem. Discover an
 Your workspace/
 └── utils/               # CREATE THIS - for your scripts (workflows, async, filtering)
     └── [write your own scripts here as needed]
-```{custom_tools_list}
+```{mcp_servers_list}{custom_tools_list}
 
 **Important:** All tools and servers listed here are already configured and ready to use. If a tool requires API keys, they are already available - we only show tools you can actually use.
 

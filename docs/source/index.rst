@@ -126,20 +126,24 @@ Modular skills framework with automatic discovery and file search capabilities, 
 Quick Start
 -----------
 
-Get started with MassGen in minutes:
+Get started with MassGen in minutes. First, ensure you have Python 3.11+ and pip installed, then create a virtual environment with uv:
+.. code-block:: bash
+
+   uv venv create massgen-env python=3.11
+   uv venv activate massgen-env
 
 **Install:**
 
 .. code-block:: bash
 
-   pip install massgen
+   uv pip install massgen
 
 **Option 1: Use the setup wizard (recommended for first time):**
 
 .. code-block:: bash
 
    # Run without arguments to launch the interactive setup wizard
-   massgen
+   uv run massgen
 
 The wizard will guide you through configuring your API keys and creating your first agent team.
 
@@ -148,24 +152,24 @@ After setup, you can:
 .. code-block:: bash
 
    # Run a single query with your configured agents
-   massgen "Your question here"
+   uv run massgen "Your question here"
 
    # Or start an interactive conversation (no prompt needed)
-   massgen
+   uv run massgen
 
 **Option 2: Quick single-agent test:**
 
 .. code-block:: bash
 
    # No config needed - specify model directly
-   massgen --model gemini-2.5-flash "What are LLM agents?"
+   uv run massgen --model gemini-2.5-flash "What are LLM agents?"
 
 **Option 3: Multi-agent collaboration:**
 
 .. code-block:: bash
 
    # Use a built-in configuration
-   massgen --config @examples/basic/multi/three_agents_default \
+   uv run massgen --config @examples/basic/multi/three_agents_default \
      "What are the pros and cons of renewable energy?"
 
 Watch agents discuss, vote, and converge on the best answer in real-time!
