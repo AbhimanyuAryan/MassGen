@@ -18,6 +18,7 @@
 # - Shared tools directory (tools generated once, not duplicated in snapshots)
 #
 # Prerequisites:
+# 0. Run `./scripts/init.sh`
 # 1. Create .env file with API keys (see .env.example)
 # 2. Docker running (for docker execution mode)
 #
