@@ -186,8 +186,7 @@ uv pip install massgen
 uv run massgen --quickstart  # Walk through agent setup and start interactive mode
 
 # Parallel Tool Execution - concurrent tool execution with configurable limits
-uv run python -m massgen.cli \
-  --config massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml \
+uv run massgen --config massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml \
   "whats the sum of 123 and 456? and whats the weather of Tokyo and london?"
 
 # Gemini 3 Pro - Google's latest model with function calling
