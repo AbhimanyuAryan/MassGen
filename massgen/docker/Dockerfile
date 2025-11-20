@@ -22,6 +22,8 @@ ENV PYTHONUNBUFFERED=1 \
 # - build-essential: Compiling Python packages with C extensions
 # - ripgrep: Fast text search (REQUIRED for filesystem-first mode)
 # - unzip: For extracting ast-grep binary
+# - ffmpeg: Video encoding (for VHS terminal recording)
+# - golang-go: Go runtime (for VHS installation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -29,6 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ripgrep \
     unzip \
+    ffmpeg \
+    golang-go \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x (LTS) for JavaScript execution
@@ -102,6 +106,11 @@ USER massgen
 # Enables uvx for running tools like serena on-demand without permanent installation
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/home/massgen/.local/bin:${PATH}"
+
+# Install VHS terminal recorder (for terminal evaluation/recording)
+# https://github.com/charmbracelet/vhs
+RUN go install github.com/charmbracelet/vhs@latest
+ENV PATH="/home/massgen/go/bin:${PATH}"
 
 # Default command: Keep container running (overridden at runtime)
 CMD ["tail", "-f", "/dev/null"]
