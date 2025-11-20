@@ -27,7 +27,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
 
 import anthropic
 import httpx
@@ -69,6 +69,10 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Override to ensure Files API cleanup happens after streaming completes."""
+        if self._nlip_enabled:
+            logger.info(
+                f"[Claude] NLIP routing enabled for agent {kwargs.get('agent_id', self.agent_id)}",
+            )
         try:
             async for chunk in super().stream_with_tools(messages, tools, **kwargs):
                 yield chunk
@@ -925,33 +929,103 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                     "call_id": tool_call["id"],  # Normalize "id" to "call_id"
                 }
 
-            # Execute custom tools using unified method
-            for tool_call in custom_tool_calls:
-                # Normalize Claude tool call format to unified format
-                normalized_call = normalize_tool_call(tool_call)
+            processed_call_ids: Set[str] = set()
 
-                # Use unified execution method
-                async for chunk in self._execute_tool_with_logging(
-                    normalized_call,
-                    CUSTOM_TOOL_CONFIG,
-                    updated_messages,
-                    set(),
+            normalized_custom_calls = [normalize_tool_call(tc) for tc in custom_tool_calls]
+            normalized_mcp_calls = [normalize_tool_call(tc) for tc in mcp_tool_calls]
+
+            def chunk_adapter(chunk: StreamChunk) -> StreamChunk:
+                return chunk
+
+            nlip_available = self._nlip_enabled and self._nlip_router
+
+            pending_custom_calls: List[Dict[str, Any]] = []
+            for call in normalized_custom_calls:
+                handled_via_nlip = False
+                if nlip_available:
+                    logger.info(f"[NLIP] Using NLIP routing for custom tool {call['name']}")
+                    try:
+                        async for chunk in self._stream_tool_execution_via_nlip(
+                            call,
+                            CUSTOM_TOOL_CONFIG,
+                            updated_messages,
+                            processed_call_ids,
+                        ):
+                            yield chunk_adapter(chunk)
+                        handled_via_nlip = True
+                    except Exception as exc:
+                        logger.warning(
+                            f"[NLIP] Routing failed for {call['name']}: {exc}. Falling back to direct execution.",
+                        )
+                        async for chunk in self._execute_tool_with_logging(
+                            call,
+                            CUSTOM_TOOL_CONFIG,
+                            updated_messages,
+                            processed_call_ids,
+                        ):
+                            yield chunk_adapter(chunk)
+                        handled_via_nlip = True
+
+                if not handled_via_nlip:
+                    reason = "disabled" if not self._nlip_enabled else "router unavailable"
+                    logger.info(
+                        f"[Custom Tool] Direct execution for {call['name']} (NLIP {reason})",
+                    )
+                    pending_custom_calls.append(call)
+
+            pending_mcp_calls: List[Dict[str, Any]] = []
+            for call in normalized_mcp_calls:
+                handled_via_nlip = False
+                if nlip_available:
+                    logger.info(f"[NLIP] Using NLIP routing for MCP tool {call['name']}")
+                    try:
+                        async for chunk in self._stream_tool_execution_via_nlip(
+                            call,
+                            MCP_TOOL_CONFIG,
+                            updated_messages,
+                            processed_call_ids,
+                        ):
+                            yield chunk_adapter(chunk)
+                        handled_via_nlip = True
+                    except Exception as exc:
+                        logger.warning(
+                            f"[NLIP] Routing failed for {call['name']}: {exc}. Falling back to direct execution.",
+                        )
+                        async for chunk in self._execute_tool_with_logging(
+                            call,
+                            MCP_TOOL_CONFIG,
+                            updated_messages,
+                            processed_call_ids,
+                        ):
+                            yield chunk_adapter(chunk)
+                        handled_via_nlip = True
+
+                if not handled_via_nlip:
+                    reason = "disabled" if not self._nlip_enabled else "router unavailable"
+                    logger.info(
+                        f"[MCP Tool] Direct execution for {call['name']} (NLIP {reason})",
+                    )
+                    pending_mcp_calls.append(call)
+
+            remaining_calls = pending_custom_calls + pending_mcp_calls
+
+            if remaining_calls:
+                all_params_local = {**self.config, **kwargs}
+
+                def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+                    tool_name = call.get("name", "")
+                    return CUSTOM_TOOL_CONFIG if tool_name in (self._custom_tool_names or set()) else MCP_TOOL_CONFIG
+
+                async for adapted_chunk in self._execute_tool_calls(
+                    all_calls=remaining_calls,
+                    tool_config_for_call=tool_config_for_call,
+                    all_params=all_params_local,
+                    updated_messages=updated_messages,
+                    processed_call_ids=processed_call_ids,
+                    log_prefix="[Claude]",
+                    chunk_adapter=chunk_adapter,
                 ):
-                    yield chunk
-
-            # Execute MCP tools using unified method
-            for tool_call in mcp_tool_calls:
-                # Normalize Claude tool call format to unified format
-                normalized_call = normalize_tool_call(tool_call)
-
-                # Use unified execution method
-                async for chunk in self._execute_tool_with_logging(
-                    normalized_call,
-                    MCP_TOOL_CONFIG,
-                    updated_messages,
-                    set(),
-                ):
-                    yield chunk
+                    yield adapted_chunk
 
             updated_messages = self._trim_message_history(updated_messages)
 

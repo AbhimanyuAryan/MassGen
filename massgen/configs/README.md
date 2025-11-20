@@ -227,7 +227,248 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.9 - Latest
+### v0.1.14 - Latest
+**New Features:** Parallel Tool Execution, Interactive Quickstart, Gemini 3 Pro Support & MCP Registry Client
+
+**Configuration Files:**
+- `tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml` - Parallel tool execution example with configurable concurrency
+- `providers/gemini/gemini_3_pro.yaml` - Configuration for Gemini 3 Pro model with function calling
+- `tools/filesystem/code_based/example_code_based_tools.yaml` - Enhanced instructions for code-based tools
+- `.github/workflows/docker-publish.yml` - Automated Docker build and publish workflow
+
+**Key Features:**
+- **Parallel Tool Execution System**: Configurable concurrent tool execution across all backends with asyncio-based scheduling and semaphore limits
+- **Gemini 3 Pro Support**: Full integration for Google's Gemini 3 Pro model with native function calling capabilities
+- **Interactive Quickstart Workflow**: Streamlined onboarding experience with guided configuration creation and improved UX
+- **MCP Registry Client**: Enhanced server metadata fetching from official MCP registry for better agent understanding
+- **Planning System Enhancements**: Improved skill and tool search capabilities in planning mode for better agent decision-making
+- **NLIP Routing Streamlining**: Unified execution flow across backends with simplified routing implementation
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Interactive Quickstart - guided configuration creation
+uv run massgen --quickstart  # Walk through agent setup and start interactive mode
+
+# Parallel Tool Execution - concurrent tool execution with configurable limits
+# Prerequisites: .env with OPENAI_API_KEY, npx available for MCP weather server
+uv run python -m massgen.cli \
+  --config massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml \
+  "whats the sum of 123 and 456? and whats the weather of Tokyo and london?"
+
+# Gemini 3 Pro - Google's latest model with function calling
+# Prerequisites: Docker running, GOOGLE_API_KEY in .env
+uv run massgen --config massgen/configs/providers/gemini/gemini_3_pro.yaml \
+  "Create a website about Bob Dylan"
+
+# Enhanced Config Builder - interactive configuration wizard
+uv run massgen --init  # Full configuration wizard with use case selection
+
+# MCP Registry Client - automatic server description integration
+# Prerequisites: OPENAI_API_KEY in .env, npx for MCP server
+uv run massgen --config @examples/tools/mcp/gpt5_nano_mcp_example \
+  "whats the weather of Tokyo"
+```
+
+### v0.1.13
+**New Features:** Code-Based Tools, MCP Registry, Skills Installation & NLIP Integration
+
+**Configuration Files:**
+- `tools/filesystem/code_based/example_code_based_tools.yaml` - Code-based tools with auto-discovery and shared tools directory
+- `tools/filesystem/exclude_mcps/test_minimal_mcps.yaml` - Minimal MCPs with command-line file operations
+- `examples/nlip_basic.yaml` - Basic NLIP protocol support with router and translation settings
+- `examples/nlip_openai_weather_test.yaml` - OpenAI with NLIP integration for custom tools and MCP servers
+- `examples/nlip_orchestrator_test.yaml` - Orchestrator-level NLIP configuration for multi-agent coordination
+
+**Key Features:**
+- **Code-Based Tools (CodeAct Paradigm)**: Revolutionary tool integration via importable Python code, reducing token usage by 98%
+- **MCP Server Registry**: Auto-discovery and intelligent tool routing with on-demand loading
+- **Skills Installation System**: Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI
+- **NLIP Integration**: Advanced tool routing with Natural Language Interface Protocol across all backends
+- **Shared Tools Directory**: Tools generated once and shared across all agents to avoid duplication
+- **Auto-Discover Custom Tools**: Automatically discover and load all tools from `massgen/tool/` directory
+- **Exclude File Operation MCPs**: Use command-line tools for file operations to reduce MCP overhead
+- **TOOL.md Documentation Standard**: Standardized documentation format for all custom tools
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Automated Skills Installation - cross-platform setup
+massgen --setup-skills  # Installs openskills CLI, Anthropic skills, and Crawl4AI
+
+# Code-Based Tools with Auto-Discovery - demonstrates 98% context reduction
+# Prerequisites: Docker running, .env file with API keys (OPENAI_API_KEY, GOOGLE_API_KEY, etc.)
+uv run massgen --automation \
+  --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "List all available tools by exploring the workspace filesystem. Show what MCP tools and custom tools are available."
+
+# Or use with skills for advanced features (e.g., website creation):
+uv run massgen --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "Create a website about Bob Dylan, ensuring that it is visually appealing and user friendly"
+
+# Minimal MCPs - test memory and task planning with reduced tool overhead
+# Prerequisites: Docker running
+uv run massgen --config massgen/configs/tools/filesystem/exclude_mcps/test_minimal_mcps.yaml \
+  "Create a website about Bob Dylan"
+
+# NLIP Integration - natural language tool routing with OpenAI
+# Prerequisites: OPENAI_API_KEY in .env, weather MCP (npx -y @fak111/weather-mcp)
+massgen --config massgen/configs/examples/nlip_openai_weather_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
+
+# Orchestrator-level NLIP - multi-agent coordination with NLIP routing
+# Prerequisites: OPENAI_API_KEY, CEREBRAS_API_KEY in .env
+massgen --config massgen/configs/examples/nlip_orchestrator_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
+```
+
+### v0.1.12
+**New Features:** System Prompt Architecture Refactoring, Semantic Skills & Multi-Agent Computer Use
+
+**Configuration Files:**
+- `skills/skills_basic.yaml` - Enhanced skills system with semantic search and code understanding
+- `tools/custom_tools/multi_agent_computer_use_example.yaml` - Multi-agent computer automation with Claude (Docker) and Gemini (Browser)
+- `tools/custom_tools/gemini_computer_use_docker_example.yaml` - Gemini computer use with Docker integration
+- `tools/custom_tools/claude_computer_use_docker_example.yaml` - Claude computer use with Docker integration
+
+**Key Features:**
+- **System Prompt Architecture**: Complete refactoring with hierarchical structure, XML-based formatting for Claude, improved LLM attention management
+- **Semtools Skill**: Semantic search capabilities using embedding-based similarity for intelligent file and code discovery
+- **Serena Skill**: Symbol-level code understanding via LSP integration for precise code navigation and analysis
+- **Skills System Enhancements**: Local execution mode support enabling skills to run outside Docker environments
+- **Enhanced Computer Use**: Docker integration for Linux desktop automation with VNC visualization and X11 display support
+- **Multi-Agent Coordination**: Combined Claude (Docker/Linux) and Gemini (Browser) computer use for complex automation workflows
+- **Browser Automation**: Screenshot file saving with automatic persistence to workspace directories
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Enhanced Skills System - semantic search and code understanding
+# Prerequisites: Docker daemon running (or install openskills locally)
+uv run massgen --config massgen/configs/skills/skills_basic.yaml \
+  "Create cool algorithmic art we can use in GitHub repo"
+
+# Multi-Agent Computer Use - Claude (Docker) + Gemini (Browser) coordination
+# Prerequisites:
+#   1. Set ANTHROPIC_API_KEY and GEMINI_API_KEY in .env
+#   2. Docker installed and running
+#   3. Run ./scripts/setup_docker_cua.sh for Claude Docker setup
+#   4. Install Playwright: pip install playwright && playwright install chromium
+uv run massgen --config massgen/configs/tools/custom_tools/multi_agent_computer_use_example.yaml \
+  "Search for latest Python releases online and create a summary document"
+
+# Gemini Computer Use with Docker - Linux desktop automation
+# Prerequisites:
+#   1. Set GEMINI_API_KEY in .env
+#   2. Docker running, run ./scripts/setup_docker_cua.sh
+#   3. pip install google-genai docker
+massgen --config massgen/configs/tools/custom_tools/gemini_computer_use_docker_example.yaml \
+  "Browse GitHub and find popular AI projects"
+```
+
+### v0.1.11
+**New Features:** Skills System, Memory MCP & Rate Limiting
+
+**Configuration Files:**
+- `skills/skills_basic.yaml` - Basic skills system with file search capabilities
+- `skills/skills_with_memory.yaml` - Skills with memory and task planning integration
+- `skills/skills_existing_filesystem.yaml` - Skills integrated into existing project filesystem
+- `rate_limits/rate_limits.yaml` - Rate limiting configuration for Gemini models
+
+**Key Features:**
+- **Skills System**: Modular prompting framework with automatic skill discovery from `massgen/skills/` directory, organized into `always/` (auto-included) and `optional/` categories
+- **Memory MCP Tool & Filesystem Integration**: MCP server for memory management with persistent markdown storage, simultaneous memory and filesystem operations for advanced workflows
+- **Rate Limiting System (Gemini)**: Multi-dimensional rate limiting (RPM, TPM, RPD) for Gemini models with graceful cooldown periods
+- **Enhanced Windows Support**: Improved Claude Code backend handling of long system prompts on Windows
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Skills System - enable domain-specific capabilities
+# Prerequisites: Docker daemon running (or install openskills locally)
+uv run massgen --config massgen/configs/skills/skills_basic.yaml \
+  "Create cool algorithmic art we can use in GitHub repo"
+
+# Memory with Skills and Task Planning - combined filesystem coordination
+# Prerequisites: Docker daemon running
+uv run massgen --config massgen/configs/skills/skills_with_memory.yaml \
+  "Research neural architectures and document findings"
+
+# Skills with Existing Filesystem - self-extension case study
+# Prerequisites: Docker daemon running
+uv run massgen --config massgen/configs/skills/skills_existing_filesystem.yaml \
+  "Analyze the MassGen codebase to identify common development workflows that could benefit from being codified as skills. Create 1-2 optional skills that would help future agents work more efficiently with the codebase."
+
+# Rate Limiting - manage API costs for Gemini models
+# Enable rate limiting for any configuration with --enable-rate-limiting flag
+massgen --backend gemini --model gemini-2.5-flash --enable-rate-limiting \
+  "Explain quantum computing"
+```
+
+### v0.1.10
+**New Features:** Framework Interoperability Streaming & Docker Enhancements
+
+**Configuration Files:**
+- `docker_custom_image.yaml` - Custom Docker image with pre-installed packages
+- `docker_github_readonly.yaml` - Docker with read-only GitHub access via gh CLI and git
+- `docker_full_dev_setup.yaml` - Full development environment with authentication
+- `langgraph_lesson_planner_example.yaml` - LangGraph workflow streaming
+- `smolagent_lesson_planner_example.yaml` - SmoLAgent framework streaming
+- `Dockerfile.custom-example` - Example Dockerfile for extending MassGen base image
+
+**Key Features:**
+- **Framework Interoperability Streaming**: Real-time intermediate step streaming for LangGraph and SmoLAgent with log/output distinction
+- **Docker Authentication Restructuring**: Nested `command_line_docker_credentials` with separate `mount` array and `env_vars` array
+- **Docker Custom Image Support**: Extend MassGen base image with your own packages via custom Dockerfiles
+- **Docker Package Management**: Preinstall packages via `command_line_docker_packages` array before agent execution
+- **Parallel Execution Safety**: Instance ID generation for safe parallel execution across all modes
+- **MassGen Handbook**: Comprehensive contributor documentation at https://massgen.github.io/Handbook/
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# LangGraph streaming - watch state graph workflow execution in real-time
+# Prerequisites:
+#   1. pip install langgraph langchain-openai langchain-core
+#   2. OPENAI_API_KEY environment variable must be set
+massgen --config @examples/tools/custom_tools/interop/langgraph_lesson_planner_example.yaml \
+  "Create a lesson plan for photosynthesis"
+
+# SmoLAgent streaming - see HuggingFace agent reasoning steps live
+# Prerequisites:
+#   1. pip install smolagents
+#   2. OPENAI_API_KEY environment variable must be set
+massgen --config @examples/tools/custom_tools/interop/smolagent_lesson_planner_example.yaml \
+  "Create a lesson plan for photosynthesis"
+
+# Docker custom image - use your own Docker image with preinstalled packages
+# Prerequisites:
+#   1. Docker daemon running
+#   2. Build the example custom image:
+#      docker build -t massgen-custom-test:v1 -f massgen/docker/Dockerfile.custom-example .
+uv run massgen --config @examples/configs/tools/code-execution/docker_custom_image.yaml \
+  "Verify custom packages: sklearn, matplotlib, seaborn, ipython, black, vim, htop, tree"
+
+# Docker with GitHub authentication - read-only repository access
+# Prerequisites:
+#   1. Docker daemon running
+#   2. Already logged in: gh auth login (or set GITHUB_TOKEN)
+#   3. Build the Docker image: bash massgen/docker/build.sh
+uv run massgen --config @examples/configs/tools/code-execution/docker_github_readonly.yaml \
+  "Test to see the most recent issues in the massgen/MassGen repo with the github cli"
+```
+
+### v0.1.9
 **New Features:** Session Management & Computer Use Tools
 
 **Configuration Files:**

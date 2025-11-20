@@ -20,12 +20,14 @@ TECHNICAL SOLUTION:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from ..api_params_handler._gemini_api_params_handler import GeminiAPIParamsHandler
+from ..configs.rate_limits import get_rate_limit_config
 from ..formatter._gemini_formatter import GeminiFormatter
 from ..logger_config import (
     log_backend_activity,
@@ -41,6 +43,7 @@ from .base_with_custom_tool_and_mcp import (
     ToolExecutionConfig,
 )
 from .gemini_utils import CoordinationResponse, PostEvaluationResponse
+from .rate_limiter import GlobalRateLimiter
 
 
 # Suppress Gemini SDK logger warning about non-text parts in response
@@ -109,6 +112,11 @@ class GeminiBackend(CustomToolAndMCPBackend):
         # Store Gemini-specific API key before calling parent init
         gemini_api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
+        # Extract and remove enable_rate_limit BEFORE calling parent init
+        # This prevents it from being stored in self.config and passed to Gemini SDK
+        enable_rate_limit = kwargs.pop("enable_rate_limit", False)
+        model_name = kwargs.get("model", "")
+
         # Call parent class __init__ - this initializes custom_tool_manager and MCP-related attributes
         super().__init__(gemini_api_key, **kwargs)
 
@@ -129,6 +137,55 @@ class GeminiBackend(CustomToolAndMCPBackend):
 
         # Active tool result capture during manual tool execution
         self._active_tool_result_store: Optional[Dict[str, str]] = None
+
+        # Initialize multi-dimensional rate limiter for Gemini API
+        # Supports RPM (Requests Per Minute), TPM (Tokens Per Minute), RPD (Requests Per Day)
+        # Configuration loaded from massgen/config/rate_limits.yaml
+        # This is shared across ALL instances of the SAME MODEL
+
+        if enable_rate_limit:
+            # Load rate limits from configuration
+            rate_config = get_rate_limit_config()
+            limits = rate_config.get_limits("gemini", model_name)
+
+            # Create a unique provider key for the rate limiter
+            # Use the full model name to distinguish between different models
+            provider_key = f"gemini-{model_name}" if model_name else "gemini-default"
+
+            # Initialize multi-dimensional rate limiter
+            self.rate_limiter = GlobalRateLimiter.get_multi_limiter_sync(
+                provider=provider_key,
+                rpm=limits.get("rpm"),
+                tpm=limits.get("tpm"),
+                rpd=limits.get("rpd"),
+            )
+
+            # Log the active rate limits
+            active_limits = []
+            if limits.get("rpm"):
+                active_limits.append(f"RPM: {limits['rpm']}")
+            if limits.get("tpm"):
+                active_limits.append(f"TPM: {limits['tpm']:,}")
+            if limits.get("rpd"):
+                active_limits.append(f"RPD: {limits['rpd']}")
+
+            if active_limits:
+                logger.info(
+                    f"[Gemini] Multi-dimensional rate limiter enabled for '{model_name}': " f"{', '.join(active_limits)}",
+                )
+            else:
+                logger.info(f"[Gemini] No rate limits configured for '{model_name}'")
+        else:
+            # No rate limiting - use a pass-through limiter
+            self.rate_limiter = None
+            logger.info(f"[Gemini] Rate limiting disabled for '{model_name}'")
+
+    def _get_rate_limiter_context(self):
+        """Get rate limiter context manager (or nullcontext if rate limiting is disabled)."""
+        if self.rate_limiter is not None:
+            return self.rate_limiter
+        else:
+            return contextlib.nullcontext()
 
     def _setup_permission_hooks(self):
         """Override base class - Gemini uses session-based permissions, not function hooks."""
@@ -194,6 +251,11 @@ class GeminiBackend(CustomToolAndMCPBackend):
             current_stage=self.coordination_stage,
         )
 
+        if self._nlip_enabled:
+            logger.info(
+                f"[Gemini] NLIP routing enabled for agent {agent_id or self.agent_id}",
+            )
+
         # Track whether MCP tools were actually used in this turn
         mcp_used = False
 
@@ -234,6 +296,10 @@ class GeminiBackend(CustomToolAndMCPBackend):
                         content="✅ [MCP] Tools initialized",
                         source="mcp_tools",
                     )
+
+            # Remove enable_rate_limit from kwargs if present (it's already been consumed in __init__)
+            # This prevents it from being passed to Gemini SDK API calls
+            kwargs.pop("enable_rate_limit", None)
 
             # Merge constructor config with stream kwargs
             all_params = {**self.config, **kwargs}
@@ -412,11 +478,13 @@ class GeminiBackend(CustomToolAndMCPBackend):
             # ====================================================================
             # Streaming Phase: Stream with simple function call detection
             # ====================================================================
-            stream = await client.aio.models.generate_content_stream(
-                model=model_name,
-                contents=full_content,
-                config=config,
-            )
+            # Use async streaming call with sessions/tools (with rate limiting if enabled)
+            async with self._get_rate_limiter_context():
+                stream = await client.aio.models.generate_content_stream(
+                    model=model_name,
+                    contents=full_content,
+                    config=config,
+                )
 
             # Simple list accumulation for function calls (no trackers)
             captured_function_calls = []
@@ -439,13 +507,17 @@ class GeminiBackend(CustomToolAndMCPBackend):
 
                                         # Create call record
                                         call_id = f"call_{len(captured_function_calls)}"
-                                        captured_function_calls.append(
-                                            {
-                                                "call_id": call_id,
-                                                "name": tool_name,
-                                                "arguments": json.dumps(tool_args),
-                                            },
-                                        )
+                                        call_record = {
+                                            "call_id": call_id,
+                                            "name": tool_name,
+                                            "arguments": json.dumps(tool_args),
+                                        }
+
+                                        # Capture thought_signature if present (required for Gemini 3.x models)
+                                        if hasattr(part, "thought_signature") and part.thought_signature:
+                                            call_record["thought_signature"] = part.thought_signature
+
+                                        captured_function_calls.append(call_record)
 
                                         logger.info(f"[Gemini] Function call detected: {tool_name}")
 
@@ -651,17 +723,6 @@ class GeminiBackend(CustomToolAndMCPBackend):
                 self._active_tool_result_store = tool_results
 
                 try:
-                    # Execute custom tools
-                    for call in custom_calls:
-                        async for chunk in self._execute_tool_with_logging(
-                            call,
-                            CUSTOM_TOOL_CONFIG,
-                            updated_messages,
-                            processed_call_ids,
-                        ):
-                            yield chunk
-
-                    # Check circuit breaker before MCP tool execution
                     if mcp_calls and not await self._check_circuit_breaker_before_execution():
                         logger.warning("[Gemini] All MCP servers blocked by circuit breaker")
                         yield StreamChunk(
@@ -670,21 +731,107 @@ class GeminiBackend(CustomToolAndMCPBackend):
                             content="⚠️ [MCP] All servers blocked by circuit breaker",
                             source="circuit_breaker",
                         )
-                        # Clear mcp_calls to skip execution
                         mcp_calls = []
 
-                    # Execute MCP tools
-                    for call in mcp_calls:
-                        # Mark MCP as used when at least one MCP call is about to be executed
-                        mcp_used = True
+                    def chunk_adapter(chunk: StreamChunk) -> StreamChunk:
+                        return chunk
 
-                        async for chunk in self._execute_tool_with_logging(
-                            call,
-                            MCP_TOOL_CONFIG,
-                            updated_messages,
-                            processed_call_ids,
+                    nlip_available = self._nlip_enabled and self._nlip_router
+
+                    pending_custom_calls: List[Dict[str, Any]] = []
+                    for call in custom_calls:
+                        handled_via_nlip = False
+                        if nlip_available:
+                            logger.info(f"[NLIP] Using NLIP routing for custom tool {call['name']}")
+                            try:
+                                async for chunk in self._stream_tool_execution_via_nlip(
+                                    call,
+                                    CUSTOM_TOOL_CONFIG,
+                                    updated_messages,
+                                    processed_call_ids,
+                                ):
+                                    yield chunk_adapter(chunk)
+                                handled_via_nlip = True
+                            except Exception as exc:
+                                logger.warning(
+                                    f"[NLIP] Routing failed for {call['name']}: {exc}. Falling back to direct execution.",
+                                )
+                                async for chunk in self._execute_tool_with_logging(
+                                    call,
+                                    CUSTOM_TOOL_CONFIG,
+                                    updated_messages,
+                                    processed_call_ids,
+                                ):
+                                    yield chunk_adapter(chunk)
+                                handled_via_nlip = True
+
+                        if handled_via_nlip:
+                            continue
+
+                        reason = "disabled" if not self._nlip_enabled else "router unavailable"
+                        logger.info(
+                            f"[Custom Tool] Direct execution for {call['name']} (NLIP {reason})",
+                        )
+                        pending_custom_calls.append(call)
+
+                    pending_mcp_calls: List[Dict[str, Any]] = []
+                    for call in mcp_calls:
+                        handled_via_nlip = False
+                        if nlip_available:
+                            logger.info(f"[NLIP] Using NLIP routing for MCP tool {call['name']}")
+                            try:
+                                async for chunk in self._stream_tool_execution_via_nlip(
+                                    call,
+                                    MCP_TOOL_CONFIG,
+                                    updated_messages,
+                                    processed_call_ids,
+                                ):
+                                    mcp_used = True
+                                    yield chunk_adapter(chunk)
+                                handled_via_nlip = True
+                            except Exception as exc:
+                                logger.warning(
+                                    f"[NLIP] Routing failed for {call['name']}: {exc}. Falling back to direct execution.",
+                                )
+                                async for chunk in self._execute_tool_with_logging(
+                                    call,
+                                    MCP_TOOL_CONFIG,
+                                    updated_messages,
+                                    processed_call_ids,
+                                ):
+                                    yield chunk_adapter(chunk)
+                                mcp_used = True
+                                handled_via_nlip = True
+
+                        if handled_via_nlip:
+                            continue
+
+                        reason = "disabled" if not self._nlip_enabled else "router unavailable"
+                        logger.info(
+                            f"[MCP Tool] Direct execution for {call['name']} (NLIP {reason})",
+                        )
+                        pending_mcp_calls.append(call)
+
+                    all_calls = pending_custom_calls + pending_mcp_calls
+
+                    def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+                        tool_name = call.get("name", "")
+                        return CUSTOM_TOOL_CONFIG if tool_name in (self._custom_tool_names or set()) else MCP_TOOL_CONFIG
+
+                    if all_calls:
+                        if pending_mcp_calls:
+                            mcp_used = True
+
+                        async for adapted_chunk in self._execute_tool_calls(
+                            all_calls=all_calls,
+                            tool_config_for_call=tool_config_for_call,
+                            all_params=all_params,
+                            updated_messages=updated_messages,
+                            processed_call_ids=processed_call_ids,
+                            log_prefix="[Gemini]",
+                            chunk_adapter=chunk_adapter,
                         ):
-                            yield chunk
+                            yield adapted_chunk
                 finally:
                     self._active_tool_result_store = None
 
@@ -706,12 +853,14 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                 args_payload = {}
                         if not isinstance(args_payload, dict):
                             args_payload = {}
-                        model_parts.append(
-                            types.Part.from_function_call(
-                                name=call.get("name", ""),
-                                args=args_payload,
-                            ),
+                        part = types.Part.from_function_call(
+                            name=call.get("name", ""),
+                            args=args_payload,
                         )
+                        # Preserve thought_signature if present (required for Gemini 3.x models)
+                        if "thought_signature" in call:
+                            part.thought_signature = call["thought_signature"]
+                        model_parts.append(part)
                     if model_parts:
                         conversation_history.append(types.Content(parts=model_parts, role="model"))
 
@@ -731,11 +880,13 @@ class GeminiBackend(CustomToolAndMCPBackend):
                 last_continuation_chunk = None
 
                 while True:
-                    continuation_stream = await client.aio.models.generate_content_stream(
-                        model=model_name,
-                        contents=conversation_history,
-                        config=config,
-                    )
+                    # Use same config as before (with rate limiting if enabled)
+                    async with self._get_rate_limiter_context():
+                        continuation_stream = await client.aio.models.generate_content_stream(
+                            model=model_name,
+                            contents=conversation_history,
+                            config=config,
+                        )
                     stream = continuation_stream
 
                     new_function_calls = []
@@ -752,13 +903,17 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                                 tool_name = part.function_call.name
                                                 tool_args = dict(part.function_call.args) if part.function_call.args else {}
                                                 call_id = f"call_{len(new_function_calls)}"
-                                                new_function_calls.append(
-                                                    {
-                                                        "call_id": call_id,
-                                                        "name": tool_name,
-                                                        "arguments": json.dumps(tool_args),
-                                                    },
-                                                )
+                                                call_record = {
+                                                    "call_id": call_id,
+                                                    "name": tool_name,
+                                                    "arguments": json.dumps(tool_args),
+                                                }
+
+                                                # Capture thought_signature if present (required for Gemini 3.x models)
+                                                if hasattr(part, "thought_signature") and part.thought_signature:
+                                                    call_record["thought_signature"] = part.thought_signature
+
+                                                new_function_calls.append(call_record)
 
                         if hasattr(chunk, "text") and chunk.text:
                             chunk_text = chunk.text
@@ -918,36 +1073,41 @@ class GeminiBackend(CustomToolAndMCPBackend):
                     new_tool_results: Dict[str, str] = {}
                     self._active_tool_result_store = new_tool_results
 
+                    # Check circuit breaker before MCP tool execution
+                    if next_mcp_calls and not await self._check_circuit_breaker_before_execution():
+                        logger.warning("[Gemini] All MCP servers blocked by circuit breaker during continuation")
+                        yield StreamChunk(
+                            type="mcp_status",
+                            status="mcp_blocked",
+                            content="⚠️ [MCP] All servers blocked by circuit breaker",
+                            source="circuit_breaker",
+                        )
+                        next_mcp_calls = []
+
+                    # Combine all continuation tool calls
+                    next_all_calls = next_custom_calls + next_mcp_calls
+
                     try:
-                        for call in next_custom_calls:
-                            async for chunk in self._execute_tool_with_logging(
-                                call,
-                                CUSTOM_TOOL_CONFIG,
-                                updated_messages,
-                                processed_call_ids,
-                            ):
-                                yield chunk
+                        # Execute tools based on configuration (same scheduler as initial execution)
+                        def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+                            tool_name = call.get("name", "")
+                            return CUSTOM_TOOL_CONFIG if tool_name in (self._custom_tool_names or set()) else MCP_TOOL_CONFIG
 
-                        if next_mcp_calls and not await self._check_circuit_breaker_before_execution():
-                            logger.warning("[Gemini] All MCP servers blocked by circuit breaker during continuation")
-                            yield StreamChunk(
-                                type="mcp_status",
-                                status="mcp_blocked",
-                                content="⚠️ [MCP] All servers blocked by circuit breaker",
-                                source="circuit_breaker",
-                            )
-                            next_mcp_calls = []
+                        def chunk_adapter(chunk: StreamChunk) -> StreamChunk:
+                            return chunk
 
-                        for call in next_mcp_calls:
-                            mcp_used = True
-
-                            async for chunk in self._execute_tool_with_logging(
-                                call,
-                                MCP_TOOL_CONFIG,
-                                updated_messages,
-                                processed_call_ids,
-                            ):
-                                yield chunk
+                        async for adapted_chunk in self._execute_tool_calls(
+                            all_calls=next_all_calls,
+                            tool_config_for_call=tool_config_for_call,
+                            all_params=all_params,
+                            updated_messages=updated_messages,
+                            processed_call_ids=processed_call_ids,
+                            log_prefix="[Gemini] Continuation:",
+                            chunk_adapter=chunk_adapter,
+                        ):
+                            if next_mcp_calls:
+                                mcp_used = True
+                            yield adapted_chunk
                     finally:
                         self._active_tool_result_store = None
 
@@ -967,12 +1127,14 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                     args_payload = {}
                             if not isinstance(args_payload, dict):
                                 args_payload = {}
-                            model_parts.append(
-                                types.Part.from_function_call(
-                                    name=call.get("name", ""),
-                                    args=args_payload,
-                                ),
+                            part = types.Part.from_function_call(
+                                name=call.get("name", ""),
+                                args=args_payload,
                             )
+                            # Preserve thought_signature if present (required for Gemini 3.x models)
+                            if "thought_signature" in call:
+                                part.thought_signature = call["thought_signature"]
+                            model_parts.append(part)
                         if model_parts:
                             conversation_history.append(types.Content(parts=model_parts, role="model"))
 

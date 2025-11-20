@@ -32,6 +32,9 @@ from massgen.filesystem_manager.background_shell import (
     start_shell,
 )
 
+# Logging
+from massgen.logger_config import logger
+
 # Platform detection
 WIN32 = sys.platform == "win32"
 
@@ -139,20 +142,26 @@ def _check_command_filters(command: str, allowed_patterns: Optional[List[str]], 
                 )
 
 
-def _prepare_environment(work_dir: Path) -> Dict[str, str]:
+def _prepare_environment(work_dir: Path, local_skills_directory: Optional[str] = None) -> Dict[str, str]:
     """
-    Prepare environment by auto-detecting .venv in work_dir.
+    Prepare environment by auto-detecting .venv in work_dir and setting up skills.
 
     This function checks for a .venv directory in the working directory and
     automatically modifies PATH to use it if found. Each workspace manages
     its own virtual environment independently.
 
+    For local mode with skills enabled, this creates a .agent/skills symlink in the
+    workspace directory pointing to the merged skills directory, allowing openskills
+    to discover skills in the standard location.
+
     Args:
         work_dir: Working directory to check for .venv
+        local_skills_directory: Path to merged skills directory (for local mode with skills)
 
     Returns:
-        Environment variables dict with PATH modified if .venv exists
+        Environment variables dict with PATH modified as needed
     """
+
     env = os.environ.copy()
 
     # Auto-detect .venv in work_dir
@@ -165,6 +174,51 @@ def _prepare_environment(work_dir: Path) -> Dict[str, str]:
             env["PATH"] = f"{venv_bin}{os.pathsep}{env['PATH']}"
             # Set VIRTUAL_ENV for tools that check it
             env["VIRTUAL_ENV"] = str(venv_dir)
+
+    # Setup skills directory for local mode
+    # Create .agent/skills symlink (or copy on Windows) in workspace so openskills can find skills
+    if local_skills_directory:
+        import shutil
+
+        logger.info(f"[CodeExecution] Setting up skills for local mode, skills_directory: {local_skills_directory}")
+        skills_path = Path(local_skills_directory)
+        if skills_path.exists():
+            # Create .agent directory in workspace
+            agent_dir = work_dir / ".agent"
+            agent_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"[CodeExecution] Created .agent directory in workspace: {agent_dir}")
+
+            # Create symlink to merged skills directory
+            # openskills looks for .agent/skills/ relative to current directory first
+            skills_link = agent_dir / "skills"
+
+            # Remove existing symlink/directory if present
+            if skills_link.exists() or skills_link.is_symlink():
+                if skills_link.is_symlink():
+                    skills_link.unlink()
+                    logger.info(f"[CodeExecution] Removed existing skills symlink: {skills_link}")
+                elif skills_link.is_dir():
+                    # Remove directory (could be from previous copy fallback)
+                    shutil.rmtree(skills_link)
+                    logger.info(f"[CodeExecution] Removed existing skills directory: {skills_link}")
+
+            # Create symlink to merged skills directory
+            if not skills_link.exists():
+                # Try symlink first (works on Unix/Mac, requires perms on Windows)
+                try:
+                    skills_link.symlink_to(skills_path, target_is_directory=True)
+                    logger.info(f"[CodeExecution] Created skills symlink: {skills_link} -> {skills_path}")
+                except (OSError, NotImplementedError) as e:
+                    # Symlink failed (likely Windows without admin/dev mode)
+                    # Fallback: copy directory instead
+                    logger.warning(f"[CodeExecution] Symlink failed ({e}), falling back to copy")
+                    try:
+                        shutil.copytree(skills_path, skills_link, dirs_exist_ok=True)
+                        logger.info(f"[CodeExecution] Copied skills directory: {skills_link}")
+                    except Exception as copy_error:
+                        logger.error(f"[CodeExecution] Failed to copy skills directory: {copy_error}")
+        else:
+            logger.warning(f"[CodeExecution] Skills directory does not exist: {skills_path}")
 
     return env
 
@@ -220,10 +274,22 @@ async def create_server() -> fastmcp.FastMCP:
         help="Agent ID (required for Docker mode to identify container)",
     )
     parser.add_argument(
+        "--instance-id",
+        type=str,
+        default=None,
+        help="Instance ID for parallel execution (appended to container name)",
+    )
+    parser.add_argument(
         "--enable-sudo",
         action="store_true",
         default=False,
         help="Enable sudo in Docker containers (disables sudo command sanitization checks)",
+    )
+    parser.add_argument(
+        "--local-skills-directory",
+        type=str,
+        default=None,
+        help="Path to merged skills directory for local mode (contains built-in and external skills)",
     )
     args = parser.parse_args()
 
@@ -238,7 +304,9 @@ async def create_server() -> fastmcp.FastMCP:
     mcp.blocked_commands = args.blocked_commands  # Blacklist patterns
     mcp.execution_mode = args.execution_mode
     mcp.agent_id = args.agent_id
+    mcp.instance_id = args.instance_id
     mcp.enable_sudo = args.enable_sudo
+    mcp.local_skills_directory = args.local_skills_directory
 
     # Initialize Docker client if Docker mode
     mcp.docker_client = None
@@ -411,8 +479,11 @@ async def create_server() -> fastmcp.FastMCP:
                     }
 
                 try:
-                    # Get container by name
-                    container_name = f"massgen-{mcp.agent_id}"
+                    # Get container by name (include instance_id if set for parallel execution)
+                    if mcp.instance_id:
+                        container_name = f"massgen-{mcp.agent_id}-{mcp.instance_id}"
+                    else:
+                        container_name = f"massgen-{mcp.agent_id}"
                     container = mcp.docker_client.containers.get(container_name)
 
                     # IMPORTANT: Use host paths directly in container
@@ -471,8 +542,8 @@ async def create_server() -> fastmcp.FastMCP:
 
             else:
                 # Local mode: execute using subprocess (existing logic)
-                # Prepare environment (auto-detects .venv in work_dir)
-                env = _prepare_environment(work_path)
+                # Prepare environment (auto-detects .venv in work_dir and sets up skills)
+                env = _prepare_environment(work_path, mcp.local_skills_directory)
 
                 # Execute command
                 start_time = time.time()
@@ -770,6 +841,8 @@ async def create_server() -> fastmcp.FastMCP:
     print(f"Execution mode: {mcp.execution_mode}")
     if mcp.execution_mode == "docker":
         print(f"Agent ID: {mcp.agent_id}")
+        if mcp.instance_id:
+            print(f"Instance ID: {mcp.instance_id}")
     print(f"Default timeout: {mcp.default_timeout}s")
     print(f"Max output size: {mcp.max_output_size} bytes")
     print(f"Allowed paths: {[str(p) for p in mcp.allowed_paths]}")

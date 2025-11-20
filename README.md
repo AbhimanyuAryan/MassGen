@@ -48,6 +48,10 @@ This project started with the "threads of thought" and "iterative refinement" id
   <b>🤖 For LLM Agents:</b> <a href="AI_USAGE.md">AI_USAGE.md</a> - Complete automation guide to run MassGen inside an LLM
 </p>
 
+<p align="center">
+  <b>📚 For Contributors:</b> See <a href="https://massgen.github.io/Handbook/">MassGen Contributor Handbook</a> - Centralized policies and resources for development and research teams
+</p>
+
 ---
 
 ## 📋 Table of Contents
@@ -65,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.9 Features](#-latest-features-v019)
+- [v0.1.14 Features](#-latest-features-v0114)
 </details>
 
 <details open>
@@ -119,15 +123,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.9](#recent-achievements-v019)
-  - [v0.0.3 - v0.1.8](#previous-achievements-v003---v018)
+  - [v0.1.14](#recent-achievements-v0114)
+  - [v0.0.3 - v0.1.13](#previous-achievements-v003---v0113)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.10 Roadmap](#v0110-roadmap)
+- [v0.1.15 Roadmap](#v0115-roadmap)
 </details>
 
 <details open>
@@ -152,45 +156,49 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.9)
+## 🆕 Latest Features (v0.1.14)
 
-**🎉 Released: November 7, 2025**
+**🎉 Released: November 19, 2025**
 
-**What's New in v0.1.9:**
-- **💾 Session Management System** - Resume conversations with complete state restoration
-- **🖥️ Computer Use Tools** - Automate browsers and desktop with Claude and Gemini
-- **🔍 Fuzzy Model Matching** - Type approximate model names to find exact matches
-- **🌐 Expanded Backend Support** - Six new providers for more model choices
+**What's New in v0.1.14:**
+- **⚡ Parallel Tool Execution System** - Configurable concurrent tool execution across all backends
+- **🤖 Gemini 3 Pro Model Support** - Full integration for Google's latest Gemini 3 Pro
+- **🚀 Interactive Quickstart Workflow** - Streamlined onboarding from setup to first run
+- **🔍 MCP Registry Client** - Enhanced server metadata fetching from official MCP registry
 
 **Key Improvements:**
-- Multi-turn conversations with automatic session restoration across CLI invocations
-- Browser and desktop automation using Claude and Gemini APIs with Playwright integration
-- Intelligent model search with fuzzy matching (e.g., "sonnet" → "claude-sonnet-4-5-20250929")
-- New backends: Cerebras AI, Together AI, Fireworks AI, Groq, OpenRouter, Moonshot (Kimi)
-- Enhanced memory update logic for better multi-agent coordination patterns
+- Parallel tool execution with asyncio-based scheduling and configurable concurrency controls
+- Gemini 3 Pro native support for Google's latest model with parallel function calling
+- Interactive config builder with improved UX for provider selection and validation
+- MCP registry client fetches server descriptions from official registry for better agent understanding
+- Planning system enhancements with improved skill and tool search capabilities
+- NLIP routing streamlining with unified execution flow across backends
 
-**Try v0.1.9 Features:**
+**Try v0.1.14 Features:**
 ```bash
 # Install or upgrade from PyPI
 pip install --upgrade massgen
 
-# Browser automation with Claude
-# Prerequisites:
-#   1. Set ANTHROPIC_API_KEY environment variable
-#   2. Playwright installed: pip install playwright && playwright install
-#   3. Virtual display setup (Xvfb) for desktop control
-massgen --config @examples/tools/custom_tools/claude_computer_use_example "Search for Python documentation on the web"
+# Or with uv (faster)
+uv pip install massgen
 
-# Browser automation with Gemini
-# Prerequisites:
-#   1. Set GOOGLE_API_KEY in your .env file
-#   2. Install Playwright: pip install playwright
-#   3. Install browsers: playwright install
-#   4. Install Google GenAI SDK: pip install google-genai
-massgen --config @examples/tools/custom_tools/gemini_computer_use_example "Navigate to GitHub and search for MassGen repository"
+# Interactive Quickstart - guided configuration creation
+uv run massgen --quickstart  # Walk through agent setup and start interactive mode
 
-# Interactive model selection with fuzzy matching
-massgen  # Run the interactive config builder with smart model search
+# Parallel Tool Execution - concurrent tool execution with configurable limits
+uv run massgen --config massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml \
+  "whats the sum of 123 and 456? and whats the weather of Tokyo and london?"
+
+# Gemini 3 Pro - Google's latest model with function calling
+uv run massgen --config massgen/configs/providers/gemini/gemini_3_pro.yaml \
+  "Create a website about Bob Dylan"
+
+# Enhanced Config Builder - interactive configuration wizard
+uv run massgen --init  # Full configuration wizard with use case selection
+
+# MCP Registry Client - automatic server description integration
+uv run massgen --config @examples/tools/mcp/gpt5_nano_mcp_example \
+  "whats the weather of Tokyo"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -256,18 +264,39 @@ pip install massgen
 
 # Or with uv (faster)
 uv pip install massgen
-
-# Run the interactive setup wizard
-massgen
 ```
 
-The wizard will guide you through:
-- Configuring API keys
-- Selecting your use case (Research, Code, Q&A, etc.)
-- Choosing AI models
-- Saving your configuration
+**Quickstart Setup** (Fastest way to get running):
 
-After setup, you can run MassGen with:
+```bash
+# Step 1: Set up API keys, Docker, and skills
+uv run massgen --setup
+
+# Step 2: Create a simple config and start
+uv run massgen --quickstart
+```
+
+The `--setup` command will:
+- Configure your API keys (OpenAI, Anthropic, Google, xAI)
+- Offer to set up Docker images for code execution
+- Offer to install skills (openskills, Anthropic collection)
+
+The `--quickstart` command will:
+- Ask how many agents you want (1-5, default 3)
+- Ask which backend/model for each agent
+- Auto-detect Docker availability and configure execution mode
+- Create a ready-to-use config and launch into interactive mode
+
+**Alternative: Full Setup Wizard**
+
+For more control, use the full configuration wizard:
+```bash
+massgen --init
+```
+
+This guides you through use case selection (Research, Code, Q&A, etc.) and advanced configuration options.
+
+**After setup:**
 ```bash
 # Interactive mode
 massgen
@@ -296,7 +325,18 @@ uv pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
+
+# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+./scripts/init.sh
+
+# Or just install skills (works on all platforms)
+massgen --setup-skills
+
+# Or use the bash script (Unix/Linux/macOS only)
+./scripts/init_skills.sh
 ```
+
+> **Note:** The `--setup-skills` command works cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
 
 <details>
 <summary><b>Alternative Installation Methods</b> (click to expand)</summary>
@@ -1059,38 +1099,54 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.9)
+### Recent Achievements (v0.1.14)
 
-**🎉 Released: November 7, 2025**
+**🎉 Released: November 19, 2025**
 
-#### Session Management System
-- **Session State Module**: Complete session tracking and restoration (`massgen/session/` module, 530 lines total)
-- **SessionState Dataclass**: Stores conversation history, workspace paths, and turn metadata with winning agents tracking
-- **SessionRegistry**: Manages session lifecycle with listing, restoration, and metadata retrieval capabilities
-- **Multi-Turn Persistence**: Seamless session continuation across CLI invocations with automatic state restoration
-- **Workspace Continuity**: Preserves agent workspace states, orchestrator data, and coordination history between turns
+#### Parallel Tool Execution & Gemini 3 Pro
+- **Parallel Tool Execution System**: Configurable concurrent tool execution across all backends with asyncio-based scheduling (`massgen/backend/response.py`, `massgen/backend/base_with_custom_tool_and_mcp.py`)
+- **Configuration Controls**: `concurrent_tool_execution` for local parallel execution, `parallel_tool_calls` for OpenAI Response API, `disable_parallel_tool_use` for Claude backend, `max_concurrent_tools` semaphore limit
+- **Gemini 3 Pro Support**: Full integration for Google's Gemini 3 Pro model with function calling capabilities (`massgen/backend/gemini.py`)
+- **Configuration Example**: `massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml`, `massgen/configs/providers/gemini/gemini_3_pro.yaml`
 
-#### Computer Use Tools
-- **Claude Computer Use Tool**: Native Anthropic Claude Computer Use API integration for browser and desktop automation with safety confirmations
-- **Gemini Computer Use Tool**: Google Gemini-based computer control with screenshot analysis and action generation
-- **Browser Automation Tool**: Lightweight browser automation focused on specific tasks without full computer use overhead
+#### Interactive Quickstart & MCP Registry Client
+- **Interactive Config Builder**: Enhanced quickstart workflow with guided configuration creation and improved UX (`massgen/config_builder.py`, `massgen/cli.py`)
+- **MCP Registry Client**: Enhanced server metadata fetching from official MCP registry with automatic description integration (`massgen/mcp_tools/registry_client.py`)
+- **Planning System Enhancements**: Improved skill and tool search in planning mode for better agent decision-making (`massgen/mcp_tools/planning/_planning_mcp_server.py`)
+- **NLIP Routing Streamlining**: Unified execution flow across backends with simplified routing implementation (`massgen/backend/response.py`, `claude.py`, `gemini.py`)
+- **Documentation**: `docs/parallel-tool-execution.md`, `.github/workflows/docker-publish.yml`
 
-#### Config Builder Enhancement
-- **Fuzzy Model Matching**: Intelligent model name search allowing approximate inputs (e.g., "sonnet" → "claude-sonnet-4-5-20250929")
-- **Model Catalog System**: Curated lists of common models across providers with automatic discovery (`massgen/utils/model_catalog.py`)
-- **Smart Suggestions**: Enhanced config builder with automatic model search and recommendations
-- **Provider Integration**: Support for partial model names with intelligent completion across all backends
+### Previous Achievements (v0.0.3 - v0.1.13)
 
-#### Backend Capabilities Expansion
-- **Comprehensive Registry**: Updated `massgen/backend/capabilities.py` with detailed specifications for all providers
-- **Enhanced Features**: Audio/video support, hardware acceleration, and unified access across diverse model families
+✅ **Code-Based Tools & MCP Registry (v0.1.13)**: CodeAct paradigm implementation with tool integration via importable Python code reducing token usage by 98%, MCP server registry with auto-discovery and on-demand loading, TOOL.md documentation standard
 
-#### Memory & Coordination Improvements
-- **Memory Update Logic**: Enhanced memory update prompts focusing on actionable patterns and technical insights (`massgen/memory/_update_prompts.py`)
-- **Chat Agent Enhancement**: Session restoration with improved orchestrator restart handling and turn tracking
-- **CLI Extension**: Session listing, restoration commands, and enhanced display selection with automatic state restoration
+✅ **NLIP Integration & Skills System (v0.1.13)**: Advanced tool routing with Natural Language Interface Protocol across Claude, Gemini, and OpenAI backends, cross-platform automated skills installer for openskills CLI, Anthropic skills, and Crawl4AI
 
-### Previous Achievements (v0.0.3 - v0.1.8)
+✅ **System Prompt Architecture Refactoring (v0.1.12)**: Hierarchical system prompt structure with XML-based formatting for Claude, improved LLM attention management
+
+✅ **Semtools & Serena Skills (v0.1.12)**: Semantic search via embedding-based similarity, symbol-level code understanding via LSP integration, local execution mode for non-Docker environments
+
+✅ **Multi-Agent Computer Use (v0.1.12)**: Enhanced Gemini computer use with Docker integration, VNC visualization, multi-agent coordination combining Claude (Docker/Linux) and Gemini (Browser)
+
+✅ **Skills System (v0.1.11)**: Modular prompting framework with SkillsManager for dynamic skill loading, automatic discovery with always/optional categories, file search skill, Docker-compatible mounting
+
+✅ **Memory MCP Tool & Filesystem Integration (v0.1.11)**: MCP server for memory management with markdown-based storage, short-term/long-term memory tiers, automatic workspace persistence, orchestrator integration for cross-agent memory sharing, enhanced Windows support for long system prompts
+
+✅ **Rate Limiting System (v0.1.11)**: Multi-dimensional limiting (RPM, TPM, RPD) for Gemini models with configurable thresholds, YAML-based configuration, CLI integration with --enable-rate-limiting flag, asyncio lock fix for event loop reuse
+
+✅ **Framework Interoperability Streaming (v0.1.10)**: Real-time intermediate step streaming for LangGraph and SmoLAgent with log/output distinction, enhanced debugging for external framework reasoning steps
+
+✅ **Docker Configuration Enhancements (v0.1.10)**: Nested authentication with separate mount and environment variable arrays, custom image support via Dockerfile.custom-example, automatic package installation
+
+✅ **Universal Workspace Isolation (v0.1.10)**: Instance ID generation extended to all execution modes ensuring safe parallel execution, enhanced workspace path uniqueness across concurrent sessions
+
+✅ **Session Management System (v0.1.9)**: Complete session state tracking and restoration with SessionState dataclass and SessionRegistry for multi-turn persistence across CLI invocations, workspace continuity preserving agent states and coordination history between turns
+
+✅ **Computer Use Tools (v0.1.9)**: Native Claude and Gemini computer use API integration for browser and desktop automation with screenshot analysis and action generation, lightweight browser automation for specific tasks without full computer use overhead
+
+✅ **Fuzzy Model Matching (v0.1.9)**: Intelligent model name search with approximate inputs (e.g., "sonnet" → "claude-sonnet-4-5-20250929"), model catalog system with curated lists across providers, enhanced config builder with automatic model search
+
+✅ **Backend Capabilities Expansion (v0.1.9)**: Comprehensive backend registry with detailed specifications for all providers, audio/video support, hardware acceleration, unified access across diverse model families, enhanced memory update logic focusing on actionable patterns
 
 ✅ **Automation Mode for LLM Agents (v0.1.8)**: Complete infrastructure for running MassGen inside LLM agents with SilentDisplay class for minimal output (~10 lines vs 250-3,000+), real-time status.json monitoring updated every 2 seconds, meaningful exit codes (0=success, 1=config error, 2=execution error, 3=timeout, 4=interrupted), automatic workspace isolation for parallel execution, meta-coordination capabilities allowing MassGen to run MassGen
 
@@ -1230,21 +1286,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.10 Roadmap
+### v0.1.15 Roadmap
 
-Version 0.1.10 focuses on framework streaming improvements and comprehensive documentation:
+Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git workflows:
 
 #### Planned Features
-- **Stream LangGraph & SmoLAgent Steps**: Real-time intermediate step streaming for external framework tools with enhanced debugging capabilities
-- **MassGen Handbook**: Comprehensive user documentation and centralized policies for development and research teams
+- **Integrate RL into MassGen**: Reinforcement learning integration for agent optimization and adaptive behavior through reward modeling, policy optimization, and learning from past interactions
+- **Git Worktrees for Multi-Agent**: Enable multiple agents to work on different Git worktrees simultaneously for parallel development workflows
 
 Key technical approach:
-- **Framework Streaming**: Real-time streaming of LangGraph and SmoLAgent intermediate steps, unified streaming interface, buffering and flow control, performance optimization
-- **Documentation**: Installation guides, configuration patterns, best practices, troubleshooting, case studies, and integration examples
+- **RL Integration**: RL framework integration, reward modeling for agent coordination, policy optimization algorithms (PPO, A3C), adaptive agent behavior with learning persistence
+- **Git Worktrees**: Worktree management, branch synchronization, conflict resolution support, improved parallelism for multi-agent development
 
-**Target Release**: November 10, 2025 (Monday @ 9am PT)
+**Target Release**: November 21, 2025 (Friday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.10 roadmap](ROADMAP_v0.1.10.md).
+For detailed milestones and technical specifications, see the [full v0.1.15 roadmap](ROADMAP_v0.1.15.md).
 
 ---
 
