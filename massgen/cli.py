@@ -1365,8 +1365,21 @@ async def run_question_with_history(
     # Parse coordination config if present
     if "coordination" in orchestrator_cfg:
         from .agent_config import CoordinationConfig
+        from .persona_generator import PersonaGeneratorConfig
 
         coord_cfg = orchestrator_cfg["coordination"]
+
+        # Parse persona_generator config if present
+        persona_generator_config = PersonaGeneratorConfig()
+        if "persona_generator" in coord_cfg:
+            pg_cfg = coord_cfg["persona_generator"]
+            persona_generator_config = PersonaGeneratorConfig(
+                enabled=pg_cfg.get("enabled", False),
+                backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
+                strategy=pg_cfg.get("strategy", "complementary"),
+                persona_guidelines=pg_cfg.get("persona_guidelines"),
+            )
+
         orchestrator_config.coordination_config = CoordinationConfig(
             enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
             planning_mode_instruction=coord_cfg.get(
@@ -1381,6 +1394,7 @@ async def run_question_with_history(
             use_skills=coord_cfg.get("use_skills", False),
             massgen_skills=coord_cfg.get("massgen_skills", []),
             skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
+            persona_generator=persona_generator_config,
         )
 
     # Get previous turns and winning agents history from session_info if already loaded,
@@ -1431,6 +1445,18 @@ async def run_question_with_history(
         coordination_settings = orchestrator_kwargs.get("coordination", {})
         if coordination_settings:
             from .agent_config import CoordinationConfig
+            from .persona_generator import PersonaGeneratorConfig
+
+            # Parse persona_generator config if present
+            persona_generator_config = PersonaGeneratorConfig()
+            if "persona_generator" in coordination_settings:
+                pg_cfg = coordination_settings["persona_generator"]
+                persona_generator_config = PersonaGeneratorConfig(
+                    enabled=pg_cfg.get("enabled", False),
+                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
+                    strategy=pg_cfg.get("strategy", "complementary"),
+                    persona_guidelines=pg_cfg.get("persona_guidelines"),
+                )
 
             orchestrator_config.coordination_config = CoordinationConfig(
                 enable_planning_mode=coordination_settings.get("enable_planning_mode", False),
@@ -1446,6 +1472,7 @@ async def run_question_with_history(
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
                 skills_directory=coordination_settings.get("skills_directory", ".agent/skills"),
+                persona_generator=persona_generator_config,
             )
 
     print(f"\n🤖 {BRIGHT_CYAN}{mode_text}{RESET}", flush=True)
@@ -1667,6 +1694,18 @@ async def run_single_question(
         coordination_settings = orchestrator_kwargs.get("coordination", {})
         if coordination_settings:
             from .agent_config import CoordinationConfig
+            from .persona_generator import PersonaGeneratorConfig
+
+            # Parse persona_generator config if present
+            persona_generator_config = PersonaGeneratorConfig()
+            if "persona_generator" in coordination_settings:
+                pg_cfg = coordination_settings["persona_generator"]
+                persona_generator_config = PersonaGeneratorConfig(
+                    enabled=pg_cfg.get("enabled", False),
+                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
+                    strategy=pg_cfg.get("strategy", "complementary"),
+                    persona_guidelines=pg_cfg.get("persona_guidelines"),
+                )
 
             orchestrator_config.coordination_config = CoordinationConfig(
                 enable_planning_mode=coordination_settings.get("enable_planning_mode", False),
@@ -1682,6 +1721,7 @@ async def run_single_question(
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
                 skills_directory=coordination_settings.get("skills_directory", ".agent/skills"),
+                persona_generator=persona_generator_config,
             )
 
         # Get orchestrator parameters from config
@@ -1720,8 +1760,21 @@ async def run_single_question(
         # Parse coordination config if present
         if "coordination" in orchestrator_cfg:
             from .agent_config import CoordinationConfig
+            from .persona_generator import PersonaGeneratorConfig
 
             coord_cfg = orchestrator_cfg["coordination"]
+
+            # Parse persona_generator config if present
+            persona_generator_config = PersonaGeneratorConfig()
+            if "persona_generator" in coord_cfg:
+                pg_cfg = coord_cfg["persona_generator"]
+                persona_generator_config = PersonaGeneratorConfig(
+                    enabled=pg_cfg.get("enabled", False),
+                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
+                    strategy=pg_cfg.get("strategy", "complementary"),
+                    persona_guidelines=pg_cfg.get("persona_guidelines"),
+                )
+
             orchestrator_config.coordination_config = CoordinationConfig(
                 enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
                 planning_mode_instruction=coord_cfg.get(
@@ -1736,6 +1789,7 @@ async def run_single_question(
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
+                persona_generator=persona_generator_config,
             )
 
         orchestrator = Orchestrator(
@@ -2613,29 +2667,54 @@ def setup_docker() -> None:
         ("ghcr.io/massgen/mcp-runtime-sudo:latest", "Sudo image (for package installation)"),
     ]
 
-    print(f"\n{BRIGHT_CYAN}Pulling Docker images...{RESET}\n")
+    print(f"\n{BRIGHT_CYAN}Pulling Docker images in parallel...{RESET}\n")
 
+    # Pull images in parallel using threading
+    import concurrent.futures
+    import threading
+
+    # Thread-safe counter and lock for output
     success_count = 0
-    for image, description in images:
-        print(f"  {BRIGHT_CYAN}Pulling {image}{RESET}")
-        print(f"  {BRIGHT_YELLOW}({description}){RESET}")
+    lock = threading.Lock()
+
+    def pull_image(image: str, description: str) -> bool:
+        """Pull a Docker image and return success status."""
+        nonlocal success_count
+
+        with lock:
+            print(f"  {BRIGHT_CYAN}Pulling {image}{RESET}")
+            print(f"  {BRIGHT_YELLOW}({description}){RESET}")
 
         try:
             result = subprocess.run(
                 ["docker", "pull", image],
-                capture_output=False,  # Show progress
+                capture_output=True,  # Capture to avoid interleaved output
+                text=True,
                 timeout=600,  # 10 minutes max
             )
 
-            if result.returncode == 0:
-                print(f"  {BRIGHT_GREEN}✓ Pulled successfully{RESET}\n")
-                success_count += 1
-            else:
-                print(f"  {BRIGHT_RED}✗ Failed to pull{RESET}\n")
+            with lock:
+                if result.returncode == 0:
+                    print(f"  {BRIGHT_GREEN}✓ {image} pulled successfully{RESET}\n")
+                    success_count += 1
+                    return True
+                else:
+                    print(f"  {BRIGHT_RED}✗ Failed to pull{RESET}\n")
+                    return False
         except subprocess.TimeoutExpired:
-            print(f"  {BRIGHT_RED}✗ Timed out{RESET}\n")
+            with lock:
+                print(f"  {BRIGHT_RED}✗ Timed out{RESET}\n")
+            return False
         except Exception as e:
-            print(f"  {BRIGHT_RED}✗ Error: {e}{RESET}\n")
+            with lock:
+                print(f"  {BRIGHT_RED}✗ Error: {e}{RESET}\n")
+            return False
+
+    # Execute pulls in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(pull_image, image, desc) for image, desc in images]
+        # Wait for all to complete
+        concurrent.futures.wait(futures)
 
     # Summary
     if success_count == len(images):
@@ -2655,6 +2734,58 @@ def setup_docker() -> None:
         print(f"\n{BRIGHT_YELLOW}The images may not be published yet.{RESET}")
         print(f"{BRIGHT_YELLOW}You can build locally instead:{RESET}")
         print("  bash massgen/docker/build.sh --sudo\n")
+
+
+def show_example_prompts() -> Optional[str]:
+    """Show example prompts that work with default quickstart config.
+
+    These prompts work out-of-the-box with code execution, multimodal tools,
+    and web scraping capabilities.
+
+    Returns:
+        Selected prompt text, or None if user skips/cancels
+    """
+    import questionary
+    from questionary import Style
+
+    example_prompts = [
+        "Create a vibrant, interactive website about famous AI researchers using HTML, CSS, and JavaScript",
+        "Write a Python script to analyze data from a CSV file, create visualizations, and generate a summary report",
+        "Research recent developments in AI multi-agent systems by searching the web and summarize key trends with citations",
+        "Generate 3 different logo concepts for a tech startup, then help me choose the best one based on design principles",
+        "Create a lesson plan for teaching Python programming to beginners, with structured activities and code examples",
+        "Build a web scraper to collect pricing data from e-commerce sites and analyze market trends",
+        "Generate a presentation-ready infographic about climate change using text-to-image generation",
+        "Research, plan, and write a technical blog post about multi-agent systems",
+    ]
+
+    # Custom style with highlighted autocomplete
+    custom_style = Style(
+        [
+            ("answer", "#4A90E2 bold"),
+            ("completion-menu.completion", "bg:#808080 fg:#ffffff"),  # Dimmed gray background
+            ("completion-menu.completion.current", "bg:#4A90E2 fg:#ffffff"),  # Highlight current selection
+        ],
+    )
+
+    try:
+        print()
+        # Show dimmed examples below the prompt
+        print("\033[2m" + "Example prompts (start typing to see autocomplete):" + "\033[0m")
+        for prompt in example_prompts[:3]:  # Show first 3 as hints
+            print("\033[2m" + f"  • {prompt[:70]}{'...' if len(prompt) > 70 else ''}" + "\033[0m")
+        print()
+
+        choice = questionary.autocomplete(
+            "Enter your prompt:",
+            choices=example_prompts,
+            style=custom_style,
+            match_middle=True,
+        ).ask()
+
+        return choice if choice else None
+    except (KeyboardInterrupt, EOFError):
+        return None
 
 
 def should_run_builder() -> bool:
@@ -3907,11 +4038,59 @@ Environment Variables:
                 print(f"{BRIGHT_GREEN}✅ API keys detected{RESET}")
                 print()
 
-            # Step 2: Launch config builder
+            # Step 2: Optional Docker and skills setup
+            # Offer to set up Docker
+            try:
+                docker_choice = input(f"  {BRIGHT_CYAN}Set up Docker images for code execution? [Y/n]: {RESET}").strip().lower()
+                if docker_choice in ["y", "yes", ""]:
+                    setup_docker()
+                    print()
+            except (KeyboardInterrupt, EOFError):
+                print()
+
+            # Offer to install skills
+            try:
+                skills_choice = input(f"  {BRIGHT_CYAN}Install skills (openskills, Anthropic collection)? [Y/n]: {RESET}").strip().lower()
+                if skills_choice in ["y", "yes", ""]:
+                    from .utils.skills_installer import install_skills
+
+                    install_skills()
+                    print()
+            except (KeyboardInterrupt, EOFError):
+                print()
+
+            # Step 3: Choose setup method
             print("  Let's set up your default configuration...")
             print()
 
-            result = builder.run()
+            import questionary
+
+            setup_choice = questionary.select(
+                "Choose setup method:",
+                choices=[
+                    questionary.Choice(
+                        title="Quickstart - Fast setup with smart defaults (recommended)",
+                        value="quickstart",
+                    ),
+                    questionary.Choice(
+                        title="Full - Advanced configuration with all options",
+                        value="full",
+                    ),
+                ],
+                default="quickstart",
+            ).ask()
+
+            if not setup_choice:
+                # User cancelled
+                print(f"\n{BRIGHT_YELLOW}Setup cancelled{RESET}\n")
+                return
+
+            if setup_choice == "quickstart":
+                print()
+                result = builder.run_quickstart()
+            else:
+                print()
+                result = builder.run()
 
             if result and len(result) == 2:
                 filepath, question = result
