@@ -63,45 +63,6 @@ Code-based tools system implementing CodeAct paradigm, MCP server registry with 
 - **Major Focus**: Persona generation for agent diversity, Docker distribution improvements, GitHub Container Registry integration
 - **Contributors**: @ncrispino and the MassGen team
 
----
-
-## [0.1.15] - 2025-11-21
-
-### Added
-- **Textual Terminal Display**: Rich terminal UI framework using Textual library for enhanced coordination display
-  - New `massgen/frontend/displays/textual_terminal_display.py` with comprehensive UI components (2472 lines)
-  - Enhanced `massgen/frontend/coordination_ui.py` with Textual terminal support (+327 lines)
-  - New `massgen/frontend/displays/textual_themes/dark.tcss` and `light.tcss` theme stylesheets (~600 lines total)
-  - New `display_type: textual` configuration option with dark/light theme support
-  - Built on Python Textual library for cross-platform rich terminal applications
-
-### Changed
-- **Docker Custom Tools Installation**: MassGen now installed within Docker for custom tool execution
-  - Enhanced `massgen/cli.py` with Docker-aware custom tools setup (+49 lines)
-  - Updated `massgen/docker/Dockerfile` with MassGen installation (+16 lines modified)
-  - Updated `massgen/docker/Dockerfile.sudo` with matching changes (+16 lines modified)
-  - Enables custom Python tools to run inside Docker containers with MassGen context
-  - Better isolation for code execution workflows
-
-- **Docker CI/CD Workflow Enhancements**: Improved container build and publishing with ARM support
-  - Enhanced `.github/workflows/docker-publish.yml` with multi-platform support (+88 lines)
-  - Added ARM architecture compatibility (Apple Silicon, ARM servers)
-  - Enhanced `pyproject.toml` with ARM platform specifications (+6 lines)
-
-### Documentations, Configurations and Resources
-
-- **Textual Display Configuration**: New example configuration for Textual terminal display
-  - New `massgen/configs/basic/single_agent_textual.yaml` example configuration (16 lines)
-  - Demonstrates `display_type: textual` setup with theme options
-
-- **Installation Documentation Updates**: Enhanced quickstart and installation guides
-  - Updated `docs/source/quickstart/installation.rst` with Docker improvements (+89 lines)
-  - Updated `docs/source/index.rst` with feature highlights (+36 lines)
-
-
-### Technical Details
-- **Major Focus**: Textual-based rich terminal UI with theming, Docker workflow improvements with ARM support
-- **Contributors**: @praneeth999 @ncrispino and the MassGen team
 
 ## [0.1.14] - 2025-11-19
 
