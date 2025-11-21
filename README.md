@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.14 Features](#-latest-features-v0114)
+- [v0.1.15 Features](#-latest-features-v0115)
 </details>
 
 <details open>
@@ -123,15 +123,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.14](#recent-achievements-v0114)
-  - [v0.0.3 - v0.1.13](#previous-achievements-v003---v0113)
+  - [v0.1.15](#recent-achievements-v0115)
+  - [v0.0.3 - v0.1.14](#previous-achievements-v003---v0114)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.15 Roadmap](#v0115-roadmap)
+- [v0.1.16 Roadmap](#v0116-roadmap)
 </details>
 
 <details open>
@@ -156,25 +156,23 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.14)
+## 🆕 Latest Features (v0.1.15)
 
-**🎉 Released: November 19, 2025**
+**🎉 Released: November 21, 2025**
 
-**What's New in v0.1.14:**
-- **⚡ Parallel Tool Execution System** - Configurable concurrent tool execution across all backends
-- **🤖 Gemini 3 Pro Model Support** - Full integration for Google's latest Gemini 3 Pro
-- **🚀 Interactive Quickstart Workflow** - Streamlined onboarding from setup to first run
-- **🔍 MCP Registry Client** - Enhanced server metadata fetching from official MCP registry
+**What's New in v0.1.15:**
+- **🎭 Persona Generation System** - Automatic diverse system messages for multi-agent configurations
+- **🐳 Docker Distribution & Custom Tools** - GitHub Container Registry with ARM support and isolated tool execution
+- **⚙️ Config Builder Enhancement** - Improved interactive configuration with better model selection
 
 **Key Improvements:**
-- Parallel tool execution with asyncio-based scheduling and configurable concurrency controls
-- Gemini 3 Pro native support for Google's latest model with parallel function calling
-- Interactive config builder with improved UX for provider selection and validation
-- MCP registry client fetches server descriptions from official registry for better agent understanding
-- Planning system enhancements with improved skill and tool search capabilities
-- NLIP routing streamlining with unified execution flow across backends
+- Automatic persona generation with multiple strategies (complementary, diverse, specialized, adversarial)
+- Custom tools now run in isolated Docker containers for security and portability (Issue #510)
+- GitHub Container Registry integration with ARM architecture support
+- MassGen pre-installed in Docker images for immediate use
+- Enhanced config builder with better model selection and defaults
 
-**Try v0.1.14 Features:**
+**Try v0.1.15 Features:**
 ```bash
 # Install or upgrade from PyPI
 pip install --upgrade massgen
@@ -182,23 +180,13 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Interactive Quickstart - guided configuration creation
-uv run massgen --quickstart  # Walk through agent setup and start interactive mode
-
-# Parallel Tool Execution - concurrent tool execution with configurable limits
-uv run massgen --config massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml \
-  "whats the sum of 123 and 456? and whats the weather of Tokyo and london?"
-
-# Gemini 3 Pro - Google's latest model with function calling
-uv run massgen --config massgen/configs/providers/gemini/gemini_3_pro.yaml \
+# Persona Generation - automatic diverse system messages for agents
+# Prerequisites: OPENAI_API_KEY in .env, Docker running for code execution
+uv run massgen --config massgen/configs/basic/multi/persona_diversity_example.yaml \
   "Create a website about Bob Dylan"
 
-# Enhanced Config Builder - interactive configuration wizard
-uv run massgen --init  # Full configuration wizard with use case selection
-
-# MCP Registry Client - automatic server description integration
-uv run massgen --config @examples/tools/mcp/gpt5_nano_mcp_example \
-  "whats the weather of Tokyo"
+# Enhanced Config Builder - improved model selection
+uv run massgen --init  # Interactive wizard with better defaults
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1099,24 +1087,27 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.14)
+### Recent Achievements (v0.1.15)
 
-**🎉 Released: November 19, 2025**
+**🎉 Released: November 21, 2025**
 
-#### Parallel Tool Execution & Gemini 3 Pro
-- **Parallel Tool Execution System**: Configurable concurrent tool execution across all backends with asyncio-based scheduling (`massgen/backend/response.py`, `massgen/backend/base_with_custom_tool_and_mcp.py`)
-- **Configuration Controls**: `concurrent_tool_execution` for local parallel execution, `parallel_tool_calls` for OpenAI Response API, `disable_parallel_tool_use` for Claude backend, `max_concurrent_tools` semaphore limit
-- **Gemini 3 Pro Support**: Full integration for Google's Gemini 3 Pro model with function calling capabilities (`massgen/backend/gemini.py`)
-- **Configuration Example**: `massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml`, `massgen/configs/providers/gemini/gemini_3_pro.yaml`
+#### Persona Generation System
+- **Automatic Persona Generation**: LLM-powered generation of diverse system messages for multi-agent configurations (`massgen/persona_generator.py`)
+- **Multiple Strategies**: Complementary, diverse, specialized, and adversarial generation approaches
+- **Orchestrator Integration**: Seamless integration with persona generation orchestration (`massgen/orchestrator.py`)
+- **CLI Integration**: Persona generation via config file with orchestrator integration (`massgen/cli.py`)
+- **Configuration Example**: `massgen/configs/basic/multi/persona_diversity_example.yaml`
 
-#### Interactive Quickstart & MCP Registry Client
-- **Interactive Config Builder**: Enhanced quickstart workflow with guided configuration creation and improved UX (`massgen/config_builder.py`, `massgen/cli.py`)
-- **MCP Registry Client**: Enhanced server metadata fetching from official MCP registry with automatic description integration (`massgen/mcp_tools/registry_client.py`)
-- **Planning System Enhancements**: Improved skill and tool search in planning mode for better agent decision-making (`massgen/mcp_tools/planning/_planning_mcp_server.py`)
-- **NLIP Routing Streamlining**: Unified execution flow across backends with simplified routing implementation (`massgen/backend/response.py`, `claude.py`, `gemini.py`)
-- **Documentation**: `docs/parallel-tool-execution.md`, `.github/workflows/docker-publish.yml`
+#### Docker Distribution & Custom Tools Enhancement
+- **GitHub Container Registry**: Docker images published to ghcr.io/massgen with ARM support
+- **Custom Tools in Docker**: Isolated Docker containers for security and portability (Issue #510)
+- **MassGen Pre-installed**: Docker images include MassGen for immediate use with custom tools
+- **CI/CD Pipeline**: Automated Docker build and publish workflow (`.github/workflows/docker-publish.yml`)
+- **Config Builder Enhancement**: Improved interactive configuration with better model selection (`massgen/config_builder.py`)
 
-### Previous Achievements (v0.0.3 - v0.1.13)
+### Previous Achievements (v0.0.3 - v0.1.14)
+
+✅ **Parallel Tool Execution & Gemini 3 Pro (v0.1.14)**: Configurable concurrent tool execution across all backends with asyncio-based scheduling, Gemini 3 Pro integration with function calling, interactive quickstart workflow, MCP registry client for server metadata
 
 ✅ **Code-Based Tools & MCP Registry (v0.1.13)**: CodeAct paradigm implementation with tool integration via importable Python code reducing token usage by 98%, MCP server registry with auto-discovery and on-demand loading, TOOL.md documentation standard
 
@@ -1286,21 +1277,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.15 Roadmap
+### v0.1.16 Roadmap
 
-Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git workflows:
+Version 0.1.16 focuses on quickstart improvements and accurate token/price counting:
 
 #### Planned Features
-- **Integrate RL into MassGen**: Reinforcement learning integration for agent optimization and adaptive behavior through reward modeling, policy optimization, and learning from past interactions
-- **Git Worktrees for Multi-Agent**: Enable multiple agents to work on different Git worktrees simultaneously for parallel development workflows
+- **Make Quickstart More Intuitive**: Ensure tools and skills work properly through PyPI installation for better onboarding experience
+- **Integrate LiteLLM Registry**: More accurate token counting and price calculation across all providers
 
 Key technical approach:
-- **RL Integration**: RL framework integration, reward modeling for agent coordination, policy optimization algorithms (PPO, A3C), adaptive agent behavior with learning persistence
-- **Git Worktrees**: Worktree management, branch synchronization, conflict resolution support, improved parallelism for multi-agent development
+- **Quickstart Improvements**: PyPI installation fixes, streamlined onboarding, better documentation and error messages
+- **LiteLLM Integration**: Provider-specific token counting, up-to-date pricing information, cost tracking for multi-agent workflows
 
-**Target Release**: November 21, 2025 (Friday @ 9am PT)
+**Target Release**: November 24, 2025 (Monday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.15 roadmap](ROADMAP_v0.1.15.md).
+For detailed milestones and technical specifications, see the [full v0.1.16 roadmap](ROADMAP_v0.1.16.md).
 
 ---
 

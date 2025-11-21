@@ -7,16 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.15 (November 21, 2025)** - Persona Generation System & Docker Distribution
+Automatic persona generation for agent diversity with multiple strategies, enhanced Docker distribution via GitHub Container Registry with ARM support, and MassGen pre-installed in Docker images.
+
 **v0.1.14 (November 19, 2025)** - Parallel Tool Execution, Interactive Quickstart & Gemini 3 Pro
 Parallel tool execution with configurable concurrency controls across all backends, interactive config builder with guided quickstart workflow, MCP registry client enhancements, and Gemini 3 Pro model support.
 
 **v0.1.13 (November 17, 2025)** - Code-Based Tools, MCP Registry & Skills Installation
 Code-based tools system implementing CodeAct paradigm, MCP server registry with auto-discovery, comprehensive skills installation system, and TOOL.md documentation standard.
 
-**v0.1.12 (November 14, 2025)** - System Prompt Refactoring, Semantic Search & Multi-Agent Computer Use
-Major system prompt architecture redesign with new semantic search skills (semtools/serena), local skill execution support, and enhanced multi-agent computer use capabilities with Docker integration and visualization.
-
 ---
+
+## [0.1.15] - 2025-11-21
+
+### Added
+- **Persona Generation System**: Automatic generation of diverse system messages for multi-agent configurations
+  - New `massgen/persona_generator.py` for LLM-powered persona creation (365 lines)
+  - Enhanced `massgen/orchestrator.py` with persona generation orchestration (+122 lines)
+  - Enhanced `massgen/agent_config.py` with persona configuration support (+5 lines)
+  - Enhanced `massgen/cli.py` with `--generate-personas` flag (+54 lines)
+  - Multiple generation strategies: complementary, diverse, specialized, adversarial
+  - Configurable backend for persona generation (defaults to gpt-4o-mini)
+  - Custom persona guidelines support for domain-specific generation
+  - Increases response diversity without manual system message crafting
+
+### Changed
+- **Docker Distribution & Custom Tools Enhancement**: GitHub Container Registry integration with custom tools support
+  - Enhanced `.github/workflows/docker-publish.yml` with comprehensive CI/CD pipeline (+96 lines)
+  - Enhanced `massgen/docker/Dockerfile` and `Dockerfile.sudo` with MassGen pre-installation (+13 lines each)
+  - Enhanced `massgen/filesystem_manager/_docker_manager.py` with improved container management (+37 lines)
+  - Enhanced `massgen/cli.py` with Docker-related commands and improvements (+104 lines)
+  - Custom tools can now run in isolated Docker containers for security and portability (Issue #510)
+  - ARM architecture support for Apple Silicon and ARM-based cloud instances
+  - Automated Docker image pruning during CI builds
+
+- **Config Builder Enhancement**: Improved interactive configuration experience
+  - Enhanced `massgen/config_builder.py` with better model selection and defaults (+17 lines)
+
+### Documentations, Configurations and Resources
+
+- **Installation Documentation Overhaul**: Comprehensive Docker and setup guides
+  - Updated `docs/source/quickstart/installation.rst` with Docker installation instructions (+150 lines)
+  - Updated `docs/source/index.rst` with improved getting started guide (+66 lines)
+  - Detailed GitHub Container Registry pull instructions
+  - Platform-specific Docker setup guidance
+
+- **Persona Generation Configuration Example**: Reference configuration for persona diversity
+  - New `massgen/configs/basic/multi/persona_diversity_example.yaml` with strategy and backend configuration (123 lines)
+
+- **Pre-commit Hooks Enhancement**: Additional code quality checks
+  - New `scripts/precommit_check_package_name.py` for package name validation (39 lines)
+  - Updated `.pre-commit-config.yaml` with package name check (+6 lines)
+
+### Technical Details
+- **Major Focus**: Persona generation for agent diversity, Docker distribution improvements, GitHub Container Registry integration
+- **Contributors**: @ncrispino and the MassGen team
+
 
 ## [0.1.14] - 2025-11-19
 
