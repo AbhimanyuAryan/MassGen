@@ -14,24 +14,68 @@ Screen {
 
 #agents_container {
     layout: horizontal;
-    width: 75%;
+    width: 3fr;
     height: 100%;
 }
 
 #orchestrator_panel {
-    width: 25%;
+    width: 1fr;
+    min-width: 25;
     background: #252526;
-    border-left: solid #464647;
+    border-left: solid #5a5a5a;
     padding: 1;
+}
+
+#post_eval_container {
+    background: #252526;
+    border: solid #5a5a5a;
+    margin: 0 1 1 1;
+    padding: 1;
+    width: 100%;
+}
+
+#post_eval_label {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#final_stream_container {
+    background: #2d2d30;
+    border: solid #5a5a5a;
+    margin: 0 1 1 1;
+    padding: 1;
+    width: 100%;
+}
+
+#final_stream_label {
+    color: #c586c0;
+    margin-bottom: 1;
+}
+
+#final_stream_log {
+    background: #1e1e1e;
+    color: #d4d4d4;
 }
 
 /* Agent panels */
 AgentPanel {
     background: #252526;
-    border: solid #464647;
+    border: solid #5a5a5a;
     margin: 1;
     padding: 1;
     width: 1fr;
+}
+
+AgentPanel:hover {
+    border: solid #5a5a5a;
+}
+
+/* Override Textual's default purple focus outline */
+AgentPanel:focus,
+AgentPanel:focus-within {
+    border: solid #007acc;
+    background: #252526;
+    outline: none;
 }
 
 /* Headers */
@@ -70,7 +114,7 @@ Label {
 RichLog {
     background: #1e1e1e;
     color: #d4d4d4;
-    scrollbar-size: 1 1;
+    scrollbar-size: 2 2;
 }
 
 /* Status colors */
@@ -111,6 +155,14 @@ RichLog {
     color: #c586c0;
 }
 
+.streaming_label {
+    color: #4ec9b0;
+    text-style: italic;
+    height: 1;
+    width: 100%;
+    background: #252526;
+}
+
 /* Modals */
 ModalScreen {
     align: center middle;
@@ -126,7 +178,7 @@ ModalScreen {
 
 #selector_container {
     background: #252526;
-    border: thick #464647;
+    border: thick #5a5a5a;
     padding: 2;
     width: 60%;
     max-height: 80%;
@@ -134,10 +186,40 @@ ModalScreen {
 
 #table_container {
     background: #252526;
-    border: thick #464647;
+    border: thick #5a5a5a;
     padding: 2;
     width: 90%;
     height: 90%;
+}
+
+#vote_results_container {
+    background: #252526;
+    border: thick #007ACC;
+    padding: 2;
+    width: 70%;
+    height: 70%;
+}
+
+#vote_header {
+    color: #ffffff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#vote_results,
+#table_content {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+#table_hint {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#final_stream_log,
+#post_eval_log {
+    scrollbar-size: 2 2;
 }
 
 /* Buttons */
@@ -153,6 +235,8 @@ Button:hover {
 
 Button:focus {
     text-style: bold;
+    border: solid #1e7fd1;
+    outline: none;
 }
 
 /* Lists */
@@ -161,6 +245,7 @@ ListView {
     color: #d4d4d4;
     height: auto;
     max-height: 20;
+    scrollbar-size: 2 2;
 }
 
 ListItem {
@@ -172,10 +257,19 @@ ListItem:hover {
     background: #2a2d2e;
 }
 
+ListItem:focus {
+    background: #2a2d2e;
+    border: solid #007acc;
+}
+
 /* TextArea */
 TextArea {
     background: #1e1e1e;
     color: #d4d4d4;
+}
+
+TextArea:focus {
+    border: solid #007acc;
 }
 
 /* Scrollbars */

@@ -1178,6 +1178,14 @@ class CoordinationUI:
             if self.logger:
                 self.logger.log_agent_content(agent_id, content, "thinking")
 
+        # Stream final presentation chunks in Textual as soon as we know the selected agent
+        if self.display_type == "textual_terminal" and hasattr(self.display, "stream_final_answer_chunk"):
+            status = self.orchestrator.get_status()
+            selected_agent = status.get("selected_agent")
+            if selected_agent and selected_agent == agent_id:
+                vote_results = status.get("vote_results", {})
+                self.display.stream_final_answer_chunk(content, selected_agent, vote_results)
+
     async def _flush_final_answer(self):
         """Flush the buffered final answer after a timeout to prevent duplicate calls."""
         if self._final_answer_shown or not self._answer_buffer.strip():

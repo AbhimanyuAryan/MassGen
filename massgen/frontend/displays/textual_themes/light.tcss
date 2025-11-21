@@ -14,15 +14,47 @@ Screen {
 
 #agents_container {
     layout: horizontal;
-    width: 75%;
+    width: 3fr;
     height: 100%;
 }
 
 #orchestrator_panel {
-    width: 25%;
+    width: 1fr;
+    min-width: 25;
     background: #f3f3f3;
     border-left: solid #cccccc;
     padding: 1;
+}
+
+#post_eval_container {
+    background: #f9f9f9;
+    border: solid #dddddd;
+    margin: 0 1 1 1;
+    padding: 1;
+    width: 100%;
+}
+
+#post_eval_label {
+    color: #0066cc;
+    margin-bottom: 1;
+}
+
+#final_stream_container {
+    background: #f7f9ff;
+    border: solid #cccccc;
+    margin: 0 1 1 1;
+    padding: 1;
+    width: 100%;
+}
+
+#final_stream_label {
+    color: #9c27b0;
+    margin-bottom: 1;
+}
+
+#final_stream_log {
+    background: #ffffff;
+    color: #333333;
 }
 
 /* Agent panels */
@@ -32,6 +64,18 @@ AgentPanel {
     margin: 1;
     padding: 1;
     width: 1fr;
+}
+
+AgentPanel:hover {
+    border: solid #cccccc;
+}
+
+/* Override Textual's default purple focus outline */
+AgentPanel:focus,
+AgentPanel:focus-within {
+    border: solid #2196f3;
+    background: #f9f9f9;
+    outline: none;
 }
 
 /* Headers */
@@ -70,7 +114,7 @@ Label {
 RichLog {
     background: #ffffff;
     color: #333333;
-    scrollbar-size: 1 1;
+    scrollbar-size: 2 2;
 }
 
 /* Status colors */
@@ -140,6 +184,44 @@ ModalScreen {
     height: 90%;
 }
 
+#vote_results_container {
+    background: #ffffff;
+    border: thick #0066cc;
+    padding: 2;
+    width: 70%;
+    height: 70%;
+}
+
+#vote_header {
+    color: #0066cc;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#vote_results,
+#table_content {
+    background: #ffffff;
+    color: #333333;
+}
+
+#table_hint {
+    color: #0066cc;
+    margin-bottom: 1;
+}
+
+#final_stream_log,
+#post_eval_log {
+    scrollbar-size: 2 2;
+}
+
+.streaming_label {
+    color: #4caf50;
+    text-style: italic;
+    height: 1;
+    width: 100%;
+    background: #f9f9f9;
+}
+
 /* Buttons */
 Button {
     background: #0066cc;
@@ -153,6 +235,8 @@ Button:hover {
 
 Button:focus {
     text-style: bold;
+    border: solid #0052a3;
+    outline: none;
 }
 
 /* Lists */
@@ -161,6 +245,7 @@ ListView {
     color: #333333;
     height: auto;
     max-height: 20;
+    scrollbar-size: 2 2;
 }
 
 ListItem {
@@ -172,10 +257,19 @@ ListItem:hover {
     background: #e3f2fd;
 }
 
+ListItem:focus {
+    background: #e3f2fd;
+    border: solid #2196f3;
+}
+
 /* TextArea */
 TextArea {
     background: #ffffff;
     color: #333333;
+}
+
+TextArea:focus {
+    border: solid #2196f3;
 }
 
 /* Scrollbars */
@@ -188,7 +282,7 @@ ScrollbarThumb {
 }
 
 ScrollbarThumb:hover {
-    background: #9e9e9e;
+    background: #8c8c8c;
 }
 
 /* Footer */
