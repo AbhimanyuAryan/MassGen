@@ -5,6 +5,7 @@ Textual Terminal Display for MassGen Coordination
 """
 
 import os
+import re
 import threading
 from collections import deque
 from datetime import datetime
@@ -1246,25 +1247,27 @@ if TEXTUAL_AVAILABLE:
         """Panel for individual agent output."""
 
         def __init__(self, agent_id: str, display: TextualTerminalDisplay):
-            super().__init__(id=f"agent_{agent_id}")
             self.agent_id = agent_id
+            self._dom_safe_id = self._make_dom_safe_id(agent_id)
+            super().__init__(id=f"agent_{self._dom_safe_id}")
             self.status = "waiting"
             self.coordination_display = display
             self.content_log = RichLog(
-                id=f"log_{agent_id}",
+                id=f"log_{self._dom_safe_id}",
                 highlight=self.coordination_display.enable_syntax_highlighting,
                 markup=True,
                 wrap=True,
             )
             self._line_buffer = ""
             self.current_line_label = Label("", classes="streaming_label")
+            self._header_dom_id = f"header_{self._dom_safe_id}"
 
         def compose(self) -> ComposeResult:
             with Vertical():
                 # Agent header with status
                 yield Label(
                     self._header_text(),
-                    id=f"header_{self.agent_id}",
+                    id=self._header_dom_id,
                 )
                 # Content area
                 yield self.content_log
@@ -1311,7 +1314,7 @@ if TEXTUAL_AVAILABLE:
                 self.current_line_label.update(Text(""))
 
             self.status = status
-            header = self.query_one(f"#header_{self.agent_id}")
+            header = self.query_one(f"#{self._header_dom_id}")
             header.update(self._header_text())
 
         def jump_to_latest(self):
@@ -1340,6 +1343,15 @@ if TEXTUAL_AVAILABLE:
                 "error": "❌",
             }
             return self.coordination_display._get_icon(icon_map.get(status, "🤖"))
+
+        def _make_dom_safe_id(self, raw_id: str) -> str:
+            """Convert arbitrary agent IDs into Textual-safe DOM identifiers."""
+            safe = re.sub(r"[^0-9a-zA-Z_-]", "_", raw_id)
+            if not safe:
+                safe = "agent"
+            if safe[0].isdigit():
+                safe = f"_{safe}"
+            return safe
 
     class OrchestratorPanel(ScrollableContainer):
         """Panel for orchestrator events."""

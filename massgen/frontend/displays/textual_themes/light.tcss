@@ -204,6 +204,35 @@ ModalScreen {
     color: #333333;
 }
 
+#system_status_container {
+    background: #f3f3f3;
+    border: thick #cccccc;
+    padding: 2;
+    width: 80%;
+    height: 80%;
+}
+
+#text_content_container {
+    background: #f3f3f3;
+    border: thick #cccccc;
+    padding: 2;
+    width: 80%;
+    height: 80%;
+}
+
+#system_status_header,
+#text_content_header {
+    color: #000000;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#system_status_content,
+#text_content_body {
+    background: #ffffff;
+    color: #000000;
+}
+
 #table_hint {
     color: #0066cc;
     margin-bottom: 1;

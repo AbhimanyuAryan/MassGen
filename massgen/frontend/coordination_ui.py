@@ -136,7 +136,7 @@ class CoordinationUI:
                 # Handle agent status updates
                 if chunk_type == "agent_status":
                     status = getattr(chunk, "status", None)
-                    if source and status:
+                    if self.display and source and status:
                         self.display.update_agent_status(source, status)
                     continue
 
@@ -150,7 +150,7 @@ class CoordinationUI:
                 # Filter out mcp_status chunks - display via agent panel instead of console
                 elif chunk_type == "mcp_status":
                     # Let the display handle MCP status via agent panel
-                    if source and source in self.agent_ids:
+                    if self.display and source and source in self.agent_ids:
                         self.display.update_agent_content(source, content, "tool")
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
@@ -207,7 +207,8 @@ class CoordinationUI:
 
                         if reasoning_content:
                             # Display reasoning as thinking content
-                            self.display.update_agent_content(source, reasoning_content, "thinking")
+                            if self.display:
+                                self.display.update_agent_content(source, reasoning_content, "thinking")
                             if self.logger:
                                 self.logger.log_agent_content(source, reasoning_content, "reasoning")
                     continue
@@ -221,7 +222,8 @@ class CoordinationUI:
                     attempt = getattr(orchestrator, "current_attempt", 0) + 2
                     max_attempts = getattr(orchestrator, "max_attempts", 3)
 
-                    self.display.show_restart_banner(reason, instructions, attempt, max_attempts)
+                    if self.display and hasattr(self.display, "show_restart_banner"):
+                        self.display.show_restart_banner(reason, instructions, attempt, max_attempts)
                     continue
 
                 # Handle restart required signal (internal - don't display)
@@ -252,7 +254,7 @@ class CoordinationUI:
 
                     # Log chunk
                     if self.logger:
-                        self.logger.log_chunk(source, content, chunk.type)
+                        self.logger.log_chunk(source, content, chunk_type)
 
                     # Process content by source
                     await self._process_content(source, content)
@@ -459,8 +461,10 @@ class CoordinationUI:
                 try:
                     answer = await self._run_orchestration(orchestrator, question)
                     result_queue.put(("success", answer))
-                except Exception as e:
-                    result_queue.put(("error", e))
+                except SystemExit as quit_exc:
+                    result_queue.put(("quit", quit_exc))
+                except BaseException as exc:
+                    result_queue.put(("error", exc))
 
             def run_async_orchestration():
                 """Bridge between threading and asyncio."""
@@ -491,8 +495,11 @@ class CoordinationUI:
 
             # Get result from queue
             try:
-                status, result = result_queue.get_nowait()
+                # Block briefly to give the orchestration thread time to publish its result
+                status, result = result_queue.get(timeout=5)
                 if status == "error":
+                    raise result  # Re-raise exception from orchestration thread
+                if status == "quit":
                     raise result  # Re-raise exception from orchestration thread
                 return result
             except queue.Empty:
@@ -640,7 +647,7 @@ class CoordinationUI:
 
                     # Log chunk
                     if self.logger:
-                        self.logger.log_chunk(source, content, chunk.type)
+                        self.logger.log_chunk(source, content, chunk_type)
 
                     # Process content by source
                     await self._process_content(source, content)
@@ -982,7 +989,7 @@ class CoordinationUI:
 
                     # Log chunk
                     if self.logger:
-                        self.logger.log_chunk(source, content, chunk.type)
+                        self.logger.log_chunk(source, content, chunk_type)
 
                     # Process content by source
                     await self._process_content(source, content)
@@ -1179,12 +1186,13 @@ class CoordinationUI:
                 self.logger.log_agent_content(agent_id, content, "thinking")
 
         # Stream final presentation chunks in Textual as soon as we know the selected agent
-        if self.display_type == "textual_terminal" and hasattr(self.display, "stream_final_answer_chunk"):
+        if self.orchestrator and self.display_type == "textual_terminal" and hasattr(self.display, "stream_final_answer_chunk"):
             status = self.orchestrator.get_status()
-            selected_agent = status.get("selected_agent")
-            if selected_agent and selected_agent == agent_id:
-                vote_results = status.get("vote_results", {})
-                self.display.stream_final_answer_chunk(content, selected_agent, vote_results)
+            if status:
+                selected_agent = status.get("selected_agent")
+                if selected_agent and selected_agent == agent_id:
+                    vote_results = status.get("vote_results", {})
+                    self.display.stream_final_answer_chunk(content, selected_agent, vote_results)
 
     async def _flush_final_answer(self):
         """Flush the buffered final answer after a timeout to prevent duplicate calls."""
