@@ -103,7 +103,6 @@ Parallel tool execution with configurable concurrency controls across all backen
 - **Terminal Evaluation Documentation**: Complete guide for automated terminal testing
   - New `docs/source/user_guide/terminal_evaluation.rst` with setup and usage (450 lines)
   - Covers VHS configuration, recording workflows, evaluation strategies
-  - Integration examples with GitHub Actions for CI/CD
   - Best practices for multimodal session analysis
 
 - **Memory Filesystem Mode Enhancement**: Expanded documentation for memory integration
@@ -122,7 +121,6 @@ Parallel tool execution with configurable concurrency controls across all backen
   - Updated `docs/source/user_guide/custom_tools.rst` with terminal evaluation examples (+103 lines)
   - Documents VHS integration patterns
   - Best practices for recording and evaluation tools
-  - CI/CD integration strategies
 
 - **Configuration Examples**: New YAML configurations for v0.1.16 features
   - New `massgen/configs/meta/massgen_evaluates_terminal.yaml` for terminal evaluation (72 lines)

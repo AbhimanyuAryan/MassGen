@@ -164,7 +164,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 - **🎬 Terminal Evaluation System** - Automated VHS recording and AI-powered terminal display evaluation
 - **💰 LiteLLM Cost Tracking** - Accurate pricing for 500+ models with automatic updates
 - **🧠 Memory Archiving** - Multi-turn session persistence with long-term memory storage
-- **🔧 Self-Evolution Skills** - MassGen can now maintain and improve itself
+- **🔧 Self-Evolution Skills** - MassGen now has specific agent skills to help with development
 
 **Key Improvements:**
 - Record and analyze terminal sessions with VHS for UI/UX evaluation using multimodal AI
@@ -1097,7 +1097,6 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 #### Terminal Evaluation System
 - **VHS Recording & AI Analysis**: Record terminal sessions as GIF/MP4/WEBM using VHS, analyze with GPT-4.1/Claude for UI/UX quality, agent performance, and coordination visualization
-- **CI/CD Integration**: Automated testing workflows for continuous quality monitoring
 
 #### LiteLLM Cost Tracking Integration
 - **500+ Model Support**: Auto-updating pricing database with reasoning tokens (o1/o3) and cached tokens (Claude, OpenAI) support, more accurate than manual tables
@@ -1107,7 +1106,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 - **Persistent Multi-Turn Memory**: Archive memory across conversation turns with improved retrieval and context management for continuous agent interactions
 
 #### MassGen Self-Evolution Skills
-- **Four Autonomous Skills**: Config creator, self-developer, release documenter, and model registry maintainer enabling MassGen to maintain and improve itself
+- **Four Development Skills**: Config creator, self-developer, release documenter, and model registry maintainer to assist with MassGen development and maintenance
 
 #### Infrastructure Enhancements
 - **Docker Improvements**: Parallel image pulling for faster setup, VHS integration for terminal recording in containers
