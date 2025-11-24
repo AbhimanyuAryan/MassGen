@@ -1436,6 +1436,7 @@ async def run_question_with_history(
         display_type=ui_config.get("display_type", "rich_terminal"),
         logging_enabled=ui_config.get("logging_enabled", True),
         enable_final_presentation=True,  # Required for multi-turn: ensures final answer is saved
+        skip_agent_selector=ui_config.get("skip_agent_selector", False),
     )
 
     # Determine display mode text
@@ -1529,6 +1530,7 @@ async def run_question_with_history(
                 display_type=ui_config.get("display_type", "rich_terminal"),
                 logging_enabled=ui_config.get("logging_enabled", True),
                 enable_final_presentation=True,
+                skip_agent_selector=ui_config.get("skip_agent_selector", False),
             )
 
             # Continue to next attempt
@@ -1816,6 +1818,7 @@ async def run_single_question(
             display_type=ui_config.get("display_type", "rich_terminal"),
             logging_enabled=ui_config.get("logging_enabled", True),
             enable_final_presentation=True,  # Ensures final presentation is generated
+            skip_agent_selector=ui_config.get("skip_agent_selector", False),
         )
 
         print(f"\n🤖 {BRIGHT_CYAN}Multi-Agent Mode{RESET}", flush=True)
@@ -1856,6 +1859,7 @@ async def run_single_question(
                     display_type=ui_config.get("display_type", "rich_terminal"),
                     logging_enabled=ui_config.get("logging_enabled", True),
                     enable_final_presentation=True,
+                    skip_agent_selector=ui_config.get("skip_agent_selector", False),
                 )
 
                 # Continue to next attempt
@@ -2617,9 +2621,13 @@ def check_docker_available() -> bool:
 def setup_docker() -> None:
     """Pull MassGen Docker executor images from GitHub Container Registry.
 
-    Pulls both standard and sudo variants for isolated code execution.
+    Allows interactive selection of which images to install.
+    Sudo image is recommended and selected by default.
     """
     import subprocess
+
+    import questionary
+    from questionary import Style
 
     print(f"\n{BRIGHT_CYAN}{'=' * 60}{RESET}")
     print(f"{BRIGHT_CYAN}  🐳  MassGen Docker Setup{RESET}")
@@ -2670,74 +2678,116 @@ def setup_docker() -> None:
         print(f"\n{BRIGHT_RED}Error: Docker daemon check timed out{RESET}\n")
         return
 
-    # Images to pull
-    images = [
-        ("ghcr.io/massgen/mcp-runtime:latest", "Standard image"),
-        ("ghcr.io/massgen/mcp-runtime-sudo:latest", "Sudo image (for package installation)"),
+    # Define available images with metadata
+    # Future: Add more images here as needed
+    AVAILABLE_IMAGES = [
+        {
+            "name": "ghcr.io/massgen/mcp-runtime-sudo:latest",
+            "description": "Sudo image (recommended - allows package installation)",
+            "default": True,  # Pre-selected by default
+        },
+        {
+            "name": "ghcr.io/massgen/mcp-runtime:latest",
+            "description": "Standard image (no sudo access)",
+            "default": False,
+        },
     ]
 
-    print(f"\n{BRIGHT_CYAN}Pulling Docker images in parallel...{RESET}\n")
+    # Create questionary style matching the rest of the CLI
+    custom_style = Style(
+        [
+            ("qmark", "fg:#00CED1 bold"),
+            ("question", "fg:#00CED1 bold"),
+            ("answer", "fg:#32CD32 bold"),
+            ("pointer", "fg:#00CED1 bold"),
+            ("highlighted", "fg:#00CED1 bold"),
+            ("selected", "fg:#32CD32"),
+            ("separator", "fg:#6C6C6C"),
+            ("instruction", "fg:#A9A9A9"),
+        ],
+    )
 
-    # Pull images in parallel using threading
-    import concurrent.futures
-    import threading
+    # Let user select which images to install
+    print(f"{BRIGHT_CYAN}Select Docker images to install:{RESET}")
+    print(f"{BRIGHT_YELLOW}(Use Space to select/deselect, Enter to confirm){RESET}\n")
 
-    # Thread-safe counter and lock for output
+    try:
+        choices = [
+            questionary.Choice(
+                title=f"{img['description']}",
+                value=img["name"],
+                checked=img["default"],
+            )
+            for img in AVAILABLE_IMAGES
+        ]
+
+        selected_images = questionary.checkbox(
+            "",
+            choices=choices,
+            style=custom_style,
+        ).ask()
+
+        if selected_images is None:  # User cancelled (Ctrl+C)
+            print(f"\n{BRIGHT_YELLOW}Setup cancelled{RESET}\n")
+            return
+
+        if not selected_images:
+            print(f"\n{BRIGHT_YELLOW}No images selected. Skipping Docker setup.{RESET}\n")
+            return
+
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{BRIGHT_YELLOW}Setup cancelled{RESET}\n")
+        return
+
+    # Pull images with real-time progress display
+    print(f"\n{BRIGHT_CYAN}Pulling {len(selected_images)} image(s)...{RESET}\n")
+
     success_count = 0
-    lock = threading.Lock()
+    failed_images = []
 
-    def pull_image(image: str, description: str) -> bool:
-        """Pull a Docker image and return success status."""
-        nonlocal success_count
-
-        with lock:
-            print(f"  {BRIGHT_CYAN}Pulling {image}{RESET}")
-            print(f"  {BRIGHT_YELLOW}({description}){RESET}")
+    for i, image in enumerate(selected_images, 1):
+        print(f"{BRIGHT_CYAN}[{i}/{len(selected_images)}] Pulling {image}...{RESET}\n")
 
         try:
+            # Don't capture output so Docker's progress bars are visible
             result = subprocess.run(
                 ["docker", "pull", image],
-                capture_output=True,  # Capture to avoid interleaved output
-                text=True,
-                timeout=600,  # 10 minutes max
+                timeout=600,  # 10 minutes max per image
             )
 
-            with lock:
-                if result.returncode == 0:
-                    print(f"  {BRIGHT_GREEN}✓ {image} pulled successfully{RESET}\n")
-                    success_count += 1
-                    return True
-                else:
-                    print(f"  {BRIGHT_RED}✗ Failed to pull{RESET}\n")
-                    return False
-        except subprocess.TimeoutExpired:
-            with lock:
-                print(f"  {BRIGHT_RED}✗ Timed out{RESET}\n")
-            return False
-        except Exception as e:
-            with lock:
-                print(f"  {BRIGHT_RED}✗ Error: {e}{RESET}\n")
-            return False
+            print()  # Add spacing after progress bars
 
-    # Execute pulls in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(pull_image, image, desc) for image, desc in images]
-        # Wait for all to complete
-        concurrent.futures.wait(futures)
+            if result.returncode == 0:
+                print(f"{BRIGHT_GREEN}✓ [{i}/{len(selected_images)}] Completed: {image}{RESET}\n")
+                success_count += 1
+            else:
+                print(f"{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Failed: {image}{RESET}\n")
+                failed_images.append(image)
+
+        except subprocess.TimeoutExpired:
+            print(f"\n{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Timed out: {image}{RESET}\n")
+            failed_images.append(image)
+        except Exception as e:
+            print(f"\n{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Error: {image} - {e}{RESET}\n")
+            failed_images.append(image)
 
     # Summary
-    if success_count == len(images):
-        print(f"{BRIGHT_GREEN}{'=' * 60}{RESET}")
+    print(f"{BRIGHT_CYAN}{'=' * 60}{RESET}")
+    if success_count == len(selected_images):
         print(f"{BRIGHT_GREEN}  ✅ Docker setup complete!{RESET}")
-        print(f"{BRIGHT_GREEN}{'=' * 60}{RESET}")
+        print(f"{BRIGHT_GREEN}  Successfully pulled {success_count} image(s){RESET}")
+        print(f"{BRIGHT_CYAN}{'=' * 60}{RESET}")
         print(f"\n{BRIGHT_CYAN}You can now use Docker execution mode in your configs.{RESET}")
         print(f"{BRIGHT_CYAN}Run 'massgen --quickstart' to create a config with Docker enabled.{RESET}\n")
     elif success_count > 0:
+        print(f"{BRIGHT_YELLOW}  ⚠️  Partial success: {success_count}/{len(selected_images)} images pulled{RESET}")
         print(f"{BRIGHT_YELLOW}{'=' * 60}{RESET}")
-        print(f"{BRIGHT_YELLOW}  ⚠️  Partial success: {success_count}/{len(images)} images pulled{RESET}")
-        print(f"{BRIGHT_YELLOW}{'=' * 60}{RESET}\n")
+        if failed_images:
+            print(f"\n{BRIGHT_YELLOW}Failed images:{RESET}")
+            for img in failed_images:
+                print(f"  - {img}")
+        print()
     else:
-        print(f"{BRIGHT_RED}{'=' * 60}{RESET}")
         print(f"{BRIGHT_RED}  ❌ Docker setup failed{RESET}")
         print(f"{BRIGHT_RED}{'=' * 60}{RESET}")
         print(f"\n{BRIGHT_YELLOW}The images may not be published yet.{RESET}")
@@ -3343,6 +3393,8 @@ async def main(args):
             ui_config["display_type"] = "silent"
             ui_config["logging_enabled"] = True
             ui_config["automation_mode"] = True
+        if args.skip_agent_selector:
+            ui_config["skip_agent_selector"] = True
         if args.no_display:
             ui_config["display_type"] = "simple"
         if args.no_logs:
@@ -3361,6 +3413,11 @@ async def main(args):
 
         # Update config with timeout settings
         config["timeout_settings"] = timeout_settings
+
+        # Check for prompt in config if not provided via CLI
+        if not args.question and "prompt" in config:
+            args.question = config["prompt"]
+            logger.info(f"Using prompt from config file: {args.question}")
 
         # Get rate limiting flag from CLI
         enable_rate_limit = args.rate_limit
@@ -3443,6 +3500,11 @@ async def main(args):
 
             log_dir = get_log_session_root()
             log_dir_name = log_dir.name
+
+            # Print LOG_DIR for automation mode (LLM agents need this to monitor progress)
+            if args.automation:
+                print(f"LOG_DIR: {log_dir}")
+                print(f"STATUS: {log_dir / 'status.json'}")
 
             registry = SessionRegistry()
             registry.register_session(
@@ -3681,6 +3743,11 @@ Environment Variables:
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
     )
     parser.add_argument(
+        "--skip-agent-selector",
+        action="store_true",
+        help="Skip the Agent Selector interface at the end (useful for terminal recordings/automation). " "MassGen will exit immediately after showing the final answer.",
+    )
+    parser.add_argument(
         "--init",
         action="store_true",
         help="Launch interactive configuration builder to create config file",
@@ -3689,6 +3756,38 @@ Environment Variables:
         "--quickstart",
         action="store_true",
         help="Quick setup: specify number of agents and models, get a full-featured config with code tools, Docker, skills",
+    )
+    parser.add_argument(
+        "--generate-config",
+        type=str,
+        metavar="PATH",
+        help="Generate config file at specified path (non-interactive, requires --config-backend and --config-model)",
+    )
+    parser.add_argument(
+        "--config-agents",
+        type=int,
+        default=2,
+        help="Number of agents for --generate-config (default: 2)",
+    )
+    parser.add_argument(
+        "--config-backend",
+        type=str,
+        help="Backend provider for --generate-config (e.g., 'openai', 'anthropic', 'gemini')",
+    )
+    parser.add_argument(
+        "--config-model",
+        type=str,
+        help="Model name for --generate-config (e.g., 'gpt-5', 'claude-sonnet-4', 'gemini-2.5-pro')",
+    )
+    parser.add_argument(
+        "--config-docker",
+        action="store_true",
+        help="Enable Docker execution mode in generated config",
+    )
+    parser.add_argument(
+        "--config-context-path",
+        type=str,
+        help="Add context path to generated config",
     )
     parser.add_argument(
         "--setup",
@@ -3703,7 +3802,7 @@ Environment Variables:
     parser.add_argument(
         "--setup-docker",
         action="store_true",
-        help="Pull MassGen Docker executor images for isolated code execution",
+        help="Interactively select and pull MassGen Docker executor images (sudo image recommended by default)",
     )
     parser.add_argument(
         "--list-examples",
@@ -3956,6 +4055,37 @@ Environment Variables:
             # User cancelled selection
             return
 
+    # Generate config programmatically if requested
+    if args.generate_config:
+        if not args.config_backend or not args.config_model:
+            print(f"{BRIGHT_RED}❌ Error: --config-backend and --config-model are required with --generate-config{RESET}")
+            print(f"{BRIGHT_CYAN}Example: massgen --generate-config ./config.yaml --config-backend gemini --config-model gemini-2.5-pro{RESET}")
+            return
+
+        try:
+            builder = ConfigBuilder()
+            success = builder.generate_config_programmatic(
+                output_path=args.generate_config,
+                num_agents=args.config_agents,
+                backend_type=args.config_backend,
+                model=args.config_model,
+                use_docker=args.config_docker,
+                context_path=args.config_context_path,
+            )
+            if success:
+                print(f"{BRIGHT_GREEN}✅ Configuration saved to: {args.generate_config}{RESET}")
+                print(f'{BRIGHT_CYAN}Run with: massgen --config {args.generate_config} "Your question"{RESET}')
+            return
+        except ValueError as e:
+            print(f"{BRIGHT_RED}❌ Error: {e}{RESET}")
+            return
+        except Exception as e:
+            print(f"{BRIGHT_RED}❌ Unexpected error: {e}{RESET}")
+            import traceback
+
+            traceback.print_exc()
+            return
+
     # Launch quickstart if requested
     if args.quickstart:
         builder = ConfigBuilder()
@@ -4013,6 +4143,7 @@ Environment Variables:
             return
 
     # First-run detection: auto-trigger setup wizard and config builder if no config specified
+    # Note: If config has a 'prompt' key, it will be used (set above), so args.question will be set
     if not args.question and not args.config and not args.model and not args.backend:
         if should_run_builder():
             print()

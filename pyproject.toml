@@ -230,6 +230,7 @@ markers = [
     "unit: marks tests as unit tests",
     "asyncio: mark test as requiring asyncio",
     "docker: marks tests that require Docker to be installed and running",
+    "expensive: marks tests that cost money (API calls with >$0.01 cost, skip by default)",
 ]
 asyncio_mode = "auto"
 filterwarnings = [
