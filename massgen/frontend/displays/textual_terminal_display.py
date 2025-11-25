@@ -62,6 +62,9 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     def __init__(self, agent_ids: List[str], **kwargs: Any):
         super().__init__(agent_ids, **kwargs)
+        # Validate agent IDs
+        self._validate_agent_ids()
+        self._dom_id_mapping: Dict[str, str] = {}
 
         # Configuration (same pattern as RichTerminalDisplay)
         self.theme = kwargs.get("theme", "dark")
@@ -109,10 +112,9 @@ class TextualTerminalDisplay(TerminalDisplay):
         # Emoji support detection
         self.emoji_support = self._detect_emoji_support()
 
-        # Terminal type detection
-        self.terminal_type = self._detect_terminal_type()
         if self.refresh_rate is None:
-            self.refresh_rate = self._get_adaptive_refresh_rate(self.terminal_type)
+            terminal_type = self._detect_terminal_type()
+            self.refresh_rate = self._get_adaptive_refresh_rate(terminal_type)
         else:
             self.refresh_rate = int(self.refresh_rate)
 
@@ -126,12 +128,32 @@ class TextualTerminalDisplay(TerminalDisplay):
             adaptive_flush = max(0.08, 1 / max(self.refresh_rate, 1))
             default_buffer_flush = min(adaptive_flush, 0.12)
         self.buffer_flush_interval = default_buffer_flush
-        self._buffers = {agent_id: [] for agent_id in agent_ids}
+        self._buffers = {agent_id: [] for agent_id in self.agent_ids}
         self._buffer_lock = threading.Lock()
 
         # Web-search filtering helpers
-        self._recent_web_chunks: Dict[str, Deque[str]] = {agent_id: deque(maxlen=self.max_web_search_lines) for agent_id in agent_ids}
-        self._web_was_truncated: Dict[str, bool] = {agent_id: False for agent_id in agent_ids}
+        self._recent_web_chunks: Dict[str, Deque[str]] = {agent_id: deque(maxlen=self.max_web_search_lines) for agent_id in self.agent_ids}
+
+    def _validate_agent_ids(self):
+        """Validate agent IDs for security and robustness."""
+        if not self.agent_ids:
+            raise ValueError("At least one agent ID is required")
+
+        MAX_AGENT_ID_LENGTH = 100
+
+        for agent_id in self.agent_ids:
+            # Check length
+            if len(agent_id) > MAX_AGENT_ID_LENGTH:
+                truncated_preview = agent_id[:50] + "..."
+                raise ValueError(f"Agent ID exceeds maximum length of {MAX_AGENT_ID_LENGTH} characters: {truncated_preview}")
+
+            # Check if empty or whitespace-only
+            if not agent_id or not agent_id.strip():
+                raise ValueError("Agent ID cannot be empty or whitespace-only")
+
+        # Check for duplicates
+        if len(self.agent_ids) != len(set(self.agent_ids)):
+            raise ValueError("Duplicate agent IDs detected")
 
     def _detect_emoji_support(self) -> bool:
         """Detect if terminal supports emoji."""
@@ -165,10 +187,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self.emoji_support:
             return emoji
         return EMOJI_FALLBACKS.get(emoji, emoji)
-
-    def _escape_markup(self, text: str) -> str:
-        """Escape markup-sensitive characters so agent IDs render literally (no Rich import needed)."""
-        return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
 
     def _is_critical_content(self, content: str, content_type: str) -> bool:
         """Identify content that should flush immediately (prefer type, keep legacy patterns)."""
@@ -603,7 +621,6 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         if agent_id not in self._recent_web_chunks:
             self._recent_web_chunks[agent_id] = deque(maxlen=self.max_web_search_lines)
-            self._web_was_truncated[agent_id] = False
 
         if self._should_filter_content(content, content_type):
             return None
@@ -665,7 +682,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         """Reset stored web search snippets after a status change."""
         if agent_id in self._recent_web_chunks:
             self._recent_web_chunks[agent_id].clear()
-        self._web_was_truncated[agent_id] = False
 
         if truncate_history:
             # Trim buffered web content to reduce noise after status transitions
@@ -1251,10 +1267,10 @@ if TEXTUAL_AVAILABLE:
 
         def __init__(self, agent_id: str, display: TextualTerminalDisplay):
             self.agent_id = agent_id
+            self.coordination_display = display
             self._dom_safe_id = self._make_dom_safe_id(agent_id)
             super().__init__(id=f"agent_{self._dom_safe_id}")
             self.status = "waiting"
-            self.coordination_display = display
             self.content_log = RichLog(
                 id=f"log_{self._dom_safe_id}",
                 highlight=self.coordination_display.enable_syntax_highlighting,
@@ -1349,11 +1365,43 @@ if TEXTUAL_AVAILABLE:
 
         def _make_dom_safe_id(self, raw_id: str) -> str:
             """Convert arbitrary agent IDs into Textual-safe DOM identifiers."""
-            safe = re.sub(r"[^0-9a-zA-Z_-]", "_", raw_id)
+            MAX_DOM_ID_LENGTH = 80
+
+            # Truncate if too long
+            truncated = raw_id[:MAX_DOM_ID_LENGTH] if len(raw_id) > MAX_DOM_ID_LENGTH else raw_id
+
+            # Apply regex substitution
+            safe = re.sub(r"[^0-9a-zA-Z_-]", "_", truncated)
+
+            # Handle empty result
             if not safe:
-                safe = "agent"
+                safe = "agent_default"
+
+            # Handle digit-first
             if safe[0].isdigit():
-                safe = f"_{safe}"
+                safe = f"agent_{safe}"
+
+            # Collision-safe: append __N suffix if needed
+            base_safe = safe
+            counter = 1
+            used_ids = set(self.coordination_display._dom_id_mapping.values())
+
+            while safe in used_ids:
+                suffix = f"__{counter}"
+                # Ensure total length doesn't exceed MAX_DOM_ID_LENGTH
+                max_base_len = MAX_DOM_ID_LENGTH - len(suffix)
+                safe = base_safe[:max_base_len] + suffix
+                counter += 1
+
+            # Log collision resolution for debugging
+            if safe != base_safe:
+                logger.debug(
+                    f"DOM ID collision resolved for agent '{raw_id}': " f"'{base_safe}' -> '{safe}' (suffix added to avoid duplicate)",
+                )
+
+            # Store mapping for debugging and future collision checks
+            self.coordination_display._dom_id_mapping[raw_id] = safe
+
             return safe
 
     class OrchestratorPanel(ScrollableContainer):
