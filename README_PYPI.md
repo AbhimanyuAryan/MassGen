@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.13 Features](#-latest-features-v0113)
+- [v0.1.16 Features](#-latest-features-v0116)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.13](#recent-achievements-v0113)
-  - [v0.0.3 - v0.1.12](#previous-achievements-v003---v0112)
+  - [v0.1.16](#recent-achievements-v0116)
+  - [v0.0.3 - v0.1.15](#previous-achievements-v003---v0115)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.14 Roadmap](#v0114-roadmap)
+- [v0.1.17 Roadmap](#v0117-roadmap)
 </details>
 
 <details open>
@@ -155,52 +155,41 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.13)
+## 🆕 Latest Features (v0.1.16)
 
-**🎉 Released: November 17, 2025**
+**🎉 Released: November 24, 2025**
 
-**What's New in v0.1.13:**
-- **🏗️ Code-Based Tools System (CodeAct Paradigm)** - Revolutionary tool integration via importable Python code
-- **🔍 MCP Server Registry & Auto-Discovery** - Intelligent tool routing with automatic server discovery and on-demand loading
-- **🛠️ Skills Installation System** - Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI
-- **🌐 NLIP Integration** - Advanced tool routing with Natural Language Interface Protocol across all backends
+**What's New in v0.1.16:**
+- **🎬 Terminal Evaluation System** - Automated VHS recording and AI-powered terminal display evaluation
+- **💰 LiteLLM Cost Tracking** - Accurate pricing for 500+ models with automatic updates
+- **🧠 Memory Archiving** - Multi-turn session persistence with long-term memory storage
+- **🔧 Self-Evolution Skills** - MassGen now has specific agent skills to help with development
 
 **Key Improvements:**
-- Code-based tool integration dramatically reduces context pollution through on-demand loading
-- MCP server registry enables automatic tool discovery without manual configuration
-- Skills installer works cross-platform (Windows, macOS, Linux) with automatic dependency management
-- NLIP provides intelligent tool routing at both agent and orchestrator levels
-- TOOL.md documentation standard with YAML frontmatter for all custom tools
+- Record and analyze terminal sessions with VHS for UI/UX evaluation using multimodal AI
+- Precise cost tracking with LiteLLM's pricing database (reasoning tokens, cached tokens support)
+- Archive memory across conversation turns for session continuity
+- Four new skills enabling MassGen to document releases, maintain configs, and develop features
+- Parallel Docker image pulling for faster setup
+- Grok 4.1 and GPT-4.1 model family support with accurate pricing metadata
 
-**Try v0.1.13 Features:**
+**Try v0.1.16 Features:**
 ```bash
 # Install or upgrade from PyPI
 pip install --upgrade massgen
 
-# Automated Skills Installation - cross-platform setup
-massgen --setup-skills  # Installs openskills CLI, Anthropic skills, and Crawl4AI
+# Or with uv (faster)
+uv pip install massgen
 
-# Code-Based Tools (CodeAct Paradigm) - 98% context reduction
-# Prerequisites: Docker running, .env file with API keys
-uv run massgen --automation \
-  --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
-  "List all available tools by exploring the workspace filesystem"
+# Terminal Evaluation - record and analyze MassGen's terminal display
+# Prerequisites: VHS installed (brew install vhs or go install github.com/charmbracelet/vhs@latest), OPENAI_API_KEY or GEMINI_API_KEY in .env
+uv run massgen --config massgen/configs/meta/massgen_evaluates_terminal.yaml \
+  "Record running massgen on @examples/basic/multi/two_agents_gemini.yaml, answering 'What is 2+2?'. Then, evaluate the terminal display for clarity, status indicators, and coordination visualization, coming up with improvements."
 
-# Or use with skills for advanced features:
-uv run massgen --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
-  "Create a website about Bob Dylan, ensuring that it is visually appealing and user friendly"
-
-# Minimal MCPs - command-line file operations with memory filesystem mode
-uv run massgen --config massgen/configs/tools/filesystem/exclude_mcps/test_minimal_mcps.yaml \
+# Memory Archiving - persistent memory across conversation turns
+# Prerequisites: Docker running, API keys in .env
+uv run massgen --config massgen/configs/skills/test_memory.yaml \
   "Create a website about Bob Dylan"
-
-# NLIP Integration - natural language tool routing
-massgen --config massgen/configs/examples/nlip_openai_weather_test.yaml \
-  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
-
-# Orchestrator-level NLIP - multi-agent coordination
-massgen --config massgen/configs/examples/nlip_orchestrator_test.yaml \
-  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -266,21 +255,39 @@ pip install massgen
 
 # Or with uv (faster)
 uv pip install massgen
-
-# Optional: Install skills
-massgen --setup-skills
-
-# Run the interactive setup wizard
-massgen
 ```
 
-The wizard will guide you through:
-- Configuring API keys
-- Selecting your use case (Research, Code, Q&A, etc.)
-- Choosing AI models
-- Saving your configuration
+**Quickstart Setup** (Fastest way to get running):
 
-After setup, you can run MassGen with:
+```bash
+# Step 1: Set up API keys, Docker, and skills
+uv run massgen --setup
+
+# Step 2: Create a simple config and start
+uv run massgen --quickstart
+```
+
+The `--setup` command will:
+- Configure your API keys (OpenAI, Anthropic, Google, xAI)
+- Offer to set up Docker images for code execution
+- Offer to install skills (openskills, Anthropic collection)
+
+The `--quickstart` command will:
+- Ask how many agents you want (1-5, default 3)
+- Ask which backend/model for each agent
+- Auto-detect Docker availability and configure execution mode
+- Create a ready-to-use config and launch into interactive mode
+
+**Alternative: Full Setup Wizard**
+
+For more control, use the full configuration wizard:
+```bash
+massgen --init
+```
+
+This guides you through use case selection (Research, Code, Q&A, etc.) and advanced configuration options.
+
+**After setup:**
 ```bash
 # Interactive mode
 massgen
@@ -1083,23 +1090,42 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.13)
+### Recent Achievements (v0.1.16)
 
-**🎉 Released: November 17, 2025**
+**🎉 Released: November 24, 2025**
 
-#### Code-Based Tools & MCP Registry
-- **CodeAct Paradigm Implementation**: Tool integration via importable Python code instead of schema-based tools, reducing token usage (`massgen/filesystem_manager/_tool_code_writer.py`, `massgen/mcp_tools/code_generator.py`)
-- **MCP Server Registry**: Auto-discovery and intelligent tool routing with server registry infrastructure (`massgen/mcp_tools/server_registry.py`)
-- **Automatic Tool Loading**: On-demand loading of MCP tools only when needed, dramatically reducing context pollution
-- **TOOL.md Documentation Standard**: Standardized documentation format for custom tools with YAML frontmatter metadata and usage examples
+#### Terminal Evaluation System
+- **VHS Recording & AI Analysis**: Record terminal sessions as GIF/MP4/WEBM using VHS, analyze with GPT-4.1/Claude for UI/UX quality, agent performance, and coordination visualization
 
-#### NLIP Integration & Skills System
-- **NLIP (Natural Language Interface Protocol)**: Advanced tool routing with multi-backend support across Claude, Gemini, and OpenAI (`massgen/backend/response.py`, orchestrator integration)
-- **Skills Installation System**: Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI with comprehensive setup scripts (`massgen/utils/skills_installer.py`)
-- **Enhanced Tool Selection**: Per-agent and orchestrator-level NLIP configuration for sophisticated tool routing
-- **Configuration Examples**: Sample YAML configs for NLIP integration (`massgen/configs/examples/nlip_basic.yaml`, `nlip_orchestrator_test.yaml`, `nlip_openai_weather_test.yaml`), code-based tools (`massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml`), and skills system (`massgen/configs/skills/skills_basic.yaml`)
+#### LiteLLM Cost Tracking Integration
+- **500+ Model Support**: Auto-updating pricing database with reasoning tokens (o1/o3) and cached tokens (Claude, OpenAI) support, more accurate than manual tables
+- **Robust Fallback**: Graceful degradation to legacy calculation when unavailable
 
-### Previous Achievements (v0.0.3 - v0.1.12)
+#### Memory Archiving System
+- **Persistent Multi-Turn Memory**: Archive memory across conversation turns with improved retrieval and context management for continuous agent interactions
+
+#### MassGen Self-Evolution Skills
+- **Four Development Skills**: Config creator, self-developer, release documenter, and model registry maintainer to assist with MassGen development and maintenance
+
+#### Infrastructure Enhancements
+- **Docker Improvements**: Parallel image pulling for faster setup, VHS integration for terminal recording in containers
+- **Model Updates**: Grok 4.1 family (grok-4.1, grok-4.1-mini) and GPT-4.1 models with release dates and improved pricing metadata for accurate cost tracking
+
+#### Documentation
+- **Terminal Evaluation System**: `docs/source/user_guide/terminal_evaluation.rst`, `massgen/configs/meta/massgen_evaluates_terminal.yaml`, `massgen/configs/tools/custom_tools/terminal_evaluation.yaml`
+- **LiteLLM Cost Tracking Integration**: `docs/dev_notes/litellm_cost_tracking_integration.md`
+- **Memory Archiving System**: `docs/source/user_guide/memory_filesystem_mode.rst` with archiving workflows
+- **MassGen Self-Evolution Skills**: `massgen-config-creator/SKILL.md`, `massgen-develops-massgen/SKILL.md`, `massgen-release-documenter/SKILL.md`, `model-registry-maintainer/SKILL.md`
+
+### Previous Achievements (v0.0.3 - v0.1.15)
+
+✅ **Persona Generation & Docker Distribution (v0.1.15)**: Automatic persona generation for agent diversity with multiple strategies (complementary, diverse, specialized, adversarial), GitHub Container Registry integration with ARM support, custom tools in isolated Docker containers for security, MassGen pre-installed in Docker images
+
+✅ **Parallel Tool Execution & Gemini 3 Pro (v0.1.14)**: Configurable concurrent tool execution across all backends with asyncio-based scheduling, Gemini 3 Pro integration with function calling, interactive quickstart workflow, MCP registry client for server metadata
+
+✅ **Code-Based Tools & MCP Registry (v0.1.13)**: CodeAct paradigm implementation with tool integration via importable Python code reducing token usage by 98%, MCP server registry with auto-discovery and on-demand loading, TOOL.md documentation standard
+
+✅ **NLIP Integration & Skills System (v0.1.13)**: Advanced tool routing with Natural Language Interface Protocol across Claude, Gemini, and OpenAI backends, cross-platform automated skills installer for openskills CLI, Anthropic skills, and Crawl4AI
 
 ✅ **System Prompt Architecture Refactoring (v0.1.12)**: Hierarchical system prompt structure with XML-based formatting for Claude, improved LLM attention management
 
@@ -1265,21 +1291,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.14 Roadmap
+### v0.1.17 Roadmap
 
-Version 0.1.14 focuses on terminal evaluation and multi-agent Git workflows:
+Version 0.1.17 focuses on broadcasting capabilities and expanding model support:
 
 #### Planned Features
-- **MassGen Terminal Evaluation**: Self-evaluation and improvement of frontend/UI through terminal recording with asciinema, automated video generation and case study creation
-- **Git Worktrees for Multi-Agent**: Enable multiple agents to work on different Git worktrees simultaneously for parallel development workflows
+- **Broadcasting to Humans/Agents**: Enable agents to broadcast questions when facing implementation uncertainties for improved decision quality
+- **Grok 4.1 Fast Model Support**: Add support for xAI's latest high-speed model for rapid agent responses and cost-effective workflows
 
 Key technical approach:
-- **Terminal Evaluation**: Terminal recording infrastructure, visual analysis capabilities, case study generation, self-improvement extended to frontend
-- **Git Worktrees**: Worktree management, branch synchronization, conflict resolution support, improved parallelism for multi-agent development
+- **Broadcasting Infrastructure**: Question routing protocol, human-in-the-loop interaction, agent-to-agent coordination
+- **Grok 4.1 Fast Integration**: Backend integration, token counting, pricing configuration, capability registration
 
-**Target Release**: November 19, 2025 (Wednesday @ 9am PT)
+**Target Release**: November 26, 2025 (Wednesday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.14 roadmap](ROADMAP_v0.1.14.md).
+For detailed milestones and technical specifications, see the [full v0.1.17 roadmap](ROADMAP_v0.1.17.md).
 
 ---
 
