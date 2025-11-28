@@ -448,6 +448,8 @@ class ConfigValidator:
             "enable_web_search",
             "enable_code_execution",
             "enable_code_interpreter",
+            "enable_programmatic_flow",
+            "enable_tool_search",
         ]
         for field_name in boolean_fields:
             if field_name in backend_config:
