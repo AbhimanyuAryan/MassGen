@@ -319,6 +319,13 @@ class Orchestrator(ChatAgent):
                 self._inject_planning_tools_for_all_agents()
                 logger.info("[Orchestrator] Planning tools injection complete")
 
+        # Inject subagent tools if enabled
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents"):
+            if self.config.coordination_config.enable_subagents:
+                logger.info(f"[Orchestrator] Injecting subagent tools for {len(self.agents)} agents")
+                self._inject_subagent_tools_for_all_agents()
+                logger.info("[Orchestrator] Subagent tools injection complete")
+
         # NOTE: Memory MCP tools are disabled - using file-based approach with task completion reminders
         # Agents use standard file tools to manage memory files in workspace/memory/
         # Reminders to save memory are triggered automatically when completing high-priority tasks
@@ -628,6 +635,132 @@ class Orchestrator(ChatAgent):
                 "FASTMCP_SHOW_CLI_BANNER": "false",
             },
         }
+
+        return config
+
+    def _inject_subagent_tools_for_all_agents(self) -> None:
+        """
+        Inject subagent MCP tools into all agents.
+
+        This method adds the subagent MCP server to each agent's backend
+        configuration, enabling them to spawn and manage subagents.
+        """
+        for agent_id, agent in self.agents.items():
+            self._inject_subagent_tools_for_agent(agent_id, agent)
+
+    def _inject_subagent_tools_for_agent(self, agent_id: str, agent: Any) -> None:
+        """
+        Inject subagent MCP tools into a specific agent.
+
+        Args:
+            agent_id: ID of the agent
+            agent: Agent instance
+        """
+        # Only inject if agent has filesystem manager (needs workspace)
+        if not hasattr(agent, "backend") or not hasattr(agent.backend, "filesystem_manager"):
+            logger.warning(f"[Orchestrator] Agent {agent_id} has no filesystem_manager, skipping subagent tools")
+            return
+
+        if not agent.backend.filesystem_manager:
+            logger.warning(f"[Orchestrator] Agent {agent_id} filesystem_manager is None, skipping subagent tools")
+            return
+
+        if not agent.backend.filesystem_manager.cwd:
+            logger.warning(f"[Orchestrator] Agent {agent_id} filesystem_manager.cwd is None, skipping subagent tools")
+            return
+
+        logger.info(f"[Orchestrator] Injecting subagent tools for agent: {agent_id}")
+
+        # Create subagent MCP config
+        subagent_mcp_config = self._create_subagent_mcp_config(agent_id, agent)
+        logger.info(f"[Orchestrator] Created subagent MCP config: {subagent_mcp_config['name']}")
+
+        # Get existing mcp_servers configuration
+        mcp_servers = agent.backend.config.get("mcp_servers", [])
+        logger.info(f"[Orchestrator] Existing MCP servers for {agent_id}: {type(mcp_servers)} with {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} entries")
+
+        # Handle both list format and dict format (Claude Code)
+        if isinstance(mcp_servers, dict):
+            # Claude Code dict format
+            logger.info("[Orchestrator] Using dict format for MCP servers")
+            mcp_servers[f"subagent_{agent_id}"] = subagent_mcp_config
+        else:
+            # Standard list format
+            logger.info("[Orchestrator] Using list format for MCP servers")
+            if not isinstance(mcp_servers, list):
+                mcp_servers = []
+            mcp_servers.append(subagent_mcp_config)
+
+        # Update backend config
+        agent.backend.config["mcp_servers"] = mcp_servers
+        logger.info(f"[Orchestrator] Updated MCP servers for {agent_id}, now has {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} servers")
+
+    def _create_subagent_mcp_config(self, agent_id: str, agent: Any) -> Dict[str, Any]:
+        """
+        Create MCP server configuration for subagent tools.
+
+        Args:
+            agent_id: ID of the agent
+            agent: Agent instance (for accessing workspace path)
+
+        Returns:
+            MCP server configuration dictionary
+        """
+        from pathlib import Path as PathlibPath
+
+        import massgen.mcp_tools.subagent._subagent_mcp_server as subagent_module
+
+        script_path = PathlibPath(subagent_module.__file__).resolve()
+
+        workspace_path = str(agent.backend.filesystem_manager.cwd)
+
+        # Build backend config to pass to subagent manager
+        backend_config = {}
+        if hasattr(agent.backend, "config"):
+            backend_config = {k: v for k, v in agent.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+
+        import json
+
+        backend_config_json = json.dumps(backend_config)
+
+        # Get subagent configuration from coordination config
+        max_concurrent = 3
+        default_timeout = 300
+        if hasattr(self.config, "coordination_config"):
+            if hasattr(self.config.coordination_config, "subagent_max_concurrent"):
+                max_concurrent = self.config.coordination_config.subagent_max_concurrent
+            if hasattr(self.config.coordination_config, "subagent_default_timeout"):
+                default_timeout = self.config.coordination_config.subagent_default_timeout
+
+        args = [
+            "run",
+            f"{script_path}:create_server",
+            "--",
+            "--agent-id",
+            agent_id,
+            "--orchestrator-id",
+            self.orchestrator_id,
+            "--workspace-path",
+            workspace_path,
+            "--backend-config",
+            backend_config_json,
+            "--max-concurrent",
+            str(max_concurrent),
+            "--default-timeout",
+            str(default_timeout),
+        ]
+
+        config = {
+            "name": f"subagent_{agent_id}",
+            "type": "stdio",
+            "command": "fastmcp",
+            "args": args,
+            "env": {
+                "FASTMCP_SHOW_CLI_BANNER": "false",
+            },
+        }
+
+        logger.info(f"[Orchestrator] Created subagent MCP config for {agent_id} with workspace: {workspace_path}")
 
         return config
 

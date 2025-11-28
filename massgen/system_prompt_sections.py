@@ -1544,6 +1544,119 @@ class PlanningModeSection(SystemPromptSection):
         return self.planning_mode_instruction
 
 
+class SubagentSection(SystemPromptSection):
+    """
+    Subagent delegation guidance for spawning independent agent instances.
+
+    Provides instructions on when and how to use subagents for task delegation,
+    parallel execution, and context isolation.
+
+    Args:
+        workspace_path: Path to the agent's workspace (for subagent workspace location)
+        max_concurrent: Maximum concurrent subagents allowed
+    """
+
+    def __init__(self, workspace_path: str, max_concurrent: int = 3):
+        super().__init__(
+            title="Subagent Delegation",
+            priority=Priority.MEDIUM,
+            xml_tag="subagent_delegation",
+        )
+        self.workspace_path = workspace_path
+        self.max_concurrent = max_concurrent
+
+    def build_content(self) -> str:
+        return f"""
+# Subagent Delegation
+
+You can spawn **subagents** to execute tasks with fresh context and isolated workspaces.
+
+## When to Use Subagents
+
+**IDEAL USE CASES:**
+- Complex subtasks that benefit from fresh context (avoid context pollution)
+- Parallel work streams that can execute independently
+- Research or analysis tasks that would consume too many tokens
+- Experimental operations you want isolated from your main workspace
+
+**AVOID SUBAGENTS FOR:**
+- Simple, quick operations you can do directly
+- Tasks requiring back-and-forth coordination (high overhead)
+- Operations that need to modify your main workspace directly
+
+## How Subagents Work
+
+1. **Isolated Workspace**: Each subagent gets `{self.workspace_path}/subagents/<id>/workspace/`
+   - You can READ files from subagent workspaces
+   - You CANNOT write to subagent workspaces
+2. **Fresh Context**: Subagents start with a clean slate (just the task you provide)
+3. **Result Delivery**: Structured JSON with answer and files created
+4. **No Nesting**: Subagents cannot spawn their own subagents
+
+## Parallel Execution
+
+You can run up to {self.max_concurrent} subagents concurrently:
+
+```python
+# Sequential (one at a time)
+result1 = spawn_subagent(task="Research OAuth providers")
+result2 = spawn_subagent(task="Analyze database schema")
+
+# Parallel (more efficient for independent tasks)
+results = spawn_subagents_parallel(
+    tasks=[
+        {{"task": "Write frontend components", "subagent_id": "frontend"}},
+        {{"task": "Write backend API", "subagent_id": "backend"}},
+        {{"task": "Write database migrations", "subagent_id": "database"}}
+    ]
+)
+```
+
+## Available Tools
+
+- `spawn_subagent(task, subagent_id?, model?, timeout_seconds?, context_files?)` - Spawn single subagent
+- `spawn_subagents_parallel(tasks, timeout_seconds?)` - Spawn multiple subagents in parallel
+- `list_subagents()` - List all spawned subagents with status
+- `get_subagent_result(subagent_id)` - Get result from a completed subagent
+
+## Best Practices
+
+1. **Clear Task Description**: Specify expected outputs and success criteria
+2. **Provide Context Files**: Share relevant code via `context_files` parameter
+3. **Check Results Before Using**: Verify quality before incorporating into your work
+4. **Handle Failures Gracefully**: Check status and handle timeouts
+
+## Result Format
+
+```json
+{{
+    "success": true,
+    "subagent_id": "research_oauth",
+    "status": "completed",
+    "workspace": "{self.workspace_path}/subagents/research_oauth/workspace",
+    "answer": "The subagent's answer...",
+    "files_created": ["report.md", "analysis.json"],
+    "execution_time_seconds": 45.2
+}}
+```
+
+## Workspace Structure
+
+```
+{self.workspace_path}/
+├── ... (your files)
+└── subagents/
+    ├── _registry.json    # Subagent tracking
+    ├── sub_abc123/
+    │   ├── workspace/    # Subagent's files (READ-ONLY to you)
+    │   └── _metadata.json
+    └── sub_def456/
+        ├── workspace/
+        └── _metadata.json
+```
+"""
+
+
 class SystemPromptBuilder:
     """
     Builder for assembling system prompts from sections.

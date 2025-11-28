@@ -63,6 +63,11 @@ class CoordinationConfig:
                          openskills installs skills. This directory is scanned for available skills.
         persona_generator: Configuration for automatic persona generation to increase agent diversity.
                           When enabled, an LLM generates diverse system message personas for each agent.
+        enable_subagents: If True, agents receive subagent MCP tools for spawning independent
+                         agent instances with fresh context and isolated workspaces. Useful for
+                         parallel task execution and avoiding context pollution.
+        subagent_default_timeout: Default timeout in seconds for subagent execution (default 300).
+        subagent_max_concurrent: Maximum number of concurrent subagents an agent can spawn (default 3).
     """
 
     enable_planning_mode: bool = False
@@ -78,6 +83,9 @@ class CoordinationConfig:
     massgen_skills: List[str] = field(default_factory=list)
     skills_directory: str = ".agent/skills"
     persona_generator: PersonaGeneratorConfig = field(default_factory=PersonaGeneratorConfig)
+    enable_subagents: bool = False
+    subagent_default_timeout: int = 300
+    subagent_max_concurrent: int = 3
 
 
 @dataclass
