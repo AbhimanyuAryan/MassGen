@@ -235,7 +235,7 @@ Most configurations use environment variables for API keys:so
 - `providers/claude/tool_search_example.yaml` - Claude tool search with deferred loading
 
 **Key Features:**
-- **Agent Communication System**: Agents broadcast questions to humans or other agents via `ask_others()` tool with three modes, session-persistent Q&A history
+- **Agent Communication System**: Agents broadcast questions to humans or other agents via `ask_others()` tool with three modes, blocking execution with inline response delivery, session-persistent Q&A history
 - **Claude Programmatic Tool Calling**: Code execution invokes tools via `enable_programmatic_flow` flag (requires claude-opus-4-5 or claude-sonnet-4-5)
 - **Claude Tool Search**: Server-side deferred tool discovery via `enable_tool_search` with regex or bm25 variants
 

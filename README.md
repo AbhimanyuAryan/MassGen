@@ -1091,7 +1091,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 #### Agent Communication System
 - **Human Broadcast Q&A**: Agents can ask questions to humans or other agents via `ask_others()` tool with three modes (disabled, agents-only, human-only)
-- **Execution Modes**: Blocking or polling execution with inline or background response delivery, session-persistent Q&A history
+- **Execution & Persistence**: Blocking execution with inline response delivery, session-persistent Q&A history
 - **Safety Features**: Rate limiting and serialized calls to prevent spam and duplicate prompts
 
 #### Claude Advanced Tooling

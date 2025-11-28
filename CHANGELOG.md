@@ -25,7 +25,7 @@ Terminal evaluation system with VHS recording support, LiteLLM integration for a
 ### Added
 - **Agent Communication System**: Agents can now ask questions to other agents and optionally humans via the `ask_others()` tool
   - Three modes: disabled (default), agent-to-agent only (`broadcast: "agents"`), or human-only (`broadcast: "human"`)
-  - Blocking or polling execution with inline or background response delivery
+  - Blocking execution with inline response delivery into agent context
   - Human interaction UI with timeout, skip options, and session-persistent Q&A history
   - Rate limiting and serialized calls to prevent spam and duplicate prompts
   - Comprehensive event tracking in coordination logs

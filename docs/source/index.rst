@@ -147,7 +147,7 @@ Recent Releases
 
 **v0.1.18 (November 28, 2025)** - Agent Communication & Claude Advanced Tooling
 
-Agent-to-agent and human broadcast communication via ``ask_others()`` tool with three modes (disabled, agents-only, human-only), blocking/polling execution, and session-persistent Q&A history. Claude programmatic tool calling from code execution via ``enable_programmatic_flow`` flag. Claude tool search for deferred tool discovery via ``enable_tool_search`` with regex or bm25 variants, reducing initial context size.
+Agent-to-agent and human broadcast communication via ``ask_others()`` tool with three modes (disabled, agents-only, human-only), blocking execution with inline response delivery, and session-persistent Q&A history. Claude programmatic tool calling from code execution via ``enable_programmatic_flow`` flag. Claude tool search for deferred tool discovery via ``enable_tool_search`` with regex or bm25 variants, reducing initial context size.
 
 **v0.1.17 (November 26, 2025)** - Textual Terminal Display
 
