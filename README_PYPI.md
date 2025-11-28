@@ -184,6 +184,16 @@ massgen --config massgen/configs/providers/claude/programmatic_with_two_tools.ya
 # Prerequisites: ANTHROPIC_API_KEY, BRAVE_API_KEY in .env
 massgen --config massgen/configs/providers/claude/tool_search_example.yaml \
   "Check weather in tokyo, search for tourist attractions, and find me an Airbnb there for 3 nights in january 2026"
+
+# Agent-to-Agent Broadcast - agents ask each other questions
+# Prerequisites: OPENAI_API_KEY, GOOGLE_API_KEY in .env, Docker running
+massgen --config massgen/configs/broadcast/test_broadcast_agents.yaml \
+  "Create a website about Bob Dylan. Please ask_others for what framework to use first"
+
+# Human Broadcast - agents ask YOU questions during execution
+# Prerequisites: OPENAI_API_KEY, GOOGLE_API_KEY in .env, Docker running
+massgen --config massgen/configs/broadcast/test_broadcast_human.yaml \
+  "Design and implement a web scraper"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1099,6 +1109,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 #### Configuration
 - `providers/claude/programmatic_with_two_tools.yaml`, `providers/claude/tool_search_example.yaml`
+- `broadcast/test_broadcast_agents.yaml`, `broadcast/test_broadcast_human.yaml`
 
 ### Previous Achievements (v0.0.3 - v0.1.17)
 

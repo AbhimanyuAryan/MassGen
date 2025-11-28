@@ -46,9 +46,13 @@ Terminal evaluation system with VHS recording support, LiteLLM integration for a
 
 ### Documentations, Configurations and Resources
 
-- **Claude Advanced Tooling Guide**: New `docs/claude-advanced-tooling.md` covering model requirements, API betas, configuration examples, and streaming cues (68 lines)
-- **Agent Communication Documentation**: New `docs/source/user_guide/agent_communication.rst` with broadcast modes, serialization, Q&A history, and examples (479 lines)
-- **Configuration Examples**: New `programmatic_with_two_tools.yaml` (28 lines) and `tool_search_example.yaml` (65 lines) in `massgen/configs/providers/claude/`
+- **Claude Advanced Tooling Guide**: New `docs/claude-advanced-tooling.md` covering model requirements, API betas, configuration examples, and streaming cues
+- **Agent Communication Documentation**: New `docs/source/user_guide/agent_communication.rst` with broadcast modes, serialization, Q&A history, and examples
+- **Configuration Examples**:
+  - `massgen/configs/providers/claude/programmatic_with_two_tools.yaml` - Programmatic tool calling with custom and MCP tools
+  - `massgen/configs/providers/claude/tool_search_example.yaml` - Tool search with visible and deferred tools
+  - `massgen/configs/broadcast/test_broadcast_agents.yaml` - Agent-to-agent broadcast communication
+  - `massgen/configs/broadcast/test_broadcast_human.yaml` - Human broadcast communication with Q&A prompts
 
 ### Technical Details
 - **Major Focus**: Agent communication system with human broadcast support, Claude programmatic tool calling from code execution, Claude tool search for deferred tool discovery

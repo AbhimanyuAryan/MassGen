@@ -233,6 +233,8 @@ Most configurations use environment variables for API keys:so
 **Configuration Files:**
 - `providers/claude/programmatic_with_two_tools.yaml` - Claude programmatic tool calling with custom and MCP tools
 - `providers/claude/tool_search_example.yaml` - Claude tool search with deferred loading
+- `broadcast/test_broadcast_agents.yaml` - Agent-to-agent broadcast communication
+- `broadcast/test_broadcast_human.yaml` - Human broadcast communication with Q&A prompts
 
 **Key Features:**
 - **Agent Communication System**: Agents broadcast questions to humans or other agents via `ask_others()` tool with three modes, blocking execution with inline response delivery, session-persistent Q&A history
