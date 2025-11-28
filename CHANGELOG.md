@@ -5,6 +5,19 @@ All notable changes to MassGen will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Agent Communication System**: Agents can now ask questions to other agents and optionally humans via the `ask_others()` tool
+  - Three modes: disabled (default), agent-to-agent only, or include human participation
+  - Support for both blocking (wait for responses) and polling (check later) modes
+  - Configurable response modes: inline (inject into context) or background (separate call)
+  - Human interaction UI with timeout and skip options
+  - Rate limiting to prevent broadcast spam
+  - Comprehensive event tracking in coordination logs
+  - See `docs/source/user_guide/agent_communication.rst` for usage guide
+  - Related to issue #437: Enable broadcasting to humans/other agents for implementation questions
+
 ## Recent Releases
 
 **v0.1.17 (November 26, 2025)** - Textual Terminal Display
