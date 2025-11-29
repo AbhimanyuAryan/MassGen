@@ -532,6 +532,24 @@ class ClaudeBackend(CustomToolAndMCPBackend):
 
         api_params = await self.api_params_handler.build_api_params(processed_messages, tools, all_params)
 
+        if all_params.get("_strict_tool_use_enabled"):
+            strict_count = all_params.get("_strict_tool_count", 0)
+            strict_names = all_params.get("_strict_tool_names", [])
+            log_stream_chunk(
+                "backend.claude",
+                "strict_tool_use",
+                f"Strict tool use enabled for {strict_count} tools: {strict_names}",
+                agent_id,
+            )
+            yield StreamChunk(
+                type="content",
+                content=f"\n🔒 [Strict Tool Use] Enabled for {strict_count} tools\n",
+            )
+            # Clear flags to prevent duplicate notifications
+            all_params.pop("_strict_tool_use_enabled", None)
+            all_params.pop("_strict_tool_count", None)
+            all_params.pop("_strict_tool_names", None)
+
         # Remove any MCP tools from the tools list
         if "tools" in api_params:
             non_mcp_tools = []
@@ -704,6 +722,21 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         self._ensure_no_pending_upload_markers(current_messages)
 
         api_params = await self.api_params_handler.build_api_params(current_messages, tools, all_params)
+
+        if all_params.get("_strict_tool_use_enabled") and not kwargs.get("_strict_tool_use_logged", False):
+            strict_count = all_params.get("_strict_tool_count", 0)
+            strict_names = all_params.get("_strict_tool_names", [])
+            log_stream_chunk(
+                "backend.claude",
+                "strict_tool_use",
+                f"Strict tool use enabled for {strict_count} tools: {strict_names}",
+                agent_id,
+            )
+            yield StreamChunk(
+                type="content",
+                content=f"\n🔒 [Strict Tool Use] Enabled for {strict_count} tools \n",
+            )
+            kwargs["_strict_tool_use_logged"] = True
 
         # Create stream (handle code execution beta)
         if "betas" in api_params:
