@@ -63,7 +63,7 @@ export function EventBar() {
 
   if (events.length === 0) {
     return (
-      <div className="bg-gray-800/30 border-t border-gray-700 px-4 py-2">
+      <div className="bg-gray-100/30 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700 px-4 py-2">
         <div className="flex items-center gap-2 text-gray-500 text-sm">
           <span>No events yet</span>
         </div>
@@ -72,7 +72,7 @@ export function EventBar() {
   }
 
   return (
-    <div className="bg-gray-800/30 border-t border-gray-700 px-4 py-2">
+    <div className="bg-gray-100/30 dark:bg-gray-800/30 border-t border-gray-200 dark:border-gray-700 px-4 py-2">
       <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
         <AnimatePresence mode="popLayout">
           {events.map((event) => (
@@ -86,8 +86,8 @@ export function EventBar() {
                 flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium
                 whitespace-nowrap shrink-0
                 ${event.type === 'vote'
-                  ? 'bg-amber-900/50 text-amber-300 border border-amber-700/50'
-                  : 'bg-blue-900/50 text-blue-300 border border-blue-700/50'
+                  ? 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-700/50'
+                  : 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700/50'
                 }
               `}
             >
@@ -96,14 +96,14 @@ export function EventBar() {
                   <Check className="w-3 h-3" />
                   <span>{event.voterId}</span>
                   <span className="text-gray-500">voted for</span>
-                  <span className="text-amber-200">{event.targetId}</span>
+                  <span className="text-amber-600 dark:text-amber-200">{event.targetId}</span>
                 </>
               ) : (
                 <>
                   <FileText className="w-3 h-3" />
                   <span>{event.agentId}</span>
                   <span className="text-gray-500">Answer</span>
-                  <span className="text-blue-200">#{event.answerNumber}</span>
+                  <span className="text-blue-600 dark:text-blue-200">#{event.answerNumber}</span>
                 </>
               )}
             </motion.div>

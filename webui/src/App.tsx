@@ -4,18 +4,17 @@
  * Real-time visualization of multi-agent coordination.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Send, Wifi, WifiOff, AlertCircle } from 'lucide-react';
+import { Send, Wifi, WifiOff, AlertCircle, XCircle, ArrowLeft } from 'lucide-react';
 import { useWebSocket, ConnectionStatus } from './hooks/useWebSocket';
-import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers } from './stores/agentStore';
+import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents } from './stores/agentStore';
+import { useThemeStore } from './stores/themeStore';
 import { AgentCarousel } from './components/AgentCarousel';
+import { AgentCard } from './components/AgentCard';
 import { StatusToolbar } from './components/StatusToolbar';
-import { VoteVisualization } from './components/VoteVisualization';
-import { FileWorkspaceBrowser } from './components/FileWorkspaceBrowser';
 import { ConvergenceAnimation } from './components/ConvergenceAnimation';
 import { HeaderControls } from './components/HeaderControls';
-import { EventBar } from './components/EventBar';
 import { AnswerToast } from './components/AnswerToast';
 import { AnswerBrowserModal } from './components/AnswerBrowserModal';
 
@@ -46,15 +45,52 @@ export function App() {
   const question = useAgentStore(selectQuestion);
   const isComplete = useAgentStore(selectIsComplete);
   const answers = useAgentStore(selectAnswers);
+  const viewMode = useAgentStore(selectViewMode);
+  const selectedAgent = useAgentStore(selectSelectedAgent);
+  const agents = useAgentStore(selectAgents);
   const reset = useAgentStore((s) => s.reset);
+  const setViewMode = useAgentStore((s) => s.setViewMode);
+
+  // Get winner agent for winner view
+  const winnerAgent = selectedAgent ? agents[selectedAgent] : null;
+
+  // Theme - apply effective theme class to document
+  const getEffectiveTheme = useThemeStore((s) => s.getEffectiveTheme);
+  const themeMode = useThemeStore((s) => s.mode);
+
+  useEffect(() => {
+    const effectiveTheme = getEffectiveTheme();
+    const root = document.documentElement;
+    if (effectiveTheme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [getEffectiveTheme, themeMode]);
 
   // Answer browser modal state
   const [isAnswerBrowserOpen, setIsAnswerBrowserOpen] = useState(false);
 
-  const { status, startCoordination, error } = useWebSocket({
+  const { status, startCoordination, cancelCoordination, error } = useWebSocket({
     sessionId,
     autoConnect: true,
   });
+
+  // Handle switching to winner view
+  const handleViewWinner = useCallback(() => {
+    setViewMode('winner');
+  }, [setViewMode]);
+
+  // Handle going back to coordination view
+  const handleBackToCoordination = useCallback(() => {
+    setViewMode('coordination');
+  }, [setViewMode]);
+
+  // Handle cancel
+  const handleCancel = useCallback(() => {
+    cancelCoordination();
+    reset();
+  }, [cancelCoordination, reset]);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -90,15 +126,15 @@ export function App() {
     : 'No config';
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col">
+    <div className="min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 flex flex-col">
       {/* Header */}
-      <header className="bg-gray-800/50 border-b border-gray-700 px-6 py-4">
+      <header className="bg-gray-100/50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
               MassGen
             </h1>
-            <span className="text-gray-500 text-sm">Multi-Agent Coordination</span>
+            <span className="text-gray-400 dark:text-gray-500 text-sm">Multi-Agent Coordination</span>
             <ConnectionIndicator status={status} />
           </div>
           <HeaderControls
@@ -115,14 +151,14 @@ export function App() {
 
       {/* Question Display */}
       {question && (
-        <div className="bg-gray-800/30 border-b border-gray-700 px-6 py-3">
+        <div className="bg-gray-100/30 dark:bg-gray-800/30 border-b border-gray-200 dark:border-gray-700 px-6 py-3">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
             <div>
-              <span className="text-gray-500 text-sm">Question: </span>
-              <span className="text-gray-200">{question}</span>
+              <span className="text-gray-500 dark:text-gray-500 text-sm">Question: </span>
+              <span className="text-gray-800 dark:text-gray-200">{question}</span>
             </div>
             <div className="text-xs text-gray-500">
-              Config: <span className="text-gray-400">{configName}</span>
+              Config: <span className="text-gray-600 dark:text-gray-400">{configName}</span>
             </div>
           </div>
         </div>
@@ -160,33 +196,58 @@ export function App() {
             </motion.div>
           )}
 
-          {/* Agent Carousel */}
-          <section>
-            <AgentCarousel />
-          </section>
-
-          {/* Bottom Panel: Votes + Files (2 columns) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <VoteVisualization />
-            <FileWorkspaceBrowser />
-          </div>
+          {/* Winner View - Single Agent */}
+          {viewMode === 'winner' && winnerAgent ? (
+            <section>
+              <div className="flex items-center gap-4 mb-4">
+                <button
+                  onClick={handleBackToCoordination}
+                  className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
+                           rounded-lg text-sm transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to All Agents
+                </button>
+                <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                  Winner: {winnerAgent.modelName ? `${winnerAgent.id} (${winnerAgent.modelName})` : winnerAgent.id}
+                </h2>
+              </div>
+              <div className="h-[600px]">
+                <AgentCard agent={winnerAgent} isWinner={true} />
+              </div>
+            </section>
+          ) : (
+            /* Agent Carousel - Normal View */
+            <section>
+              <AgentCarousel />
+            </section>
+          )}
         </div>
       </main>
 
-      {/* Event Bar - Full Width */}
-      <EventBar />
-
       {/* Input Form */}
-      <footer className="bg-gray-800/50 border-t border-gray-700 px-6 py-4">
+      <footer className="bg-gray-100/50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 px-6 py-4">
         <div className="max-w-7xl mx-auto">
           {isComplete ? (
             <div className="flex items-center justify-center gap-4">
-              <span className="text-green-400">Coordination Complete!</span>
+              <span className="text-green-500 dark:text-green-400">Coordination Complete!</span>
               <button
                 onClick={handleNewSession}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors text-white"
               >
                 Start New Session
+              </button>
+            </div>
+          ) : question ? (
+            /* Cancel button during coordination */
+            <div className="flex items-center justify-center gap-4">
+              <span className="text-gray-600 dark:text-gray-400">Coordination in progress...</span>
+              <button
+                onClick={handleCancel}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg transition-colors text-white"
+              >
+                <XCircle className="w-5 h-5" />
+                Cancel
               </button>
             </div>
           ) : (
@@ -199,17 +260,17 @@ export function App() {
                   ? "Enter your question for multi-agent coordination..."
                   : "Select a config first..."
                 }
-                disabled={status !== 'connected' || !!question || !selectedConfig}
-                className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-3
-                         text-gray-100 placeholder-gray-500
+                disabled={status !== 'connected' || !selectedConfig}
+                className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-3
+                         text-gray-900 dark:text-gray-100 placeholder-gray-500
                          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
                          disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <button
                 type="submit"
-                disabled={!inputQuestion.trim() || status !== 'connected' || !!question || !selectedConfig}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600
-                         disabled:cursor-not-allowed rounded-lg transition-colors
+                disabled={!inputQuestion.trim() || status !== 'connected' || !selectedConfig}
+                className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-400 dark:disabled:bg-gray-600
+                         disabled:cursor-not-allowed rounded-lg transition-colors text-white
                          flex items-center gap-2"
               >
                 <Send className="w-5 h-5" />
@@ -220,8 +281,8 @@ export function App() {
         </div>
       </footer>
 
-      {/* Convergence Animation Overlay */}
-      <ConvergenceAnimation />
+      {/* Convergence Animation Toast */}
+      <ConvergenceAnimation onViewWinner={handleViewWinner} />
 
       {/* Answer Toast Notifications */}
       <AnswerToast />

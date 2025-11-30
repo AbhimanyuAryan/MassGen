@@ -7,19 +7,21 @@
 
 import { create } from 'zustand';
 import type {
+  AgentRound,
   AgentState,
   AgentStatus,
   Answer,
   FileInfo,
   SessionState,
   ToolCallInfo,
+  ViewMode,
   VoteResults,
   WSEvent,
 } from '../types';
 
 interface AgentStore extends SessionState {
   // Actions
-  initSession: (sessionId: string, question: string, agents: string[], theme: string) => void;
+  initSession: (sessionId: string, question: string, agents: string[], theme: string, agentModels?: Record<string, string>) => void;
   updateAgentContent: (agentId: string, content: string, contentType: string) => void;
   updateAgentStatus: (agentId: string, status: AgentStatus) => void;
   addOrchestratorEvent: (event: string) => void;
@@ -33,6 +35,9 @@ interface AgentStore extends SessionState {
   updateToolResult: (agentId: string, toolId: string | undefined, result: string, success: boolean) => void;
   setError: (message: string) => void;
   setComplete: (isComplete: boolean) => void;
+  setViewMode: (mode: ViewMode) => void;
+  startNewRound: (agentId: string, roundType: 'answer' | 'vote') => void;
+  setAgentRound: (agentId: string, roundId: string) => void;
   reset: () => void;
   processWSEvent: (event: WSEvent) => void;
 }
@@ -50,25 +55,40 @@ const initialState: SessionState = {
   isComplete: false,
   error: undefined,
   theme: 'dark',
+  viewMode: 'coordination',
 };
 
-const createAgentState = (id: string): AgentState => ({
-  id,
-  status: 'waiting',
-  content: [],
-  currentContent: '',
-  answerCount: 0,
-  files: [],
-  toolCalls: [],
-});
+const createAgentState = (id: string, modelName?: string): AgentState => {
+  const initialRoundId = `${id}-round-0`;
+  return {
+    id,
+    modelName,
+    status: 'waiting',
+    content: [],
+    currentContent: '',
+    rounds: [{
+      id: initialRoundId,
+      roundNumber: 0,
+      type: 'answer',
+      label: 'current',
+      content: '',
+      startTimestamp: Date.now(),
+    }],
+    currentRoundId: initialRoundId,
+    answerCount: 0,
+    voteCount: 0,
+    files: [],
+    toolCalls: [],
+  };
+};
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
   ...initialState,
 
-  initSession: (sessionId, question, agents, theme) => {
+  initSession: (sessionId, question, agents, theme, agentModels) => {
     const agentStates: Record<string, AgentState> = {};
     agents.forEach((id) => {
-      agentStates[id] = createAgentState(id);
+      agentStates[id] = createAgentState(id, agentModels?.[id]);
     });
 
     set({
@@ -84,6 +104,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       selectedAgent: undefined,
       finalAnswer: undefined,
       orchestratorEvents: [],
+      viewMode: 'coordination',
     });
   },
 
@@ -98,6 +119,13 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           ? agent.answerCount + 1
           : agent.answerCount;
 
+      // Update current round's content
+      const updatedRounds = agent.rounds.map((round) =>
+        round.id === agent.currentRoundId
+          ? { ...round, content: round.content + content }
+          : round
+      );
+
       return {
         agents: {
           ...state.agents,
@@ -105,6 +133,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             ...agent,
             content: [...agent.content, content],
             currentContent: agent.currentContent + content,
+            rounds: updatedRounds,
             answerCount: newAnswerCount,
           },
         },
@@ -261,6 +290,81 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     set({ isComplete });
   },
 
+  setViewMode: (mode) => {
+    set({ viewMode: mode });
+  },
+
+  startNewRound: (agentId, roundType) => {
+    set((state) => {
+      const agent = state.agents[agentId];
+      if (!agent) return state;
+
+      // Calculate new round number
+      const existingRoundsOfType = agent.rounds.filter(r => r.type === roundType).length;
+      const agentIndex = state.agentOrder.indexOf(agentId) + 1;
+      const newRoundNumber = existingRoundsOfType + 1;
+
+      // Generate label like "answer1.1" or "vote1"
+      const label = roundType === 'answer'
+        ? `answer${agentIndex}.${newRoundNumber}`
+        : `vote${newRoundNumber}`;
+
+      // Close previous round
+      const now = Date.now();
+      const newRoundId = `${agentId}-round-${agent.rounds.length}`;
+
+      const updatedRounds = agent.rounds.map((round) =>
+        round.id === agent.currentRoundId && !round.endTimestamp
+          ? { ...round, endTimestamp: now }
+          : round
+      );
+
+      // Create new round
+      const newRound: AgentRound = {
+        id: newRoundId,
+        roundNumber: newRoundNumber,
+        type: roundType,
+        label,
+        content: '',
+        startTimestamp: now,
+      };
+
+      return {
+        agents: {
+          ...state.agents,
+          [agentId]: {
+            ...agent,
+            rounds: [...updatedRounds, newRound],
+            currentRoundId: newRoundId,
+            currentContent: '', // Reset current content for new round
+            voteCount: roundType === 'vote' ? agent.voteCount + 1 : agent.voteCount,
+          },
+        },
+      };
+    });
+  },
+
+  setAgentRound: (agentId, roundId) => {
+    set((state) => {
+      const agent = state.agents[agentId];
+      if (!agent) return state;
+
+      const round = agent.rounds.find(r => r.id === roundId);
+      if (!round) return state;
+
+      return {
+        agents: {
+          ...state.agents,
+          [agentId]: {
+            ...agent,
+            currentRoundId: roundId,
+            currentContent: round.content,
+          },
+        },
+      };
+    });
+  },
+
   reset: () => {
     set(initialState);
   },
@@ -276,7 +380,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             event.session_id,
             event.question,
             event.agents,
-            'theme' in event ? event.theme : 'dark'
+            'theme' in event ? event.theme : 'dark',
+            'agent_models' in event ? (event as { agent_models: Record<string, string> }).agent_models : undefined
           );
         }
         break;
@@ -344,6 +449,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             answer_number?: number;
             timestamp: number;
           };
+          // Start a new answer round for this agent
+          store.startNewRound(newAnswerEvent.agent_id, 'answer');
           store.addAnswer({
             id: newAnswerEvent.answer_id ?? `${newAnswerEvent.agent_id}-${Date.now()}`,
             agentId: newAnswerEvent.agent_id,
@@ -351,6 +458,17 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             content: newAnswerEvent.content,
             timestamp: newAnswerEvent.timestamp,
             votes: 0,
+          });
+        }
+        break;
+
+      case 'restart':
+        // When an agent restarts, start a new answer round
+        if ('reason' in event) {
+          // The restart affects all agents - start new rounds for each
+          const agentOrder = get().agentOrder;
+          agentOrder.forEach((agentId) => {
+            store.startNewRound(agentId, 'answer');
           });
         }
         break;
@@ -428,3 +546,4 @@ export const selectFinalAnswer = (state: AgentStore) => state.finalAnswer;
 export const selectIsComplete = (state: AgentStore) => state.isComplete;
 export const selectQuestion = (state: AgentStore) => state.question;
 export const selectOrchestratorEvents = (state: AgentStore) => state.orchestratorEvents;
+export const selectViewMode = (state: AgentStore) => state.viewMode;

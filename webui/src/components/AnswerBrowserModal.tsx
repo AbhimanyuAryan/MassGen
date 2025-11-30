@@ -1,33 +1,253 @@
 /**
  * AnswerBrowserModal Component
  *
- * Modal dialog for browsing all answers from agents.
- * Filterable by agent, shows answer timeline with vote counts.
+ * Modal dialog for browsing all answers and workspace files from agents.
+ * Includes tabs for Answers and Workspace views.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, User, Clock, ChevronDown, Trophy } from 'lucide-react';
+import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History } from 'lucide-react';
 import { useAgentStore, selectAnswers, selectAgentOrder, selectSelectedAgent } from '../stores/agentStore';
 import type { Answer } from '../types';
+
+// Types for workspace API responses
+interface WorkspaceInfo {
+  name: string;
+  path: string;
+  type: 'current' | 'historical';
+  date?: string;
+}
+
+interface WorkspacesResponse {
+  current: WorkspaceInfo[];
+  historical: WorkspaceInfo[];
+}
+
+interface FileInfo {
+  path: string;
+  size: number;
+  modified: number;
+  operation?: 'create' | 'modify' | 'delete';
+}
 
 interface AnswerBrowserModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
+type TabType = 'answers' | 'workspace';
+
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
+
+// ============================================================================
+// Workspace File Tree Components
+// ============================================================================
+
+interface FileTreeNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  children: FileTreeNode[];
+  size?: number;
+  modified?: number;
+}
+
+function buildFileTree(files: FileInfo[]): FileTreeNode[] {
+  const root: FileTreeNode[] = [];
+
+  files.forEach((file) => {
+    const parts = file.path.split('/').filter(Boolean);
+    let current = root;
+
+    parts.forEach((part, idx) => {
+      const isLast = idx === parts.length - 1;
+      let node = current.find((n) => n.name === part);
+
+      if (!node) {
+        node = {
+          name: part,
+          path: parts.slice(0, idx + 1).join('/'),
+          isDirectory: !isLast,
+          children: [],
+          size: isLast ? file.size : undefined,
+          modified: isLast ? file.modified : undefined,
+        };
+        current.push(node);
+      }
+
+      if (!isLast) {
+        node.isDirectory = true;
+        current = node.children;
+      }
+    });
+  });
+
+  // Sort: directories first, then files alphabetically
+  const sortNodes = (nodes: FileTreeNode[]): FileTreeNode[] => {
+    return nodes.sort((a, b) => {
+      if (a.isDirectory && !b.isDirectory) return -1;
+      if (!a.isDirectory && b.isDirectory) return 1;
+      return a.name.localeCompare(b.name);
+    }).map(node => ({
+      ...node,
+      children: sortNodes(node.children),
+    }));
+  };
+
+  return sortNodes(root);
+}
+
+interface FileNodeProps {
+  node: FileTreeNode;
+  depth: number;
+}
+
+// Format file size for display
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileNode({ node, depth }: FileNodeProps) {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  return (
+    <div>
+      <motion.div
+        initial={{ opacity: 0, x: -10 }}
+        animate={{ opacity: 1, x: 0 }}
+        className={`
+          flex items-center gap-1 py-1 px-2 hover:bg-gray-700/30 dark:hover:bg-gray-700/30 rounded cursor-pointer
+          text-sm text-gray-700 dark:text-gray-300
+        `}
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        onClick={() => node.isDirectory && setIsExpanded(!isExpanded)}
+      >
+        {node.isDirectory ? (
+          isExpanded ? (
+            <ChevronDown className="w-4 h-4 text-gray-500" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-gray-500" />
+          )
+        ) : (
+          <span className="w-4" />
+        )}
+
+        {node.isDirectory ? (
+          <Folder className="w-4 h-4 text-blue-400" />
+        ) : (
+          <File className="w-4 h-4 text-gray-400" />
+        )}
+
+        <span className="flex-1">{node.name}</span>
+
+        {/* File size for non-directories */}
+        {!node.isDirectory && node.size !== undefined && (
+          <span className="text-xs text-gray-500 dark:text-gray-500">
+            {formatFileSize(node.size)}
+          </span>
+        )}
+      </motion.div>
+
+      <AnimatePresence>
+        {node.isDirectory && isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            {node.children.map((child) => (
+              <FileNode key={child.path} node={child} depth={depth + 1} />
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ============================================================================
+// Main Modal Component
+// ============================================================================
 
 export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps) {
   const answers = useAgentStore(selectAnswers);
   const agentOrder = useAgentStore(selectAgentOrder);
   const selectedAgent = useAgentStore(selectSelectedAgent);
 
+  const [activeTab, setActiveTab] = useState<TabType>('answers');
   const [filterAgent, setFilterAgent] = useState<string | 'all'>('all');
   const [expandedAnswerId, setExpandedAnswerId] = useState<string | null>(null);
+
+  // Workspace state - now fetched from API
+  const [workspaces, setWorkspaces] = useState<WorkspacesResponse>({ current: [], historical: [] });
+  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceInfo | null>(null);
+  const [workspaceFiles, setWorkspaceFiles] = useState<FileInfo[]>([]);
+  const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+
+  // Fetch available workspaces from API
+  const fetchWorkspaces = useCallback(async () => {
+    setIsLoadingWorkspaces(true);
+    setWorkspaceError(null);
+    try {
+      const response = await fetch('/api/workspaces');
+      if (!response.ok) {
+        throw new Error('Failed to fetch workspaces');
+      }
+      const data: WorkspacesResponse = await response.json();
+      setWorkspaces(data);
+
+      // Auto-select first current workspace if available
+      if (data.current.length > 0 && !selectedWorkspace) {
+        setSelectedWorkspace(data.current[0]);
+      }
+    } catch (err) {
+      setWorkspaceError(err instanceof Error ? err.message : 'Failed to load workspaces');
+    } finally {
+      setIsLoadingWorkspaces(false);
+    }
+  }, [selectedWorkspace]);
+
+  // Fetch files for selected workspace
+  const fetchWorkspaceFiles = useCallback(async (workspace: WorkspaceInfo) => {
+    setIsLoadingFiles(true);
+    setWorkspaceError(null);
+    try {
+      const response = await fetch(`/api/workspace/browse?path=${encodeURIComponent(workspace.path)}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch workspace files');
+      }
+      const data = await response.json();
+      setWorkspaceFiles(data.files || []);
+    } catch (err) {
+      setWorkspaceError(err instanceof Error ? err.message : 'Failed to load files');
+      setWorkspaceFiles([]);
+    } finally {
+      setIsLoadingFiles(false);
+    }
+  }, []);
+
+  // Fetch workspaces when modal opens or tab switches to workspace
+  useEffect(() => {
+    if (isOpen && activeTab === 'workspace') {
+      fetchWorkspaces();
+    }
+  }, [isOpen, activeTab, fetchWorkspaces]);
+
+  // Fetch files when workspace is selected
+  useEffect(() => {
+    if (selectedWorkspace) {
+      fetchWorkspaceFiles(selectedWorkspace);
+    }
+  }, [selectedWorkspace, fetchWorkspaceFiles]);
 
   // Filter answers based on selected agent
   const filteredAnswers = useMemo(() => {
@@ -37,7 +257,6 @@ export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps)
       result = result.filter((a) => a.agentId === filterAgent);
     }
 
-    // Sort by timestamp (most recent first)
     return result.sort((a, b) => b.timestamp - a.timestamp);
   }, [answers, filterAgent]);
 
@@ -52,6 +271,12 @@ export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps)
     });
     return grouped;
   }, [answers]);
+
+  // Build file tree from workspace files
+  const fileTree = useMemo(() => buildFileTree(workspaceFiles), [workspaceFiles]);
+
+  // Count total workspaces
+  const totalWorkspaces = workspaces.current.length + workspaces.historical.length;
 
   if (!isOpen) return null;
 
@@ -80,10 +305,7 @@ export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps)
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 bg-gray-900/50">
               <div className="flex items-center gap-3">
                 <FileText className="w-6 h-6 text-blue-400" />
-                <h2 className="text-xl font-semibold text-gray-100">Answer Browser</h2>
-                <span className="px-2 py-0.5 bg-blue-900/50 text-blue-300 rounded-full text-sm">
-                  {answers.length} answers
-                </span>
+                <h2 className="text-xl font-semibold text-gray-100">Browser</h2>
               </div>
               <button
                 onClick={onClose}
@@ -93,111 +315,266 @@ export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps)
               </button>
             </div>
 
-            {/* Filter Bar */}
-            <div className="px-6 py-3 border-b border-gray-700 bg-gray-800/50 flex items-center gap-4">
-              <span className="text-sm text-gray-400">Filter by agent:</span>
-              <div className="relative">
-                <select
-                  value={filterAgent}
-                  onChange={(e) => setFilterAgent(e.target.value)}
-                  className="appearance-none bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 pr-10 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">All Agents</option>
-                  {agentOrder.map((agentId) => (
-                    <option key={agentId} value={agentId}>
-                      {agentId} ({answersByAgent[agentId]?.length || 0} answers)
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              </div>
+            {/* Tabs */}
+            <div className="flex border-b border-gray-700 bg-gray-800/50">
+              <button
+                onClick={() => setActiveTab('answers')}
+                className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === 'answers'
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                Answers
+                <span className="px-1.5 py-0.5 bg-gray-700 rounded-full text-xs">
+                  {answers.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('workspace')}
+                className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === 'workspace'
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <Folder className="w-4 h-4" />
+                Workspace
+                <span className="px-1.5 py-0.5 bg-gray-700 rounded-full text-xs">
+                  {totalWorkspaces}
+                </span>
+              </button>
             </div>
 
-            {/* Answer List */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-              {filteredAnswers.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                  <FileText className="w-12 h-12 mb-4 opacity-50" />
-                  <p>No answers yet</p>
-                  <p className="text-sm mt-1">Answers will appear here as agents submit them</p>
+            {/* Tab Content */}
+            {activeTab === 'answers' ? (
+              <>
+                {/* Filter Bar */}
+                <div className="px-6 py-3 border-b border-gray-700 bg-gray-800/50 flex items-center gap-4">
+                  <span className="text-sm text-gray-400">Filter by agent:</span>
+                  <div className="relative">
+                    <select
+                      value={filterAgent}
+                      onChange={(e) => setFilterAgent(e.target.value)}
+                      className="appearance-none bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 pr-10 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="all">All Agents</option>
+                      {agentOrder.map((agentId) => (
+                        <option key={agentId} value={agentId}>
+                          {agentId} ({answersByAgent[agentId]?.length || 0} answers)
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  </div>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {filteredAnswers.map((answer) => {
-                    const isExpanded = expandedAnswerId === answer.id;
-                    const isWinner = answer.agentId === selectedAgent;
 
-                    return (
-                      <motion.div
-                        key={answer.id}
-                        layout
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={`
-                          bg-gray-700/50 rounded-lg border overflow-hidden cursor-pointer
-                          transition-colors hover:bg-gray-700/70
-                          ${isWinner ? 'border-yellow-500/50' : 'border-gray-600'}
-                        `}
-                        onClick={() => setExpandedAnswerId(isExpanded ? null : answer.id)}
-                      >
-                        {/* Answer Header */}
-                        <div className="flex items-center justify-between px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            <div className={`p-2 rounded-lg ${isWinner ? 'bg-yellow-900/50' : 'bg-blue-900/50'}`}>
-                              {isWinner ? (
-                                <Trophy className="w-4 h-4 text-yellow-400" />
-                              ) : (
-                                <User className="w-4 h-4 text-blue-400" />
-                              )}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium text-gray-200">{answer.agentId}</span>
-                                <span className="text-gray-500 text-sm">Answer #{answer.answerNumber}</span>
-                                {isWinner && (
-                                  <span className="px-2 py-0.5 bg-yellow-900/50 text-yellow-300 rounded-full text-xs">
-                                    Winner
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-                                <Clock className="w-3 h-3" />
-                                <span>{formatTimestamp(answer.timestamp)}</span>
-                              </div>
-                            </div>
-                          </div>
+                {/* Answer List */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+                  {filteredAnswers.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <FileText className="w-12 h-12 mb-4 opacity-50" />
+                      <p>No answers yet</p>
+                      <p className="text-sm mt-1">Answers will appear here as agents submit them</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {filteredAnswers.map((answer) => {
+                        const isExpanded = expandedAnswerId === answer.id;
+                        const isWinner = answer.agentId === selectedAgent;
+
+                        return (
                           <motion.div
-                            animate={{ rotate: isExpanded ? 180 : 0 }}
-                            className="text-gray-400"
+                            key={answer.id}
+                            layout
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className={`
+                              bg-gray-700/50 rounded-lg border overflow-hidden cursor-pointer
+                              transition-colors hover:bg-gray-700/70
+                              ${isWinner ? 'border-yellow-500/50' : 'border-gray-600'}
+                            `}
+                            onClick={() => setExpandedAnswerId(isExpanded ? null : answer.id)}
                           >
-                            <ChevronDown className="w-5 h-5" />
-                          </motion.div>
-                        </div>
-
-                        {/* Answer Content (Expandable) */}
-                        <AnimatePresence>
-                          {isExpanded && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="border-t border-gray-600"
-                            >
-                              <div className="p-4 bg-gray-800/50">
-                                <pre className="whitespace-pre-wrap text-sm text-gray-300 font-mono leading-relaxed max-h-96 overflow-y-auto custom-scrollbar">
-                                  {answer.content}
-                                </pre>
+                            {/* Answer Header */}
+                            <div className="flex items-center justify-between px-4 py-3">
+                              <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${isWinner ? 'bg-yellow-900/50' : 'bg-blue-900/50'}`}>
+                                  {isWinner ? (
+                                    <Trophy className="w-4 h-4 text-yellow-400" />
+                                  ) : (
+                                    <User className="w-4 h-4 text-blue-400" />
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium text-gray-200">{answer.agentId}</span>
+                                    <span className="text-gray-500 text-sm">Answer #{answer.answerNumber}</span>
+                                    {isWinner && (
+                                      <span className="px-2 py-0.5 bg-yellow-900/50 text-yellow-300 rounded-full text-xs">
+                                        Winner
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                                    <Clock className="w-3 h-3" />
+                                    <span>{formatTimestamp(answer.timestamp)}</span>
+                                  </div>
+                                </div>
                               </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </motion.div>
-                    );
-                  })}
+                              <motion.div
+                                animate={{ rotate: isExpanded ? 180 : 0 }}
+                                className="text-gray-400"
+                              >
+                                <ChevronDown className="w-5 h-5" />
+                              </motion.div>
+                            </div>
+
+                            {/* Answer Content (Expandable) */}
+                            <AnimatePresence>
+                              {isExpanded && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="border-t border-gray-600"
+                                >
+                                  <div className="p-4 bg-gray-800/50">
+                                    <pre className="whitespace-pre-wrap text-sm text-gray-300 font-mono leading-relaxed max-h-96 overflow-y-auto custom-scrollbar">
+                                      {answer.content}
+                                    </pre>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            ) : (
+              <>
+                {/* Workspace Selector Bar */}
+                <div className="px-6 py-3 border-b border-gray-700 bg-gray-800/50 flex items-center gap-4 flex-wrap">
+                  {/* Current Workspaces */}
+                  {workspaces.current.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <Folder className="w-4 h-4 text-blue-400" />
+                      <span className="text-sm text-gray-400">Current:</span>
+                      <div className="flex gap-1">
+                        {workspaces.current.map((ws) => (
+                          <button
+                            key={ws.path}
+                            onClick={() => setSelectedWorkspace(ws)}
+                            className={`px-3 py-1 text-sm rounded transition-colors ${
+                              selectedWorkspace?.path === ws.path
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                            }`}
+                          >
+                            {ws.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Historical Workspaces Dropdown */}
+                  {workspaces.historical.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <History className="w-4 h-4 text-amber-400" />
+                      <span className="text-sm text-gray-400">Historical:</span>
+                      <div className="relative">
+                        <select
+                          value={selectedWorkspace?.type === 'historical' ? selectedWorkspace.path : ''}
+                          onChange={(e) => {
+                            const ws = workspaces.historical.find(w => w.path === e.target.value);
+                            if (ws) setSelectedWorkspace(ws);
+                          }}
+                          className="appearance-none bg-gray-700 border border-gray-600 rounded-lg px-3 py-1 pr-8 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">Select...</option>
+                          {workspaces.historical.map((ws) => (
+                            <option key={ws.path} value={ws.path}>
+                              {ws.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Refresh Button */}
+                  <button
+                    onClick={fetchWorkspaces}
+                    disabled={isLoadingWorkspaces}
+                    className="ml-auto p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-gray-200"
+                    title="Refresh workspaces"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {/* Error Display */}
+                {workspaceError && (
+                  <div className="px-6 py-2 bg-red-900/30 border-b border-red-700 text-red-300 text-sm">
+                    {workspaceError}
+                  </div>
+                )}
+
+                {/* File Tree */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+                  {isLoadingWorkspaces || isLoadingFiles ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <RefreshCw className="w-8 h-8 mb-4 animate-spin" />
+                      <p>Loading...</p>
+                    </div>
+                  ) : totalWorkspaces === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <Folder className="w-12 h-12 mb-4 opacity-50" />
+                      <p>No workspaces found</p>
+                      <p className="text-sm mt-1">Workspaces will appear when agents create files</p>
+                    </div>
+                  ) : !selectedWorkspace ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <Folder className="w-12 h-12 mb-4 opacity-50" />
+                      <p>Select a workspace to browse files</p>
+                    </div>
+                  ) : workspaceFiles.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <Folder className="w-12 h-12 mb-4 opacity-50" />
+                      <p>No files in this workspace</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="mb-3 text-sm text-gray-400">
+                        {selectedWorkspace.name} • {workspaceFiles.length} files
+                      </div>
+                      {fileTree.map((node) => (
+                        <FileNode key={node.path} node={node} depth={0} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Workspace Summary */}
+                {selectedWorkspace && workspaceFiles.length > 0 && (
+                  <div className="border-t border-gray-700 px-6 py-3 text-sm text-gray-400 flex items-center justify-between">
+                    <span>
+                      {workspaceFiles.length} files in {selectedWorkspace.name}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {selectedWorkspace.path}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
 
             {/* Footer with stats */}
             <div className="px-6 py-3 border-t border-gray-700 bg-gray-900/50 flex items-center justify-between text-sm">

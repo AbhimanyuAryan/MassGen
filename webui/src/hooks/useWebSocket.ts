@@ -24,6 +24,7 @@ interface UseWebSocketReturn {
   disconnect: () => void;
   send: (data: Record<string, unknown>) => void;
   startCoordination: (question: string, configPath?: string) => void;
+  cancelCoordination: () => void;
   error: string | null;
 }
 
@@ -149,6 +150,13 @@ export function useWebSocket({
     [send]
   );
 
+  // Cancel coordination
+  const cancelCoordination = useCallback(() => {
+    send({
+      action: 'cancel',
+    });
+  }, [send]);
+
   // Auto-connect on mount
   useEffect(() => {
     if (autoConnect && sessionId) {
@@ -166,6 +174,7 @@ export function useWebSocket({
     disconnect,
     send,
     startCoordination,
+    cancelCoordination,
     error,
   };
 }

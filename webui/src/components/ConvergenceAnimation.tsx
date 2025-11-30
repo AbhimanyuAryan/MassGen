@@ -1,143 +1,107 @@
 /**
  * ConvergenceAnimation Component
  *
- * Dramatic multi-stage animation when consensus is reached.
- * Agents visually converge toward the winner.
+ * Popup notification when consensus is reached.
+ * Auto-dismisses and switches to winner-only view.
  */
 
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Sparkles } from 'lucide-react';
-import { useAgentStore, selectSelectedAgent, selectFinalAnswer, selectIsComplete } from '../stores/agentStore';
+import { Trophy, Sparkles, ArrowRight } from 'lucide-react';
+import { useAgentStore, selectSelectedAgent, selectIsComplete, selectAgents } from '../stores/agentStore';
 
-export function ConvergenceAnimation() {
+interface ConvergenceAnimationProps {
+  onViewWinner?: () => void;
+}
+
+export function ConvergenceAnimation({ onViewWinner }: ConvergenceAnimationProps) {
   const selectedAgent = useAgentStore(selectSelectedAgent);
-  const finalAnswer = useAgentStore(selectFinalAnswer);
+  const agents = useAgentStore(selectAgents);
   const isComplete = useAgentStore(selectIsComplete);
+  const [dismissed, setDismissed] = useState(false);
 
-  const showAnimation = isComplete && selectedAgent;
+  const showAnimation = isComplete && selectedAgent && !dismissed;
+
+  // Get winner's model name for display
+  const winnerAgent = selectedAgent ? agents[selectedAgent] : null;
+  const winnerDisplayName = winnerAgent?.modelName
+    ? `${selectedAgent} (${winnerAgent.modelName})`
+    : selectedAgent;
+
+  // Auto-dismiss after 5 seconds and switch to winner view
+  useEffect(() => {
+    if (showAnimation) {
+      const timer = setTimeout(() => {
+        setDismissed(true);
+        onViewWinner?.();
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showAnimation, onViewWinner]);
+
+  // Reset dismissed state when a new session starts
+  useEffect(() => {
+    if (!isComplete) {
+      setDismissed(false);
+    }
+  }, [isComplete]);
+
+  const handleViewNow = () => {
+    setDismissed(true);
+    onViewWinner?.();
+  };
 
   return (
     <AnimatePresence>
       {showAnimation && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          initial={{ opacity: 0, y: 50, x: '-50%' }}
+          animate={{ opacity: 1, y: 0, x: '-50%' }}
+          exit={{ opacity: 0, y: 50, x: '-50%' }}
+          className="fixed bottom-6 left-1/2 z-50 max-w-lg w-full mx-4"
         >
-          {/* Background particles */}
-          <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {Array.from({ length: 20 }).map((_, i) => (
+          {/* Toast Card */}
+          <div className="bg-gray-900 border-2 border-yellow-500 rounded-xl p-4 shadow-2xl shadow-yellow-500/20">
+            <div className="flex items-center gap-4">
+              {/* Icon */}
               <motion.div
-                key={i}
-                className="absolute w-2 h-2 bg-yellow-500/60 rounded-full"
-                initial={{
-                  x: Math.random() * window.innerWidth,
-                  y: Math.random() * window.innerHeight,
-                  scale: 0,
-                }}
-                animate={{
-                  x: window.innerWidth / 2,
-                  y: window.innerHeight / 2,
-                  scale: [0, 1, 0],
-                }}
-                transition={{
-                  duration: 2,
-                  delay: i * 0.1,
-                  ease: 'easeInOut',
-                }}
-              />
-            ))}
-          </div>
-
-          {/* Winner Card */}
-          <motion.div
-            initial={{ scale: 0, rotate: -10 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{
-              type: 'spring',
-              stiffness: 200,
-              damping: 20,
-              delay: 0.5,
-            }}
-            className="relative max-w-2xl mx-4"
-          >
-            {/* Glow effect */}
-            <motion.div
-              className="absolute inset-0 bg-yellow-500/20 rounded-2xl blur-3xl"
-              animate={{
-                scale: [1, 1.1, 1],
-                opacity: [0.5, 0.8, 0.5],
-              }}
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: 'easeInOut',
-              }}
-            />
-
-            {/* Main card */}
-            <div className="relative bg-gray-900 border-2 border-yellow-500 rounded-2xl p-6 shadow-2xl">
-              {/* Header */}
-              <div className="flex items-center justify-center gap-3 mb-4">
-                <motion.div
-                  animate={{ rotate: [0, 10, -10, 0] }}
-                  transition={{ duration: 0.5, delay: 1, repeat: 2 }}
-                >
-                  <Trophy className="w-10 h-10 text-yellow-500" />
-                </motion.div>
-                <div className="text-center">
-                  <motion.h2
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.8 }}
-                    className="text-2xl font-bold text-yellow-400"
-                  >
-                    Consensus Reached!
-                  </motion.h2>
-                  <motion.p
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 1 }}
-                    className="text-gray-400"
-                  >
-                    Winner: <span className="text-yellow-300 font-medium">{selectedAgent}</span>
-                  </motion.p>
-                </div>
-                <motion.div
-                  animate={{ rotate: [0, -10, 10, 0] }}
-                  transition={{ duration: 0.5, delay: 1.2, repeat: 2 }}
-                >
-                  <Sparkles className="w-10 h-10 text-yellow-500" />
-                </motion.div>
-              </div>
-
-              {/* Final Answer */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 1.2 }}
-                className="bg-gray-800/50 rounded-lg p-4 border border-gray-700"
+                animate={{ rotate: [0, 10, -10, 0] }}
+                transition={{ duration: 0.5, repeat: 2 }}
+                className="shrink-0"
               >
-                <h3 className="text-sm font-medium text-gray-400 mb-2">Final Coordinated Answer</h3>
-                <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                  <pre className="text-gray-200 whitespace-pre-wrap text-sm leading-relaxed font-mono">
-                    {finalAnswer || 'Loading...'}
-                  </pre>
-                </div>
+                <Trophy className="w-10 h-10 text-yellow-500" />
               </motion.div>
 
-              {/* Close instruction */}
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 2 }}
-                className="text-center text-gray-500 text-sm mt-4"
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <h2 className="text-lg font-bold text-yellow-400 flex items-center gap-2">
+                  Consensus Reached!
+                  <Sparkles className="w-5 h-5" />
+                </h2>
+                <p className="text-gray-400 text-sm">
+                  Winner: <span className="text-yellow-300 font-medium">{winnerDisplayName}</span>
+                </p>
+              </div>
+
+              {/* View Winner Button */}
+              <button
+                onClick={handleViewNow}
+                className="shrink-0 flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-500
+                         text-white rounded-lg transition-colors font-medium"
               >
-                Click anywhere to close
-              </motion.p>
+                View
+                <ArrowRight className="w-4 h-4" />
+              </button>
             </div>
-          </motion.div>
+
+            {/* Progress bar for auto-dismiss */}
+            <motion.div
+              initial={{ width: '100%' }}
+              animate={{ width: '0%' }}
+              transition={{ duration: 5, ease: 'linear' }}
+              className="h-1 bg-yellow-500/50 rounded-full mt-3"
+            />
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

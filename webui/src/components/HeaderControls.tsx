@@ -6,8 +6,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, FolderOpen, Users, ChevronDown, RefreshCw, Plus, FileText } from 'lucide-react';
+import { Settings, FolderOpen, Users, ChevronDown, RefreshCw, Plus, FileText, Sun, Moon, Monitor } from 'lucide-react';
 import type { ConfigInfo, SessionInfo } from '../types';
+import { useThemeStore, selectThemeMode, selectSetThemeMode, type ThemeMode } from '../stores/themeStore';
 
 interface HeaderControlsProps {
   currentSessionId: string;
@@ -34,6 +35,19 @@ export function HeaderControls({
   const [showConfigDropdown, setShowConfigDropdown] = useState(false);
   const [showSessionDropdown, setShowSessionDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // Theme state
+  const themeMode = useThemeStore(selectThemeMode);
+  const setThemeMode = useThemeStore(selectSetThemeMode);
+
+  const cycleTheme = () => {
+    const modes: ThemeMode[] = ['light', 'dark', 'system'];
+    const currentIndex = modes.indexOf(themeMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    setThemeMode(modes[nextIndex]);
+  };
+
+  const ThemeIcon = themeMode === 'light' ? Sun : themeMode === 'dark' ? Moon : Monitor;
 
   // Fetch available configs
   const fetchConfigs = useCallback(async () => {
@@ -90,8 +104,8 @@ export function HeaderControls({
             setShowConfigDropdown(!showConfigDropdown);
             setShowSessionDropdown(false);
           }}
-          className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600
-                   rounded-lg border border-gray-600 text-sm transition-colors"
+          className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
+                   rounded-lg border border-gray-300 dark:border-gray-600 text-sm transition-colors"
         >
           <FolderOpen className="w-4 h-4 text-blue-400" />
           <span className="max-w-[200px] truncate">
@@ -107,10 +121,10 @@ export function HeaderControls({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               className="absolute right-0 mt-2 w-80 max-h-[400px] overflow-y-auto
-                       bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50"
+                       bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50"
             >
               {defaultConfig && (
-                <div className="p-2 border-b border-gray-700">
+                <div className="p-2 border-b border-gray-200 dark:border-gray-700">
                   <div className="text-xs text-gray-500 mb-1">Default (from CLI)</div>
                   <button
                     onClick={() => {
@@ -120,7 +134,7 @@ export function HeaderControls({
                     className={`w-full text-left px-3 py-2 rounded text-sm truncate
                              ${selectedConfig === defaultConfig
                                ? 'bg-blue-600 text-white'
-                               : 'hover:bg-gray-700 text-gray-300'}`}
+                               : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                   >
                     {configs.find(c => c.path === defaultConfig)?.name || defaultConfig}
                   </button>
@@ -128,7 +142,7 @@ export function HeaderControls({
               )}
 
               {Object.entries(groupedConfigs).map(([category, categoryConfigs]) => (
-                <div key={category} className="p-2 border-b border-gray-700 last:border-0">
+                <div key={category} className="p-2 border-b border-gray-200 dark:border-gray-700 last:border-0">
                   <div className="text-xs text-gray-500 mb-1 uppercase tracking-wide">
                     {category === 'root' ? 'General' : category}
                   </div>
@@ -142,7 +156,7 @@ export function HeaderControls({
                       className={`w-full text-left px-3 py-2 rounded text-sm truncate
                                ${selectedConfig === config.path
                                  ? 'bg-blue-600 text-white'
-                                 : 'hover:bg-gray-700 text-gray-300'}`}
+                                 : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                       title={config.path}
                     >
                       {config.name}
@@ -168,8 +182,8 @@ export function HeaderControls({
             setShowSessionDropdown(!showSessionDropdown);
             setShowConfigDropdown(false);
           }}
-          className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600
-                   rounded-lg border border-gray-600 text-sm transition-colors"
+          className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
+                   rounded-lg border border-gray-300 dark:border-gray-600 text-sm transition-colors"
         >
           <Users className="w-4 h-4 text-purple-400" />
           <span>Sessions ({sessions.length})</span>
@@ -183,10 +197,10 @@ export function HeaderControls({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               className="absolute right-0 mt-2 w-80 max-h-[300px] overflow-y-auto
-                       bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50"
+                       bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50"
             >
               {/* New Session Button */}
-              <div className="p-2 border-b border-gray-700">
+              <div className="p-2 border-b border-gray-200 dark:border-gray-700">
                 <button
                   onClick={() => {
                     onNewSession();
@@ -206,7 +220,7 @@ export function HeaderControls({
                   <span className="text-xs text-gray-500">Active Sessions</span>
                   <button
                     onClick={fetchSessions}
-                    className="p-1 hover:bg-gray-700 rounded"
+                    className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
                     title="Refresh"
                   >
                     <RefreshCw className="w-3 h-3 text-gray-500" />
@@ -228,7 +242,7 @@ export function HeaderControls({
                       className={`w-full text-left px-3 py-2 rounded text-sm mb-1
                                ${currentSessionId === session.session_id
                                  ? 'bg-purple-600 text-white'
-                                 : 'hover:bg-gray-700 text-gray-300'}`}
+                                 : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'}`}
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-xs truncate max-w-[180px]">
@@ -260,11 +274,11 @@ export function HeaderControls({
       {/* Answers Browser */}
       <button
         onClick={onOpenAnswerBrowser}
-        className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600
-                 rounded-lg border border-gray-600 text-sm transition-colors"
+        className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
+                 rounded-lg border border-gray-300 dark:border-gray-600 text-sm transition-colors"
         title="Browse Answers"
       >
-        <FileText className="w-4 h-4 text-blue-400" />
+        <FileText className="w-4 h-4 text-blue-500 dark:text-blue-400" />
         <span>Answers</span>
         {answerCount > 0 && (
           <span className="px-1.5 py-0.5 bg-blue-600 text-white rounded-full text-xs min-w-[1.25rem] text-center">
@@ -273,12 +287,23 @@ export function HeaderControls({
         )}
       </button>
 
+      {/* Theme Toggle */}
+      <button
+        onClick={cycleTheme}
+        className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
+                 rounded-lg border border-gray-300 dark:border-gray-600 text-sm transition-colors"
+        title={`Theme: ${themeMode} (click to cycle)`}
+      >
+        <ThemeIcon className="w-4 h-4 text-amber-500 dark:text-yellow-400" />
+        <span className="capitalize">{themeMode}</span>
+      </button>
+
       {/* Settings */}
       <button
-        className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+        className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors"
         title="Settings"
       >
-        <Settings className="w-5 h-5 text-gray-400" />
+        <Settings className="w-5 h-5 text-gray-500 dark:text-gray-400" />
       </button>
     </div>
   );

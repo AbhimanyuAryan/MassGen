@@ -37,12 +37,19 @@ export interface WSMessage {
   sequence: number;
 }
 
+// Agent info with model name
+export interface AgentInfo {
+  id: string;
+  model?: string;  // Model name like "gpt-5", "claude-3.5-sonnet"
+}
+
 // Specific event payloads
 export interface InitEvent extends WSMessage {
   type: 'init';
   question: string;
   log_filename?: string;
   agents: string[];
+  agent_models?: Record<string, string>;  // Map of agent_id -> model name
   theme: string;
 }
 
@@ -146,15 +153,30 @@ export interface VoteResults {
   agents_voted?: number;
 }
 
+// Round of agent output (for restart/new answer separation)
+export interface AgentRound {
+  id: string;
+  roundNumber: number;
+  type: 'answer' | 'vote';
+  label: string;  // e.g., "answer1.1" or "vote1"
+  content: string;
+  startTimestamp: number;
+  endTimestamp?: number;
+}
+
 // Agent state in store
 export interface AgentState {
   id: string;
+  modelName?: string;  // e.g., "gpt-5" for display as "agent_a (gpt-5)"
   status: AgentStatus;
   content: string[];
   currentContent: string;
+  rounds: AgentRound[];  // History of rounds for dropdown
+  currentRoundId: string;  // Currently displayed round
   voteTarget?: string;
   voteReason?: string;
   answerCount: number;
+  voteCount: number;  // Track votes for labeling
   files: FileInfo[];
   toolCalls: ToolCallInfo[];
 }
@@ -186,6 +208,9 @@ export interface Answer {
   isWinner?: boolean;
 }
 
+// View mode for UI
+export type ViewMode = 'coordination' | 'winner';
+
 // Full session state
 export interface SessionState {
   sessionId: string;
@@ -200,6 +225,7 @@ export interface SessionState {
   isComplete: boolean;
   error?: string;
   theme: string;
+  viewMode: ViewMode;  // 'coordination' shows all agents, 'winner' shows only winner
 }
 
 // Union type for all WebSocket events

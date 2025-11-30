@@ -208,6 +208,137 @@ def create_app(config_path: Optional[str] = None) -> "FastAPI":
         session_id = str(uuid.uuid4())
         return JSONResponse({"session_id": session_id})
 
+    @app.get("/api/workspace/{session_id}/{agent_id}")
+    async def get_workspace_files(session_id: str, agent_id: str):
+        """Get workspace files for an agent.
+
+        Returns files from the agent's current workspace directory.
+        """
+        display = manager.get_display(session_id)
+        if display is None:
+            return JSONResponse(
+                {"error": "Session not found", "files": []},
+                status_code=404,
+            )
+
+        # Get workspace path from display if available
+        workspace_path = getattr(display, "_workspace_path", None)
+        if workspace_path:
+            agent_workspace = Path(workspace_path) / agent_id
+        else:
+            # Fall back to default workspace pattern
+            agent_workspace = Path.cwd() / f"workspace_{agent_id}"
+
+        files = []
+        if agent_workspace.exists():
+            try:
+                for file_path in agent_workspace.rglob("*"):
+                    if file_path.is_file():
+                        rel_path = file_path.relative_to(agent_workspace)
+                        stat = file_path.stat()
+                        files.append(
+                            {
+                                "path": str(rel_path),
+                                "size": stat.st_size,
+                                "modified": stat.st_mtime,
+                                "operation": "create",  # For compatibility
+                            },
+                        )
+            except Exception as e:
+                return JSONResponse(
+                    {"error": str(e), "files": []},
+                    status_code=500,
+                )
+
+        return {"files": files, "workspace_path": str(agent_workspace)}
+
+    @app.get("/api/workspaces")
+    async def list_workspaces():
+        """List all available workspaces including current and historical.
+
+        Returns:
+        - current: Workspaces in cwd (workspace1, workspace2, etc.)
+        - historical: Dated workspaces from logs directory
+        """
+        workspaces = {
+            "current": [],
+            "historical": [],
+        }
+
+        # Find current workspaces in cwd
+        cwd = Path.cwd()
+        for path in cwd.iterdir():
+            if path.is_dir() and path.name.startswith("workspace"):
+                workspaces["current"].append(
+                    {
+                        "name": path.name,
+                        "path": str(path),
+                        "type": "current",
+                    },
+                )
+
+        # Find historical workspaces in logs directory
+        logs_dir = cwd / "logs"
+        if logs_dir.exists():
+            for date_dir in sorted(logs_dir.iterdir(), reverse=True):
+                if date_dir.is_dir():
+                    # Look for workspace directories within dated logs
+                    for ws_dir in date_dir.iterdir():
+                        if ws_dir.is_dir() and "workspace" in ws_dir.name.lower():
+                            workspaces["historical"].append(
+                                {
+                                    "name": f"{date_dir.name}/{ws_dir.name}",
+                                    "path": str(ws_dir),
+                                    "type": "historical",
+                                    "date": date_dir.name,
+                                },
+                            )
+
+        return workspaces
+
+    @app.get("/api/workspace/browse")
+    async def browse_workspace(path: str):
+        """Browse files in a specific workspace path.
+
+        Args:
+            path: Absolute path to workspace directory
+        """
+        workspace_path = Path(path)
+
+        if not workspace_path.exists():
+            return JSONResponse(
+                {"error": "Workspace not found", "files": []},
+                status_code=404,
+            )
+
+        if not workspace_path.is_dir():
+            return JSONResponse(
+                {"error": "Path is not a directory", "files": []},
+                status_code=400,
+            )
+
+        files = []
+        try:
+            for file_path in workspace_path.rglob("*"):
+                if file_path.is_file():
+                    rel_path = file_path.relative_to(workspace_path)
+                    stat = file_path.stat()
+                    files.append(
+                        {
+                            "path": str(rel_path),
+                            "size": stat.st_size,
+                            "modified": stat.st_mtime,
+                            "operation": "create",
+                        },
+                    )
+        except Exception as e:
+            return JSONResponse(
+                {"error": str(e), "files": []},
+                status_code=500,
+            )
+
+        return {"files": files, "workspace_path": str(workspace_path)}
+
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str):
         """Get current state of a session."""
