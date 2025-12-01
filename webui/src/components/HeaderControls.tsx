@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, FolderOpen, Users, ChevronDown, RefreshCw, Plus, FileText, Sun, Moon, Monitor, Search, X, Wand2, Eye } from 'lucide-react';
+import { Settings, FolderOpen, Users, ChevronDown, RefreshCw, Plus, FileText, Sun, Moon, Monitor, Search, X, Wand2, Eye, Vote } from 'lucide-react';
 import type { ConfigInfo, SessionInfo } from '../types';
 import { useThemeStore, selectThemeMode, selectSetThemeMode, type ThemeMode } from '../stores/themeStore';
 import { useWizardStore } from '../stores/wizardStore';
@@ -18,8 +18,10 @@ interface HeaderControlsProps {
   onSessionChange: (sessionId: string) => void;
   onNewSession: () => void;
   onOpenAnswerBrowser: () => void;
+  onOpenVoteBrowser: () => void;
   onViewConfig: () => void;
   answerCount: number;
+  voteCount: number;
 }
 
 export function HeaderControls({
@@ -29,8 +31,10 @@ export function HeaderControls({
   onSessionChange,
   onNewSession,
   onOpenAnswerBrowser,
+  onOpenVoteBrowser,
   onViewConfig,
   answerCount,
+  voteCount,
 }: HeaderControlsProps) {
   const [configs, setConfigs] = useState<ConfigInfo[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -374,6 +378,22 @@ export function HeaderControls({
         {answerCount > 0 && (
           <span className="px-1.5 py-0.5 bg-blue-600 text-white rounded-full text-xs min-w-[1.25rem] text-center">
             {answerCount}
+          </span>
+        )}
+      </button>
+
+      {/* Votes Browser */}
+      <button
+        onClick={onOpenVoteBrowser}
+        className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
+                 rounded-lg border border-gray-300 dark:border-gray-600 text-sm transition-colors"
+        title="Browse Votes"
+      >
+        <Vote className="w-4 h-4 text-amber-500 dark:text-amber-400" />
+        <span>Votes</span>
+        {voteCount > 0 && (
+          <span className="px-1.5 py-0.5 bg-amber-600 text-white rounded-full text-xs min-w-[1.25rem] text-center">
+            {voteCount}
           </span>
         )}
       </button>

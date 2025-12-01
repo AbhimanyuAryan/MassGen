@@ -7,8 +7,8 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History } from 'lucide-react';
-import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, resolveAnswerContent } from '../stores/agentStore';
+import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight } from 'lucide-react';
+import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
 import type { Answer, AnswerWorkspace } from '../types';
 
 // Types for workspace API responses
@@ -50,9 +50,10 @@ interface FileInfo {
 interface AnswerBrowserModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: TabType;
 }
 
-type TabType = 'answers' | 'workspace';
+type TabType = 'answers' | 'votes' | 'workspace';
 
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
@@ -192,14 +193,22 @@ function FileNode({ node, depth }: FileNodeProps) {
 // Main Modal Component
 // ============================================================================
 
-export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps) {
+export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: AnswerBrowserModalProps) {
   const answers = useAgentStore(selectAnswers);
   const agents = useAgentStore(selectAgents);
   const agentOrder = useAgentStore(selectAgentOrder);
   const selectedAgent = useAgentStore(selectSelectedAgent);
   const finalAnswer = useAgentStore(selectFinalAnswer);
+  const voteDistribution = useAgentStore(selectVoteDistribution);
 
-  const [activeTab, setActiveTab] = useState<TabType>('answers');
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
+
+  // Update active tab when initialTab changes (e.g., opening from notification)
+  useEffect(() => {
+    if (isOpen) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
   const [filterAgent, setFilterAgent] = useState<string | 'all'>('all');
   const [expandedAnswerId, setExpandedAnswerId] = useState<string | null>(null);
 
@@ -352,6 +361,69 @@ export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps)
     return grouped;
   }, [answers]);
 
+  // Collect vote data with answer labels
+  const votes = useMemo(() => {
+    return agentOrder
+      .map((agentId, voterIdx) => {
+        const agent = agents[agentId];
+        if (!agent?.voteTarget) return null;
+
+        const targetIdx = agentOrder.indexOf(agent.voteTarget);
+        const targetAgent = agents[agent.voteTarget];
+
+        // Find the answer that was voted for (most recent answer from target at time of vote)
+        // The target's answerCount tells us how many answers they had
+        const targetAnswerCount = targetAgent?.answerCount || 1;
+        const votedAnswerLabel = `answer${targetIdx + 1}.${targetAnswerCount}`;
+
+        // Find what answers were available to choose from (answers from all agents at vote time)
+        const availableAnswers = agentOrder.map((aid, idx) => {
+          const a = agents[aid];
+          const count = a?.answerCount || 1;
+          return `answer${idx + 1}.${count}`;
+        });
+
+        return {
+          voterId: agentId,
+          voterIndex: voterIdx + 1,
+          voterModel: agent.modelName,
+          targetId: agent.voteTarget,
+          targetIndex: targetIdx + 1,
+          targetModel: targetAgent?.modelName,
+          votedAnswerLabel,
+          availableAnswers,
+          reason: agent.voteReason || 'No reason provided',
+        };
+      })
+      .filter(Boolean) as Array<{
+        voterId: string;
+        voterIndex: number;
+        voterModel?: string;
+        targetId: string;
+        targetIndex: number;
+        targetModel?: string;
+        votedAnswerLabel: string;
+        availableAnswers: string[];
+        reason: string;
+      }>;
+  }, [agents, agentOrder]);
+
+  // Sort vote distribution by votes (highest first)
+  const sortedDistribution = useMemo(() => {
+    return Object.entries(voteDistribution)
+      .sort(([, a], [, b]) => b - a)
+      .map(([agentId, voteCount]) => {
+        const idx = agentOrder.indexOf(agentId);
+        return {
+          agentId,
+          agentIndex: idx + 1,
+          modelName: agents[agentId]?.modelName,
+          votes: voteCount,
+          isWinner: agentId === selectedAgent,
+        };
+      });
+  }, [voteDistribution, agents, agentOrder, selectedAgent]);
+
   // Build file tree from workspace files
   const fileTree = useMemo(() => buildFileTree(workspaceFiles), [workspaceFiles]);
 
@@ -409,6 +481,20 @@ export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps)
                 Answers
                 <span className="px-1.5 py-0.5 bg-gray-700 rounded-full text-xs">
                   {answers.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('votes')}
+                className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === 'votes'
+                    ? 'border-amber-500 text-amber-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <Vote className="w-4 h-4" />
+                Votes
+                <span className="px-1.5 py-0.5 bg-gray-700 rounded-full text-xs">
+                  {votes.length}
                 </span>
               </button>
               <button
@@ -541,6 +627,124 @@ export function AnswerBrowserModal({ isOpen, onClose }: AnswerBrowserModalProps)
                       })}
                     </div>
                   )}
+                </div>
+              </>
+            ) : activeTab === 'votes' ? (
+              <>
+                {/* Votes Tab Content */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+                  {/* Vote Distribution Summary */}
+                  {sortedDistribution.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-2">
+                        <Trophy className="w-4 h-4" />
+                        Vote Distribution
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {sortedDistribution.map(({ agentId, agentIndex, modelName, votes: voteCount, isWinner }) => (
+                          <div
+                            key={agentId}
+                            className={`
+                              flex items-center justify-between px-4 py-3 rounded-lg
+                              ${isWinner
+                                ? 'bg-yellow-500/20 border border-yellow-500/50'
+                                : 'bg-gray-700/50 border border-gray-600'
+                              }
+                            `}
+                          >
+                            <div className="flex items-center gap-2">
+                              <User className={`w-4 h-4 ${isWinner ? 'text-yellow-400' : 'text-gray-400'}`} />
+                              <div>
+                                <span className={`font-medium ${isWinner ? 'text-yellow-300' : 'text-gray-200'}`}>
+                                  Agent {agentIndex}
+                                </span>
+                                {modelName && (
+                                  <span className="text-xs text-gray-500 block">{modelName}</span>
+                                )}
+                              </div>
+                              {isWinner && <span className="text-sm">👑</span>}
+                            </div>
+                            <span className={`text-lg font-bold ${isWinner ? 'text-yellow-400' : 'text-gray-300'}`}>
+                              {voteCount}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Individual Votes */}
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-2">
+                      <Vote className="w-4 h-4" />
+                      Individual Votes
+                    </h3>
+
+                    {votes.length === 0 ? (
+                      <div className="text-center py-8 text-gray-500">
+                        <Vote className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                        <p>No votes cast yet</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {votes.map((vote) => (
+                          <motion.div
+                            key={vote.voterId}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="bg-gray-700/50 rounded-lg border border-gray-600 overflow-hidden"
+                          >
+                            {/* Vote header */}
+                            <div className="flex items-center gap-3 px-4 py-3 bg-gray-700/50">
+                              <div className="flex items-center gap-2 text-gray-300">
+                                <User className="w-4 h-4 text-blue-400" />
+                                <span className="font-medium">Agent {vote.voterIndex}</span>
+                                {vote.voterModel && (
+                                  <span className="text-xs text-gray-500">({vote.voterModel})</span>
+                                )}
+                              </div>
+                              <ArrowRight className="w-4 h-4 text-amber-500" />
+                              <div className="flex items-center gap-2">
+                                <span className={`font-medium px-2 py-0.5 rounded ${
+                                  vote.targetId === selectedAgent
+                                    ? 'bg-yellow-500/30 text-yellow-300'
+                                    : 'bg-green-500/20 text-green-300'
+                                }`}>
+                                  {vote.votedAnswerLabel}
+                                </span>
+                                {vote.targetId === selectedAgent && <span className="text-sm">👑</span>}
+                              </div>
+                            </div>
+
+                            {/* Vote details */}
+                            <div className="px-4 py-3 border-t border-gray-600 space-y-2">
+                              {/* Voted for */}
+                              <div className="text-sm">
+                                <span className="text-gray-500">Voted for: </span>
+                                <span className="text-gray-300">
+                                  Agent {vote.targetIndex}
+                                  {vote.targetModel && ` (${vote.targetModel})`}
+                                </span>
+                              </div>
+
+                              {/* Available choices */}
+                              <div className="text-sm">
+                                <span className="text-gray-500">From choices: </span>
+                                <span className="text-gray-400">
+                                  {vote.availableAnswers.join(', ')}
+                                </span>
+                              </div>
+
+                              {/* Reason */}
+                              <div className="mt-2 pt-2 border-t border-gray-600/50">
+                                <p className="text-sm text-gray-400 italic">{vote.reason}</p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             ) : (

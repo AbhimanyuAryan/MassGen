@@ -19,6 +19,7 @@ import { AnswerBrowserModal } from './components/AnswerBrowserModal';
 import { FinalAnswerView } from './components/FinalAnswerView';
 import { QuickstartWizard } from './components/QuickstartWizard';
 import { NotificationToast } from './components/NotificationToast';
+import type { Notification } from './stores/notificationStore';
 
 function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
   const config: Record<ConnectionStatus, { icon: typeof Wifi; color: string; text: string }> = {
@@ -80,8 +81,9 @@ export function App() {
     }
   }, [getEffectiveTheme, themeMode]);
 
-  // Answer browser modal state
+  // Answer/Vote browser modal state
   const [isAnswerBrowserOpen, setIsAnswerBrowserOpen] = useState(false);
+  const [browserInitialTab, setBrowserInitialTab] = useState<'answers' | 'votes' | 'workspace'>('answers');
 
   // Config viewer modal state
   const [isConfigViewerOpen, setIsConfigViewerOpen] = useState(false);
@@ -129,6 +131,17 @@ export function App() {
     reset();
     setSessionId(crypto.randomUUID());
   }, [reset]);
+
+  // Handle notification click - open appropriate browser tab
+  const handleNotificationClick = useCallback((notification: Notification) => {
+    if (notification.type === 'answer') {
+      setBrowserInitialTab('answers');
+      setIsAnswerBrowserOpen(true);
+    } else if (notification.type === 'vote') {
+      setBrowserInitialTab('votes');
+      setIsAnswerBrowserOpen(true);
+    }
+  }, []);
 
   // Handle follow-up question submission
   const handleFollowUp = useCallback(
@@ -202,9 +215,11 @@ export function App() {
             onConfigChange={handleConfigChange}
             onSessionChange={handleSessionChange}
             onNewSession={handleNewSession}
-            onOpenAnswerBrowser={() => setIsAnswerBrowserOpen(true)}
+            onOpenAnswerBrowser={() => { setBrowserInitialTab('answers'); setIsAnswerBrowserOpen(true); }}
+            onOpenVoteBrowser={() => { setBrowserInitialTab('votes'); setIsAnswerBrowserOpen(true); }}
             onViewConfig={handleViewConfig}
             answerCount={answers.length}
+            voteCount={Object.values(voteDistribution).reduce((sum, count) => sum + count, 0)}
           />
         </div>
       </header>
@@ -477,10 +492,11 @@ export function App() {
       {/* Celebration Animation (shows briefly on finalComplete) */}
       <ConvergenceAnimation />
 
-      {/* Answer Browser Modal (accessible via header button) */}
+      {/* Answer/Vote Browser Modal (accessible via header buttons) */}
       <AnswerBrowserModal
         isOpen={isAnswerBrowserOpen}
         onClose={() => setIsAnswerBrowserOpen(false)}
+        initialTab={browserInitialTab}
       />
 
       {/* Quickstart Wizard Modal */}
@@ -543,7 +559,7 @@ export function App() {
       </AnimatePresence>
 
       {/* Notification Toast (bottom-right) */}
-      <NotificationToast />
+      <NotificationToast onNotificationClick={handleNotificationClick} />
     </div>
   );
 }

@@ -880,12 +880,14 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           // Show notification for new answer
           const agent = get().agents[newAnswerEvent.agent_id];
           const contentPreview = newAnswerEvent.content.slice(0, 100) + (newAnswerEvent.content.length > 100 ? '...' : '');
+          const answerId = newAnswerEvent.answer_id ?? `${newAnswerEvent.agent_id}-${Date.now()}`;
           useNotificationStore.getState().addNotification({
             type: 'answer',
             title: `New Answer from ${newAnswerEvent.agent_id}`,
             message: contentPreview,
             agentId: newAnswerEvent.agent_id,
             modelName: agent?.modelName,
+            answerId,
           });
         }
         break;

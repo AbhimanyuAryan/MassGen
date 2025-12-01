@@ -6,15 +6,21 @@
 
 import { create } from 'zustand';
 
+export type NotificationType = 'answer' | 'vote' | 'info' | 'error';
+
 export interface Notification {
   id: string;
-  type: 'answer' | 'vote' | 'info' | 'error';
+  type: NotificationType;
   title: string;
   message: string;
   agentId?: string;
   modelName?: string;
+  answerId?: string;  // For linking to specific answer in browser
   timestamp: number;
 }
+
+// Callback for when a notification is clicked
+export type NotificationClickHandler = (notification: Notification) => void;
 
 interface NotificationStore {
   notifications: Notification[];

@@ -108,11 +108,9 @@ export function StatusToolbar({ onAgentClick }: StatusToolbarProps) {
                   className={`w-4 h-4 ${agent.status === 'working' ? 'animate-spin' : ''}`}
                 />
                 <span className="text-sm font-medium">{agentId}</span>
-                {agent.answerCount > 0 && (
-                  <span className="text-xs bg-black/20 px-1.5 rounded-full">
-                    #{agent.answerCount}
-                  </span>
-                )}
+                <span className="text-xs bg-black/20 px-1.5 rounded-full">
+                  #{agentOrder.indexOf(agentId) + 1}
+                </span>
                 {isWinner && <span className="text-sm">👑</span>}
               </motion.button>
             );

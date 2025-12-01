@@ -3,11 +3,12 @@
  *
  * Displays toast notifications in the bottom-right corner.
  * Used for new answer notifications, vote notifications, etc.
+ * Notifications are clickable to open relevant browser (answers/votes).
  */
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, MessageSquare, Vote, Info, AlertCircle } from 'lucide-react';
-import { useNotificationStore, type Notification } from '../stores/notificationStore';
+import { useNotificationStore, type Notification, type NotificationClickHandler } from '../stores/notificationStore';
 
 const iconMap = {
   answer: MessageSquare,
@@ -30,9 +31,26 @@ const iconColorMap = {
   error: 'text-red-400',
 };
 
-function NotificationCard({ notification }: { notification: Notification }) {
+interface NotificationCardProps {
+  notification: Notification;
+  onClick?: NotificationClickHandler;
+}
+
+function NotificationCard({ notification, onClick }: NotificationCardProps) {
   const removeNotification = useNotificationStore((s) => s.removeNotification);
   const Icon = iconMap[notification.type];
+
+  const handleClick = () => {
+    if (onClick) {
+      onClick(notification);
+      removeNotification(notification.id);
+    }
+  };
+
+  const handleClose = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    removeNotification(notification.id);
+  };
 
   return (
     <motion.div
@@ -41,10 +59,12 @@ function NotificationCard({ notification }: { notification: Notification }) {
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: 100, scale: 0.9 }}
       transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+      onClick={handleClick}
       className={`
         relative flex items-start gap-3 p-4 rounded-lg border-l-4 shadow-lg
         bg-gray-800/95 backdrop-blur-sm min-w-[280px] max-w-[360px]
         ${colorMap[notification.type]}
+        ${onClick ? 'cursor-pointer hover:bg-gray-700/95' : ''}
       `}
     >
       <Icon className={`w-5 h-5 mt-0.5 flex-shrink-0 ${iconColorMap[notification.type]}`} />
@@ -57,11 +77,14 @@ function NotificationCard({ notification }: { notification: Notification }) {
           )}
         </div>
         <p className="text-sm text-gray-300 mt-1 line-clamp-2">{notification.message}</p>
+        {onClick && (
+          <p className="text-xs text-gray-500 mt-1">Click to view details</p>
+        )}
       </div>
 
       <button
-        onClick={() => removeNotification(notification.id)}
-        className="p-1 hover:bg-gray-700 rounded transition-colors flex-shrink-0"
+        onClick={handleClose}
+        className="p-1 hover:bg-gray-600 rounded transition-colors flex-shrink-0"
       >
         <X className="w-4 h-4 text-gray-400" />
       </button>
@@ -69,14 +92,22 @@ function NotificationCard({ notification }: { notification: Notification }) {
   );
 }
 
-export function NotificationToast() {
+interface NotificationToastProps {
+  onNotificationClick?: NotificationClickHandler;
+}
+
+export function NotificationToast({ onNotificationClick }: NotificationToastProps) {
   const notifications = useNotificationStore((s) => s.notifications);
 
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
       <AnimatePresence mode="popLayout">
         {notifications.map((notification) => (
-          <NotificationCard key={notification.id} notification={notification} />
+          <NotificationCard
+            key={notification.id}
+            notification={notification}
+            onClick={onNotificationClick}
+          />
         ))}
       </AnimatePresence>
     </div>
