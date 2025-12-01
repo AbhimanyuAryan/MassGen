@@ -25,11 +25,17 @@ MassGen provides powerful computer use tools that allow AI agents to autonomousl
    * ``browser`` - Launch computer use agents in a browser, suitable for web tasks.
    * ``linux docker`` - Launch computer use agents in a browser, suitable for all web and desktop tasks.
 
-   See `here <https://github.com/massgen/MassGen/blob/main/scripts/computer_use_setup.md>` for quick set-up guides for those two environments, and `here <https://github.com/massgen/MassGen/blob/main/massgen/backend/docs/COMPUTER_USE_VISUALIZATION.md>` for visualization guides
+   See `here <https://github.com/massgen/MassGen/blob/main/scripts/computer_use_setup.md>`_ for quick set-up guides for those two environments, and `here <https://github.com/massgen/MassGen/blob/main/massgen/backend/docs/COMPUTER_USE_VISUALIZATION.md>`_ for visualization guides
 
    **Naming:**
 
-   We name our configs in this convention: ``${TOOL_NAME}_computer_use_${ENVIRONMENT}_example.yaml``. For example, if you would like to use claude in linux docker environment. You should use the config ``massgen/configs/tools/custom_tools/claude_computer_use_docker_example.yaml``. If ``${ENVIRONMENT}`` is not specified, we use ``browser`` as default value.
+   We name our configs in this convention: ``${TOOL_NAME}_computer_use_${ENVIRONMENT}_example.yaml``.
+
+   For example, if you would like to use claude in linux docker environment.
+   
+   You should use the config ``massgen/configs/tools/custom_tools/claude_computer_use_docker_example.yaml``.
+   
+   If ``${ENVIRONMENT}`` is not specified, we use ``browser`` as default value.
 
    We welcome proposals of new tool and environment combinations!
 
