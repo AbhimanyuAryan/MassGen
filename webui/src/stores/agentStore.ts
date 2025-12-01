@@ -96,12 +96,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   ...initialState,
 
   initSession: (sessionId, question, agents, theme, agentModels) => {
-    console.log(`[DEBUG] initSession called with agentModels:`, agentModels);
     const agentStates: Record<string, AgentState> = {};
     agents.forEach((id) => {
-      const modelName = agentModels?.[id];
-      console.log(`[DEBUG] Creating agent ${id} with modelName: ${modelName}`);
-      agentStates[id] = createAgentState(id, modelName);
+      agentStates[id] = createAgentState(id, agentModels?.[id]);
     });
 
     set({
@@ -662,14 +659,12 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     switch (event.type) {
       case 'init':
         if ('agents' in event && 'question' in event) {
-          const agentModels = 'agent_models' in event ? (event as { agent_models: Record<string, string> }).agent_models : undefined;
-          console.log(`[DEBUG] init event - agent_models:`, agentModels);
           store.initSession(
             event.session_id,
             event.question,
             event.agents,
             'theme' in event ? event.theme : 'dark',
-            agentModels
+            'agent_models' in event ? (event as { agent_models: Record<string, string> }).agent_models : undefined
           );
         }
         break;

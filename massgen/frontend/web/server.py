@@ -1143,7 +1143,7 @@ async def run_coordination_with_history(
 
     try:
         # Import here to avoid circular imports
-        from massgen.agent_config import AgentConfig
+        from massgen.agent_config import AgentConfig, CoordinationConfig
         from massgen.cli import (
             create_agents_from_config,
             load_config_file,
@@ -1227,6 +1227,30 @@ async def run_coordination_with_history(
         if "answer_novelty_requirement" in orchestrator_cfg:
             orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
 
+        # Apply coordination config from YAML (includes enable_agent_task_planning, etc.)
+        coord_cfg = orchestrator_cfg.get("coordination", {})
+        if coord_cfg:
+            orchestrator_config.coordination_config = CoordinationConfig(
+                enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
+                planning_mode_instruction=coord_cfg.get(
+                    "planning_mode_instruction",
+                    "During coordination, describe what you would do without actually executing actions.",
+                ),
+                max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
+                enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
+                broadcast=coord_cfg.get("broadcast", False),
+                broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
+                broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
+                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
+                task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
+                enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                use_skills=coord_cfg.get("use_skills", False),
+                massgen_skills=coord_cfg.get("massgen_skills", []),
+                skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
+            )
+
         # Get context sharing parameters
         snapshot_storage = orchestrator_cfg.get("snapshot_storage")
         agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
@@ -1308,7 +1332,7 @@ async def run_coordination(
 
     try:
         # Import here to avoid circular imports
-        from massgen.agent_config import AgentConfig
+        from massgen.agent_config import AgentConfig, CoordinationConfig
         from massgen.cli import (
             create_agents_from_config,
             load_config_file,
@@ -1370,6 +1394,30 @@ async def run_coordination(
         # Apply answer novelty requirement if specified
         if "answer_novelty_requirement" in orchestrator_cfg:
             orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
+
+        # Apply coordination config from YAML (includes enable_agent_task_planning, etc.)
+        coord_cfg = orchestrator_cfg.get("coordination", {})
+        if coord_cfg:
+            orchestrator_config.coordination_config = CoordinationConfig(
+                enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
+                planning_mode_instruction=coord_cfg.get(
+                    "planning_mode_instruction",
+                    "During coordination, describe what you would do without actually executing actions.",
+                ),
+                max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
+                enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
+                broadcast=coord_cfg.get("broadcast", False),
+                broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
+                broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
+                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
+                task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
+                enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                use_skills=coord_cfg.get("use_skills", False),
+                massgen_skills=coord_cfg.get("massgen_skills", []),
+                skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
+            )
 
         # Get context sharing parameters
         snapshot_storage = orchestrator_cfg.get("snapshot_storage")
