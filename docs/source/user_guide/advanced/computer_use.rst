@@ -5,11 +5,17 @@ MassGen provides powerful computer use tools that allow AI agents to autonomousl
 
 .. note::
 
-   **Three Tools for Different Needs:**
+   **Currently Available Tools:**
 
    * ``gemini_computer_use`` - Google Gemini Computer Use (requires ``gemini-2.5-computer-use-preview-10-2025`` model)
    * ``claude_computer_use`` - Anthropic Claude Computer Use (requires ``claude-sonnet-4-5`` or newer)
    * ``browser_automation`` - Simple browser automation (works with ANY model: gpt-4.1, gpt-4o, etc.)
+   * ``computer_use`` - OpenAI Computer Use (requires ``computer-use-preview`` model from OpenAI)
+   ** WARNING: OpenAI Computer Use model has not gone through sophisticated testing due to access restrictions on computer-use-preview model. Performance is not guaranteed. Be cautious while using.
+
+   **Incoming Tools:**
+   * `UI-TARS_computer_use` - From ByteDance, open sourced.
+   * `qwen_computer_use` - Fraom Alibaba Qwen, open sourced.
 
 Overview
 --------
