@@ -41,7 +41,7 @@ Quick Start
 Backend Support
 ---------------
 
-MCP integration is available for most MassGen backends. For the complete backend capabilities matrix including MCP support status, see :doc:`backends`.
+MCP integration is available for most MassGen backends. For the complete backend capabilities matrix including MCP support status, see :doc:`../backends`.
 
 **Backends with MCP Support:**
 
@@ -53,7 +53,7 @@ MCP integration is available for most MassGen backends. For the complete backend
 * ✅ Z AI - MCP integration available
 * ❌ Azure OpenAI - Not yet supported
 
-See :doc:`backends` for detailed backend capabilities and feature comparison.
+See :doc:`../backends` for detailed backend capabilities and feature comparison.
 
 Configuration
 -------------
@@ -180,7 +180,7 @@ MassGen includes a curated registry of recommended MCP servers that are automati
 * **Context7** - Up-to-date code documentation for libraries and frameworks
 * **Brave Search** - Web search via Brave API (requires API key)
 
-See :doc:`../reference/mcp_server_registry` for complete documentation of all registry servers, including configuration examples, API key setup, and usage patterns.
+See :doc:`../../reference/mcp_server_registry` for complete documentation of all registry servers, including configuration examples, API key setup, and usage patterns.
 
 Auto-Discovery
 ~~~~~~~~~~~~~~
@@ -659,8 +659,8 @@ The UI box appears automatically before coordination starts when planning mode i
 Next Steps
 ----------
 
-* :doc:`file_operations` - Filesystem MCP integration
-* :doc:`project_integration` - Using MCP with context paths
-* :doc:`multi_turn_mode` - MCP in interactive sessions
-* :doc:`../quickstart/running-massgen` - More examples
+* :doc:`../files/file_operations` - Filesystem MCP integration
+* :doc:`../files/project_integration` - Using MCP with context paths
+* :doc:`../sessions/multi_turn_mode` - MCP in interactive sessions
+* :doc:`../../quickstart/running-massgen` - More examples
 * `MCP Server Registry <https://github.com/modelcontextprotocol/servers>`_ - Browse available MCP servers

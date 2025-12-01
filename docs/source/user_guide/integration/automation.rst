@@ -20,7 +20,7 @@ MassGen provides **automation mode** (introduced in v0.1.8) designed specificall
 - ✅ **Parallel execution** support (isolated log directories)
 
 .. seealso::
-   **Real-World Example:** See the :doc:`../examples/case_studies/meta-self-analysis-automation-mode` case study demonstrating MassGen agents using automation mode to analyze MassGen itself and propose performance improvements.
+   **Real-World Example:** See the :doc:`../../examples/case_studies/meta-self-analysis-automation-mode` case study demonstrating MassGen agents using automation mode to analyze MassGen itself and propose performance improvements.
 
 Quick Start
 ===========
@@ -218,7 +218,7 @@ Status File Overview
 The ``status.json`` file is updated every 2 seconds during coordination.
 
 .. note::
-   **For complete status.json reference with all fields documented:** See :doc:`../reference/status_file`
+   **For complete status.json reference with all fields documented:** See :doc:`../../reference/status_file`
 
 File Location
 -------------
@@ -367,7 +367,7 @@ Meta-Coordination: MassGen Running MassGen
 MassGen can autonomously run and monitor itself, enabling self-improvement and automated experimentation.
 
 .. tip::
-   **Case Study:** The v0.1.8 release includes a complete :doc:`../examples/case_studies/meta-self-analysis-automation-mode` demonstrating meta-coordination in action. Agents successfully ran nested MassGen experiments, analyzed execution logs, and proposed 6 prioritized performance improvements with starter code.
+   **Case Study:** The v0.1.8 release includes a complete :doc:`../../examples/case_studies/meta-self-analysis-automation-mode` demonstrating meta-coordination in action. Agents successfully ran nested MassGen experiments, analyzed execution logs, and proposed 6 prioritized performance improvements with starter code.
 
 Available Meta Configs
 -----------------------
@@ -626,8 +626,8 @@ The configs you have MassGen run itself should include cost control measures:
 Next Steps
 ==========
 
-- **Read** :doc:`../reference/cli` for all CLI options
-- **See** :doc:`../reference/status_file` for complete status.json documentation
-- **See** :doc:`../reference/yaml_schema` for configuration details
-- **Check** :doc:`../examples/basic_examples` for working examples
+- **Read** :doc:`../../reference/cli` for all CLI options
+- **See** :doc:`../../reference/status_file` for complete status.json documentation
+- **See** :doc:`../../reference/yaml_schema` for configuration details
+- **Check** :doc:`../../examples/basic_examples` for working examples
 - **Review** ``massgen/filesystem_manager/background_shell.py`` source code

@@ -368,7 +368,7 @@ Built-in Tool Functions
 
    **When to use the standard approach instead:**
 
-   * **File Operations**: Use Claude Code's native tools or :doc:`file_operations` with MCP filesystem servers
+   * **File Operations**: Use Claude Code's native tools or :doc:`../files/file_operations` with MCP filesystem servers
    * **Code Execution**: Use backend built-in code execution or :doc:`code_execution` with MCP
 
    **These built-in functions are primarily for:**
@@ -392,7 +392,7 @@ MassGen provides these built-in functions you can import and use in your custom 
 * ``save_file_content`` - Write content to files
 * ``append_file_content`` - Append or insert content into files
 
-See :doc:`../api/tools` for complete API documentation of these functions.
+See :doc:`../../api/tools` for complete API documentation of these functions.
 
 Example Configurations
 ----------------------
@@ -577,7 +577,7 @@ Example 4: Multimodal Understanding Tools
 * Structured JSON responses with detailed metadata
 * Path validation for security
 
-See :doc:`multimodal` for complete multimodal capabilities documentation.
+See :doc:`../advanced/multimodal` for complete multimodal capabilities documentation.
 
 Example 5: Crawl4AI Web Scraping Tools
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -686,7 +686,7 @@ MassGen offers three computer use tools optimized for different providers:
    * Multi-agent computer use coordination
    * Troubleshooting and best practices
 
-   See :doc:`computer_use` - Complete Computer Use Tools guide
+   See :doc:`../advanced/computer_use` - Complete Computer Use Tools guide
 
 Example 7: Terminal Evaluation Tools
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -785,7 +785,7 @@ MassGen provides terminal evaluation tools for assessing display quality and use
    * Integration with case study creation
    * Troubleshooting and monitoring
 
-   See :doc:`terminal_evaluation` - Complete Terminal Evaluation guide
+   See :doc:`../advanced/terminal_evaluation` - Complete Terminal Evaluation guide
 
 Available Example Configs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -981,7 +981,7 @@ Programmatically manage tool categories:
 
 .. seealso::
 
-   :doc:`../api/tools` - Complete ToolManager API reference with all methods, parameters, and examples.
+   :doc:`../../api/tools` - Complete ToolManager API reference with all methods, parameters, and examples.
 
 Next Steps
 ----------
@@ -989,15 +989,15 @@ Next Steps
 * **Related Guides:**
 
   * :doc:`mcp_integration` - External tools via MCP
-  * :doc:`tools` - Tools and capabilities overview
-  * :doc:`backends` - Backend capabilities
-  * :doc:`../reference/yaml_schema` - Complete YAML reference
+  * :doc:`index` - Tools and capabilities overview
+  * :doc:`../backends` - Backend capabilities
+  * :doc:`../../reference/yaml_schema` - Complete YAML reference
 
 * **Developer API Documentation:**
 
   For programmatic tool management and internal APIs:
 
-  * :doc:`../api/tools` - Complete Tool System API reference (ToolManager, ExecutionResult, exceptions, built-in tools)
+  * :doc:`../../api/tools` - Complete Tool System API reference (ToolManager, ExecutionResult, exceptions, built-in tools)
 
 * **Examples:**
 

@@ -1350,4 +1350,4 @@ Next Steps
 
 - :doc:`multi_turn_mode` - Interactive multi-turn conversations
 - :doc:`orchestration_restart` - Graceful restart handling
-- :doc:`logging` - Understanding MassGen's logging system
+- :doc:`../logging` - Understanding MassGen's logging system

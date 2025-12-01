@@ -4518,6 +4518,88 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             "winning_agents_history": self._winning_agents_history.copy(),  # For cross-turn memory sharing
         }
 
+    def get_all_agent_workspaces(self) -> Dict[str, Optional[str]]:
+        """Get workspace paths for all agents.
+
+        Returns:
+            Dict mapping agent_id to workspace path (or None if no workspace)
+        """
+        workspaces = {}
+        for agent_id, agent in self.agents.items():
+            if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
+                fm = agent.backend.filesystem_manager
+                if fm:
+                    workspaces[agent_id] = str(fm.get_current_workspace())
+                else:
+                    workspaces[agent_id] = None
+            else:
+                workspaces[agent_id] = None
+        return workspaces
+
+    def get_coordination_result(self) -> Dict[str, Any]:
+        """Get comprehensive coordination result for API consumption.
+
+        Returns:
+            Dict with all coordination metadata:
+            - final_answer: The final presented answer
+            - selected_agent: ID of the winning agent
+            - log_directory: Root log directory path
+            - final_answer_path: Path to final/ directory
+            - answers: List of answers with labels (answerX.Y), paths, and content
+            - vote_results: Full voting details
+        """
+        from pathlib import Path
+
+        from .logger_config import get_log_session_dir, get_log_session_root
+
+        # Get log paths
+        log_root = None
+        log_session_dir = None
+        final_path = None
+        try:
+            log_root = get_log_session_root()
+            log_session_dir = get_log_session_dir()
+            final_path = log_session_dir / "final"
+        except Exception:
+            pass  # Log paths not available
+
+        # Build answers list from snapshot_mappings with full log paths
+        answers = []
+        if self.coordination_tracker and self.coordination_tracker.snapshot_mappings:
+            for label, mapping in self.coordination_tracker.snapshot_mappings.items():
+                if mapping.get("type") == "answer":
+                    # Build full path from log_session_dir + relative path
+                    answer_dir = None
+                    if log_session_dir and mapping.get("path"):
+                        answer_dir = str(log_session_dir / Path(mapping["path"]).parent)
+
+                    # Get answer content from agent state
+                    agent_id = mapping.get("agent_id")
+                    content = None
+                    if agent_id and agent_id in self.agent_states:
+                        content = self.agent_states[agent_id].answer
+
+                    answers.append(
+                        {
+                            "label": label,  # e.g., "agent1.1"
+                            "agent_id": agent_id,
+                            "answer_path": answer_dir,
+                            "content": content,
+                        },
+                    )
+
+        # Get vote results
+        vote_results = self._get_vote_results()
+
+        return {
+            "final_answer": self._final_presentation_content or "",
+            "selected_agent": self._selected_agent,
+            "log_directory": str(log_root) if log_root else None,
+            "final_answer_path": str(final_path) if final_path else None,
+            "answers": answers,
+            "vote_results": vote_results,
+        }
+
     def get_status(self) -> Dict[str, Any]:
         """Get current orchestrator status."""
         # Calculate vote results

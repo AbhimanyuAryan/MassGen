@@ -9,7 +9,7 @@ MassGen provides a comprehensive tools ecosystem that enables AI agents to perfo
 
    * :doc:`mcp_integration` - External tools via Model Context Protocol
    * :doc:`custom_tools` - Custom Python functions as tools
-   * :doc:`computer_use` - Browser and desktop automation tools
+   * :doc:`../advanced/computer_use` - Browser and desktop automation tools
 
 What Are Tools?
 ---------------
@@ -56,7 +56,7 @@ Different model providers offer built-in capabilities that agents can enable via
 
 **Availability:**
 
-See :doc:`backends` for the complete backend capabilities matrix showing which backends support which built-in tools.
+See :doc:`../backends` for the complete backend capabilities matrix showing which backends support which built-in tools.
 
 2. MCP (Model Context Protocol) Integration
 --------------------------------------------
@@ -198,7 +198,7 @@ When using the AG2 backend, agents gain access to the AG2 framework's execution 
            executor: "docker"
            work_dir: "coding"
 
-See :doc:`general_interoperability` for detailed AG2 tool configuration and usage.
+See :doc:`../integration/general_interoperability` for detailed AG2 tool configuration and usage.
 
 Combining Tool Systems
 ----------------------
@@ -372,7 +372,7 @@ Security
    * Test in isolated environments first
    * Set timeouts to prevent long-running operations
 
-See :doc:`project_integration` for secure file access configuration.
+See :doc:`../files/project_integration` for secure file access configuration.
 
 Performance
 ~~~~~~~~~~~
@@ -400,7 +400,7 @@ Common Issues
      type: "openai"
      enable_code_interpreter: true
 
-See :doc:`backends` for complete backend capabilities matrix.
+See :doc:`../backends` for complete backend capabilities matrix.
 
 **MCP server not found:**
 
@@ -461,17 +461,17 @@ For in-depth information on each tool system:
       * Visual feedback and screenshots
       * Multi-agent coordination
 
-      :doc:`Read the Computer Use guide → <computer_use>`
+      :doc:`Read the Computer Use guide → <../advanced/computer_use>`
 
 Related Documentation
 ---------------------
 
-* :doc:`backends` - Complete backend capabilities matrix
-* :doc:`file_operations` - File system operations and safety
-* :doc:`project_integration` - Secure project access with context paths
-* :doc:`general_interoperability` - Framework interoperability (including AG2)
-* :doc:`../examples/basic_examples` - See tools in action
-* :doc:`../reference/yaml_schema` - Complete YAML configuration reference
+* :doc:`../backends` - Complete backend capabilities matrix
+* :doc:`../files/file_operations` - File system operations and safety
+* :doc:`../files/project_integration` - Secure project access with context paths
+* :doc:`../integration/general_interoperability` - Framework interoperability (including AG2)
+* :doc:`../../examples/basic_examples` - See tools in action
+* :doc:`../../reference/yaml_schema` - Complete YAML configuration reference
 
 External Resources
 ------------------
@@ -483,7 +483,10 @@ External Resources
 
 .. toctree::
    :maxdepth: 1
+   :hidden:
 
    mcp_integration
    custom_tools
-   computer_use
+   code_execution
+   code_based_tools
+   skills

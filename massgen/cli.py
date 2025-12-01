@@ -1615,8 +1615,9 @@ async def run_single_question(
     ui_config: Dict[str, Any],
     session_id: Optional[str] = None,
     restore_session_if_exists: bool = False,
+    return_metadata: bool = False,
     **kwargs,
-) -> str:
+):
     """Run MassGen with a single question.
 
     Args:
@@ -1625,10 +1626,12 @@ async def run_single_question(
         ui_config: UI configuration
         session_id: Optional session ID for persistence
         restore_session_if_exists: If True, attempt to restore previous session data
+        return_metadata: If True, return dict with answer and orchestrator data
         **kwargs: Additional arguments
 
     Returns:
-        The final response text
+        str: The final response text (when return_metadata=False)
+        dict: Dict with 'answer' and 'coordination_result' (when return_metadata=True)
     """
     # Generate session_id if not provided (needed for memory archiving)
     if not session_id:
@@ -1676,6 +1679,9 @@ async def run_single_question(
                 session_info,
                 **kwargs,
             )
+            if return_metadata:
+                # Session restore doesn't provide full coordination metadata
+                return {"answer": response_text, "coordination_result": None}
             return response_text
 
         except ValueError as e:
@@ -1708,9 +1714,13 @@ async def run_single_question(
                 continue
             elif chunk.type == "error":
                 print(f"\n❌ Error: {chunk.error}", flush=True)
+                if return_metadata:
+                    return {"answer": "", "coordination_result": None}
                 return ""
 
         print("\n" + "=" * 60, flush=True)
+        if return_metadata:
+            return {"answer": response_content, "coordination_result": None}
         return response_content
 
     else:
@@ -1848,10 +1858,13 @@ async def run_single_question(
         # Create a fresh UI instance for each question to ensure clean state
         ui = _build_coordination_ui(ui_config)
 
-        print(f"\n🤖 {BRIGHT_CYAN}Multi-Agent Mode{RESET}", flush=True)
-        print(f"Agents: {', '.join(agents.keys())}", flush=True)
-        print(f"Question: {question}", flush=True)
-        print("\n" + "=" * 60, flush=True)
+        # Only print status if not in quiet mode
+        display_type = ui_config.get("display_type", "rich_terminal")
+        if display_type not in ("none", "silent"):
+            print(f"\n🤖 {BRIGHT_CYAN}Multi-Agent Mode{RESET}", flush=True)
+            print(f"Agents: {', '.join(agents.keys())}", flush=True)
+            print(f"Question: {question}", flush=True)
+            print("\n" + "=" * 60, flush=True)
 
         # Restart loop (similar to multiturn pattern)
         # Continues calling coordinate() until no restart is pending
@@ -1863,9 +1876,10 @@ async def run_single_question(
             # Check if restart is needed
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
-                print(f"\n{'='*80}")
-                print(f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}")
-                print(f"{'='*80}\n")
+                if display_type not in ("none", "silent"):
+                    print(f"\n{'='*80}")
+                    print(f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}")
+                    print(f"{'='*80}\n")
 
                 # Reset all agent backends to ensure clean state for next attempt
                 for agent_id, agent in orchestrator.agents.items():
@@ -1946,6 +1960,20 @@ async def run_single_question(
             except Exception as e:
                 logger.warning(f"Failed to save session persistence: {e}")
 
+        # Write to output file if specified
+        output_file = kwargs.get("output_file")
+        if output_file and final_response:
+            output_path = Path(output_file)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(final_response)
+            logger.info(f"Wrote final answer to: {output_file}")
+            # Print in automation mode for easy parsing
+            print(f"OUTPUT_FILE: {output_path.resolve()}")
+
+        if return_metadata:
+            # Get comprehensive coordination result from orchestrator
+            coordination_result = orchestrator.get_coordination_result()
+            return {"answer": final_response, "coordination_result": coordination_result}
         return final_response
 
 
@@ -3569,6 +3597,10 @@ async def main(args):
         # Add rate limit flag to kwargs for interactive mode
         kwargs["enable_rate_limit"] = enable_rate_limit
 
+        # Add output file if specified
+        if args.output_file:
+            kwargs["output_file"] = args.output_file
+
         # Optionally enable DSPy paraphrasing
         dspy_paraphraser = create_dspy_paraphraser_from_config(
             config,
@@ -3763,6 +3795,12 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        metavar="PATH",
+        help="Write final answer to specified file path. Works in any mode (automation, interactive, etc.)",
     )
     parser.add_argument(
         "--skip-agent-selector",

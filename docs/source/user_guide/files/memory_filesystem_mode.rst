@@ -2,13 +2,13 @@ Memory Filesystem Mode
 ======================
 
 .. warning::
-   **This feature is currently in development and experimental.** Multi-turn persistence and some advanced features may not work as expected. For production use, see :doc:`memory` for the stable persistent memory system with Qdrant.
+   **This feature is currently in development and experimental.** Multi-turn persistence and some advanced features may not work as expected.
 
 MassGen's filesystem-based memory mode provides a simple, transparent two-tier memory system for agents. Memories are automatically saved to the filesystem, visible across agents, and can be managed using MCP tools.
 
 .. note::
 
-   This is different from the :doc:`memory` system. Filesystem mode is designed for transparent, file-based memory storage suitable for coordination and cross-agent visibility, while persistent memory uses vector databases for semantic retrieval across sessions.
+   This is different from the :doc:`../sessions/memory` system. Filesystem mode is designed for transparent, file-based memory storage suitable for coordination and cross-agent visibility, while persistent memory uses vector databases for semantic retrieval across sessions.
 
 .. contents:: Table of Contents
    :local:
@@ -836,7 +836,7 @@ This feature is experimental. Key limitations:
 Related Documentation
 ---------------------
 
-- :doc:`memory` - Persistent memory with Qdrant (different system)
-- :doc:`agent_task_planning` - Task planning MCP (similar filesystem pattern)
-- :doc:`skills` - Skills system (similar injection pattern)
+- :doc:`../sessions/memory` - Persistent memory with Qdrant (different system)
+- :doc:`../advanced/agent_task_planning` - Task planning MCP (similar filesystem pattern)
+- :doc:`../tools/skills` - Skills system (similar injection pattern)
 - `Letta Context Hierarchy <https://docs.letta.com/guides/agents/context-hierarchy>`_ - Inspiration for tier design

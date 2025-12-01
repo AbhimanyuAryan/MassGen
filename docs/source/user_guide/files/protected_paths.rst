@@ -564,12 +564,12 @@ Related Features
 
 * :doc:`file_operations` - File operation safety and read-before-delete enforcement
 * :doc:`project_integration` - Context paths and permission system
-* :doc:`planning_mode` - Prevent modifications during coordination
-* :doc:`../reference/yaml_schema` - Complete YAML configuration reference
+* :doc:`../advanced/planning_mode` - Prevent modifications during coordination
+* :doc:`../../reference/yaml_schema` - Complete YAML configuration reference
 
 Next Steps
 ----------
 
 * :doc:`project_integration` - Learn about context paths and permissions
 * :doc:`file_operations` - Understand file operation safety features
-* :doc:`planning_mode` - Combine with planning mode for extra safety
+* :doc:`../advanced/planning_mode` - Combine with planning mode for extra safety

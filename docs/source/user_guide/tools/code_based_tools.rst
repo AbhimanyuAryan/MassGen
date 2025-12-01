@@ -727,4 +727,4 @@ See Also
 * :doc:`custom_tools` - Creating custom Python tools
 * :doc:`mcp_integration` - MCP server setup and configuration
 * :doc:`code_execution` - Command-line execution modes
-* :doc:`file_operations` - File operation configuration
+* :doc:`../files/file_operations` - File operation configuration

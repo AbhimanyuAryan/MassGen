@@ -383,6 +383,6 @@ Use these techniques individually or combined to maximize the quality and breadt
 
 **Next Steps:**
 
-* :doc:`../reference/yaml_schema` - Complete configuration reference
-* :doc:`backends` - Backend capabilities matrix
-* :doc:`../examples/basic_examples` - Working examples
+* :doc:`../../reference/yaml_schema` - Complete configuration reference
+* :doc:`../backends` - Backend capabilities matrix
+* :doc:`../../examples/basic_examples` - Working examples

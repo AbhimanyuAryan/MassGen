@@ -344,7 +344,7 @@ Best Practices
 Next Steps
 ----------
 
-* :doc:`file_operations` - Learn about file operations in multi-turn sessions
-* :doc:`project_integration` - Work with your codebase across multiple turns
-* :doc:`mcp_integration` - Use MCP tools in interactive mode
-* :doc:`../quickstart/running-massgen` - More CLI examples
+* :doc:`../files/file_operations` - Learn about file operations in multi-turn sessions
+* :doc:`../files/project_integration` - Work with your codebase across multiple turns
+* :doc:`../tools/mcp_integration` - Use MCP tools in interactive mode
+* :doc:`../../quickstart/running-massgen` - More CLI examples

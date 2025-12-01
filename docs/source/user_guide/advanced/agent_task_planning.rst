@@ -97,4 +97,4 @@ See Also
 --------
 
 * :doc:`planning_mode` - Combine with planning mode for complex workflows
-* :doc:`mcp_integration` - Learn about other MCP tools
+* :doc:`../tools/mcp_integration` - Learn about other MCP tools

@@ -195,7 +195,7 @@ Orchestration Restart
 Planning mode works well with **orchestration restart** - a feature that automatically restarts coordination when answers are incomplete.
 
 .. seealso::
-   :doc:`orchestration_restart` - Complete guide to automatic quality checks, per-attempt logging, and self-correcting workflows
+   :doc:`../sessions/orchestration_restart` - Complete guide to automatic quality checks, per-attempt logging, and self-correcting workflows
 
 How Planning Mode Works
 ------------------------
@@ -450,7 +450,7 @@ Best Practices
 Next Steps
 ----------
 
-* :doc:`mcp_integration` - Learn about MCP tools that benefit from planning mode
-* :doc:`file_operations` - Understand filesystem operations in planning mode
-* :doc:`../reference/yaml_schema` - Complete configuration reference
-* :doc:`../examples/advanced_patterns` - Advanced planning mode patterns
+* :doc:`../tools/mcp_integration` - Learn about MCP tools that benefit from planning mode
+* :doc:`../files/file_operations` - Understand filesystem operations in planning mode
+* :doc:`../../reference/yaml_schema` - Complete configuration reference
+* :doc:`../../examples/advanced_patterns` - Advanced planning mode patterns

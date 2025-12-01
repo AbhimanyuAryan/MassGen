@@ -11,6 +11,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from .displays.base_display import BaseDisplay
+from .displays.none_display import NoneDisplay
 from .displays.rich_terminal_display import RichTerminalDisplay, is_rich_available
 from .displays.silent_display import SilentDisplay
 from .displays.simple_display import SimpleDisplay
@@ -349,6 +350,19 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass
 
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
+
     def reset(self):
         """Reset UI state for next coordination session."""
         # Clean up display if exists
@@ -412,6 +426,8 @@ class CoordinationUI:
                 self.display = SimpleDisplay(self.agent_ids, **self.config)
             elif self.display_type == "silent":
                 self.display = SilentDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "none":
+                self.display = NoneDisplay(self.agent_ids, **self.config)
             elif self.display_type == "rich_terminal":
                 if not is_rich_available():
                     print("⚠️  Rich library not available. Falling back to terminal display.")
@@ -752,13 +768,17 @@ class CoordinationUI:
             if self.display and is_finished:
                 self.display.cleanup()
 
-            # Don't print - display already showed this info
-            # if selected_agent:
-            #     print(f"✅ Selected by: {selected_agent}")
-            #     if vote_results.get("vote_counts"):
-            #         vote_summary = ", ".join([f"{agent}: {count}" for agent, count in vote_results["vote_counts"].items()])
-            #         print(f"🗳️ Vote results: {vote_summary}")
-            # print()
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
 
             if self.logger and is_finished:
                 session_info = self.logger.finalize_session(
@@ -815,6 +835,8 @@ class CoordinationUI:
                 self.display = SimpleDisplay(self.agent_ids, **self.config)
             elif self.display_type == "silent":
                 self.display = SilentDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "none":
+                self.display = NoneDisplay(self.agent_ids, **self.config)
             elif self.display_type == "rich_terminal":
                 if not is_rich_available():
                     print("⚠️  Rich library not available. Falling back to terminal display.")
@@ -1095,6 +1117,18 @@ class CoordinationUI:
             is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
             if self.display and is_finished:
                 self.display.cleanup()
+
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
 
     def _display_vote_results(self, vote_results: Dict[str, Any]):
         """Display voting results in a formatted table."""
