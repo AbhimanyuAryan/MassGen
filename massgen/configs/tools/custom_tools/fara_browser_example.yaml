@@ -1,0 +1,124 @@
+# MassGen Configuration: FARA Computer Use (Browser)
+#
+# This configuration uses Microsoft's FARA-7B (Florence Agent for Rich Automation)
+# vision-language model for browser automation tasks via Azure ML Endpoints.
+#
+# Model: FARA-7B
+# Provider: Microsoft via Azure Machine Learning
+# Based on: Florence foundation model
+#
+# Azure ML Endpoint Configuration:
+# Set FARA_AZURE_ENDPOINT and FARA_AZURE_API_KEY in your .env file
+# Authentication: Bearer token
+#
+# Usage (with visible browser):
+#   DISPLAY=:20 massgen --config fara_browser_example.yaml "Search for Python tutorials on Google"
+#
+# Usage (headless mode):
+#   Set headless: true in environment_config below
+
+# Agent Configuration
+agents:
+  - id: "fara_browser_agent"
+    backend:
+      type: "openai"  # Use simple backend for orchestration
+      model: "gpt-4.1"
+      custom_tools:
+        - name: ["fara_computer_use"]
+          category: "automation"
+          path: "massgen/tool/_fara_computer_use/fara_computer_use_tool.py"
+          function: ["fara_computer_use"]
+          description: >
+            Automate browser tasks using Microsoft's FARA-7B (Florence Agent for Rich Automation)
+            vision-language model via Azure ML. Analyzes screenshots, provides reasoning, and
+            generates actions. Supports clicking, typing, keyboard shortcuts, scrolling, dragging,
+            and complex multi-step workflows.
+          preset_args:
+            environment: "browser"
+            display_width: 1440
+            display_height: 900
+            max_iterations: 25
+            model: "fara-7b"
+            # azure_ml_endpoint loaded from FARA_AZURE_ENDPOINT env var
+            environment_config:
+              headless: false
+              browser_type: "chromium"
+    
+    system_message: |
+      You are an AI assistant with access to Microsoft's FARA-7B (Florence Agent for Rich
+      Automation) vision-language model for browser automation.
+
+      You have the fara_computer_use tool which allows you to automate browser tasks.
+      This tool uses FARA-7B model deployed on Azure ML to analyze screenshots and generate
+      actions to control the browser autonomously.
+
+      When users ask you to browse websites, search for information, fill forms, or interact
+      with web pages, use the fara_computer_use tool with a clear task description.
+
+      Example: fara_computer_use("Search Google for Python tutorials and summarize the first result")
+
+      The tool will complete the task and return results with reasoning for each step.
+
+display:
+  type: "rich_terminal"
+
+# Setup Instructions:
+# ====================
+#
+# 1. Add to your .env file in MassGen root directory:
+#    FARA_AZURE_API_KEY=your-azure-ml-api-key
+#    FARA_AZURE_ENDPOINT=https://your-endpoint.inference.ml.azure.com/score
+#
+# 2. Install required dependencies:
+#    pip install playwright python-dotenv
+#    playwright install chromium
+#
+# 3. Optional - Install httpx for async HTTP:
+#    pip install httpx
+#
+# 4. For visible browser mode:
+#    - Set DISPLAY environment variable (e.g., export DISPLAY=:20)
+#    - Or set headless: false in environment_config above
+#
+# 5. Get your Azure ML API key:
+#    - Go to Azure ML Studio
+#    - Navigate to your deployed FARA-7B endpoint
+#    - Copy the API key from the "Consume" tab
+#    - Add to .env file
+
+# Example Usage:
+# ==============
+#
+# Simple search:
+#   massgen --config fara_browser_example.yaml "Search for 'Python asyncio' on Google and summarize the first result"
+#
+# GitHub workflow:
+#   massgen --config fara_browser_example.yaml "Go to GitHub, search for 'fara-7b', and tell me about the project"
+#
+# Form filling:
+#   massgen --config fara_browser_example.yaml "Fill out the contact form on example.com with test data"
+#
+# Multi-step research:
+#   massgen --config fara_browser_example.yaml "Visit Wikipedia, search for 'Machine Learning', and summarize the introduction"
+#
+# With visible browser:
+#   DISPLAY=:20 massgen --config fara_browser_example.yaml "Browse to HackerNews and find top AI stories"
+
+# Cost Information:
+# =================
+# - Azure ML Endpoint: Pay-per-request pricing (varies by compute)
+# - Per task: Depends on number of iterations and compute SKU
+# - See Azure ML pricing for current rates
+
+# Available Actions:
+# ==================
+# - click(x, y): Left-click at coordinates
+# - double_click(x, y): Double-click at coordinates
+# - right_click(x, y): Right-click at coordinates
+# - type(text): Type text
+# - key(key): Press keyboard key
+# - scroll(direction, amount): Scroll in direction
+# - drag(start_x, start_y, end_x, end_y): Drag operation
+# - wait(seconds): Wait for duration
+# - done(result): Mark task complete
+# - fail(reason): Mark task failed
