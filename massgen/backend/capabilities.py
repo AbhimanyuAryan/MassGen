@@ -469,10 +469,23 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         },
         builtin_tools=[],
         filesystem_support="mcp",
-        models=["qwen-max", "qwen-plus", "qwen-turbo", "qwen3-vl-30b-a3b-thinking"],
+        models=["qwen-max", "qwen-plus", "qwen-turbo", "qwen3-vl-30b-a3b-thinking", "qwen3-vl-235b-a22b-thinking"],
         default_model="qwen-max",
         env_var="QWEN_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://dashscope-intl.aliyuncs.com/compatible-mode/v1. Qwen models from Alibaba Cloud. Audio/video understanding support (v0.0.30+).",
+        notes="OpenAI-compatible API. Base URL: https://dashscope-intl.aliyuncs.com/compatible-mode/v1. Qwen models from Alibaba Cloud. Audio/video understanding support (v0.0.30+). Computer use support with qwen3-vl-235b-a22b-thinking.",
+    ),
+    "uitars": BackendCapabilities(
+        backend_type="uitars",
+        provider_name="UI-TARS (ByteDance)",
+        supported_capabilities={
+            "image_understanding",
+        },
+        builtin_tools=[],
+        filesystem_support="none",
+        models=["ui-tars-1.5"],
+        default_model="ui-tars-1.5",
+        env_var="UI_TARS_API_KEY",
+        notes="OpenAI-compatible API via HuggingFace Inference Endpoints. UI-TARS-1.5-7B model for GUI automation with vision and reasoning. Requires UI_TARS_ENDPOINT environment variable. Computer use support for browser and Linux desktop automation.",
     ),
 }
 
