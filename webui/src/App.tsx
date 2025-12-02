@@ -19,6 +19,8 @@ import { AnswerBrowserModal } from './components/AnswerBrowserModal';
 import { FinalAnswerView } from './components/FinalAnswerView';
 import { QuickstartWizard } from './components/QuickstartWizard';
 import { NotificationToast } from './components/NotificationToast';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import type { Notification } from './stores/notificationStore';
 
 function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
@@ -83,12 +85,39 @@ export function App() {
 
   // Answer/Vote browser modal state
   const [isAnswerBrowserOpen, setIsAnswerBrowserOpen] = useState(false);
-  const [browserInitialTab, setBrowserInitialTab] = useState<'answers' | 'votes' | 'workspace'>('answers');
+  const [browserInitialTab, setBrowserInitialTab] = useState<'answers' | 'votes' | 'workspace' | 'timeline'>('answers');
+
+  // Keyboard shortcuts modal state
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
 
   // Config viewer modal state
   const [isConfigViewerOpen, setIsConfigViewerOpen] = useState(false);
   const [configContent, setConfigContent] = useState<string>('');
   const [configLoading, setConfigLoading] = useState(false);
+
+  // Keyboard shortcuts hook
+  const { shortcuts } = useKeyboardShortcuts({
+    onOpenAnswerBrowser: useCallback(() => {
+      setBrowserInitialTab('answers');
+      setIsAnswerBrowserOpen(true);
+    }, []),
+    onOpenVoteBrowser: useCallback(() => {
+      setBrowserInitialTab('votes');
+      setIsAnswerBrowserOpen(true);
+    }, []),
+    onOpenWorkspaceBrowser: useCallback(() => {
+      setBrowserInitialTab('workspace');
+      setIsAnswerBrowserOpen(true);
+    }, []),
+    onOpenTimeline: useCallback(() => {
+      setBrowserInitialTab('timeline');
+      setIsAnswerBrowserOpen(true);
+    }, []),
+    onOpenShortcutsHelp: useCallback(() => {
+      setIsShortcutsModalOpen(true);
+    }, []),
+    enabled: !isAnswerBrowserOpen && !isShortcutsModalOpen && !isConfigViewerOpen,
+  });
 
   const { status, startCoordination, continueConversation, cancelCoordination, error } = useWebSocket({
     sessionId,
@@ -559,6 +588,13 @@ export function App() {
 
       {/* Notification Toast (bottom-right) */}
       <NotificationToast onNotificationClick={handleNotificationClick} />
+
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+        shortcuts={shortcuts}
+      />
     </div>
   );
 }

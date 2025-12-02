@@ -296,3 +296,44 @@ export interface SessionInfo {
   is_running: boolean;
   question?: string;
 }
+
+// ============================================================================
+// Timeline Types (for Answer Timeline visualization)
+// ============================================================================
+
+// Timeline node types
+export type TimelineNodeType = 'answer' | 'vote' | 'final';
+
+// A single node on the timeline
+export interface TimelineNode {
+  id: string;
+  type: TimelineNodeType;
+  agentId: string;
+  label: string;           // e.g., "answer1.1", "vote1.1", "final"
+  timestamp: number;
+  round: number;
+  contextSources: string[];  // Labels of answers used as context
+  votedFor?: string;         // For vote nodes: which agent was voted for
+}
+
+// Timeline data for visualization
+export interface TimelineData {
+  nodes: TimelineNode[];
+  agents: string[];
+  startTime: number;
+  endTime?: number;
+}
+
+// ============================================================================
+// File Viewer Types (for Workspace File Viewer)
+// ============================================================================
+
+// Response from /api/workspace/file endpoint
+export interface FileContentResponse {
+  content: string;
+  binary: boolean;
+  size: number;
+  mimeType: string;
+  language: string;  // For syntax highlighting (e.g., "python", "typescript")
+  error?: string;
+}

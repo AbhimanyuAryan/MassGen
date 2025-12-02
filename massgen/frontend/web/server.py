@@ -8,6 +8,7 @@ and serves the React frontend.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
@@ -685,6 +686,270 @@ def create_app(config_path: Optional[str] = None) -> "FastAPI":
                 )
 
         return {"workspaces": workspaces, "current": current}
+
+    @app.get("/api/workspace/file")
+    async def get_file_content(path: str, workspace: str):
+        """Get the content of a specific file from a workspace.
+
+        Args:
+            path: Relative path to file within workspace
+            workspace: Absolute path to workspace directory
+
+        Returns:
+            {
+                "content": str,           # File content (text files)
+                "binary": bool,           # True if binary file
+                "size": int,              # File size in bytes
+                "mimeType": str,          # Detected MIME type
+                "language": str,          # Programming language for syntax highlighting
+            }
+        """
+        import mimetypes
+
+        workspace_path = Path(workspace).resolve()
+        file_path = (workspace_path / path).resolve()
+
+        # Security: Ensure file is within workspace (prevent directory traversal)
+        try:
+            file_path.relative_to(workspace_path)
+        except ValueError:
+            return JSONResponse(
+                {"error": "Access denied: path outside workspace"},
+                status_code=403,
+            )
+
+        if not file_path.exists():
+            return JSONResponse(
+                {"error": "File not found"},
+                status_code=404,
+            )
+
+        if not file_path.is_file():
+            return JSONResponse(
+                {"error": "Path is not a file"},
+                status_code=400,
+            )
+
+        # Get file stats
+        stat = file_path.stat()
+        size = stat.st_size
+
+        # Detect MIME type
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        mime_type = mime_type or "application/octet-stream"
+
+        # Map extensions to syntax highlighting languages
+        extension_to_language = {
+            ".py": "python",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".json": "json",
+            ".yaml": "yaml",
+            ".yml": "yaml",
+            ".md": "markdown",
+            ".html": "html",
+            ".htm": "html",
+            ".css": "css",
+            ".scss": "scss",
+            ".less": "less",
+            ".sh": "bash",
+            ".bash": "bash",
+            ".zsh": "bash",
+            ".sql": "sql",
+            ".rs": "rust",
+            ".go": "go",
+            ".java": "java",
+            ".c": "c",
+            ".cpp": "cpp",
+            ".h": "c",
+            ".hpp": "cpp",
+            ".rb": "ruby",
+            ".php": "php",
+            ".swift": "swift",
+            ".kt": "kotlin",
+            ".scala": "scala",
+            ".r": "r",
+            ".R": "r",
+            ".lua": "lua",
+            ".pl": "perl",
+            ".xml": "xml",
+            ".toml": "toml",
+            ".ini": "ini",
+            ".cfg": "ini",
+            ".conf": "ini",
+            ".dockerfile": "dockerfile",
+            ".gitignore": "gitignore",
+            ".env": "dotenv",
+            ".txt": "plaintext",
+            ".log": "plaintext",
+        }
+
+        suffix = file_path.suffix.lower()
+        language = extension_to_language.get(suffix, "plaintext")
+
+        # Special case for Dockerfile without extension
+        if file_path.name.lower() == "dockerfile":
+            language = "dockerfile"
+
+        # Check if binary by reading first chunk
+        try:
+            with open(file_path, "rb") as f:
+                chunk = f.read(8192)
+
+            # Check for null bytes (binary indicator)
+            is_binary = b"\x00" in chunk
+
+            if is_binary:
+                return {
+                    "content": "",
+                    "binary": True,
+                    "size": size,
+                    "mimeType": mime_type,
+                    "language": language,
+                }
+
+            # Read full content for text files (limit to 1MB)
+            max_size = 1024 * 1024  # 1MB
+            if size > max_size:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read(max_size)
+                content += f"\n\n... (truncated, file is {size} bytes)"
+            else:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+
+            return {
+                "content": content,
+                "binary": False,
+                "size": size,
+                "mimeType": mime_type,
+                "language": language,
+            }
+
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to read file: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.get("/api/sessions/{session_id}/timeline")
+    async def get_session_timeline(session_id: str):
+        """Get coordination timeline data for visualization.
+
+        Returns timeline nodes representing answers, votes, and final answer
+        with their context sources (which answers they saw).
+        """
+        display = manager.get_display(session_id)
+        if display is None:
+            return JSONResponse(
+                {"error": "Session not found"},
+                status_code=404,
+            )
+
+        # Get agents from display
+        agent_ids = display.agent_ids if display else []
+
+        # Build timeline from display's tracked events
+        nodes = []
+
+        # Get timeline data from display if available
+        timeline_events = getattr(display, "_timeline_events", [])
+
+        for event in timeline_events:
+            node = {
+                "id": event.get("id", ""),
+                "type": event.get("type", "answer"),
+                "agentId": event.get("agent_id", ""),
+                "label": event.get("label", ""),
+                "timestamp": event.get("timestamp", 0),
+                "round": event.get("round", 1),
+                "contextSources": event.get("context_sources", []),
+                "votedFor": event.get("voted_for"),
+            }
+            nodes.append(node)
+
+        # If no timeline events tracked yet, build from current state
+        if not nodes and display:
+            # Reconstruct from display state
+            state = display.get_state_snapshot()
+            now = int(time.time() * 1000)  # Current time in ms
+
+            # Build nodes from agent_outputs (each agent with output = submitted answer)
+            agent_outputs = state.get("agent_outputs", {})
+            for agent_id, outputs in agent_outputs.items():
+                if not outputs:
+                    continue
+
+                agent_index = agent_ids.index(agent_id) + 1 if agent_id in agent_ids else 0
+
+                # Each agent that has outputs submitted an answer
+                nodes.append(
+                    {
+                        "id": f"{agent_id}-answer-1",
+                        "type": "answer",
+                        "agentId": agent_id,
+                        "label": f"answer{agent_index}.1",
+                        "timestamp": now - (len(agent_ids) - agent_index) * 1000,  # Stagger timestamps
+                        "round": 1,
+                        "contextSources": [],  # Not tracked in basic state
+                        "votedFor": None,
+                    },
+                )
+
+            # Build nodes from vote_targets (voter_id -> target_id)
+            vote_targets = state.get("vote_targets", {})
+            for voter_id, target_id in vote_targets.items():
+                voter_index = agent_ids.index(voter_id) + 1 if voter_id in agent_ids else 0
+
+                # Context sources: each vote saw all the answers
+                context_sources = [f"{aid}-answer-1" for aid in agent_ids if aid in agent_outputs and agent_outputs[aid]]
+
+                nodes.append(
+                    {
+                        "id": f"{voter_id}-vote",
+                        "type": "vote",
+                        "agentId": voter_id,
+                        "label": f"vote{voter_index}.1",
+                        "timestamp": now - 500 + voter_index * 100,  # Stagger vote timestamps
+                        "round": 1,
+                        "contextSources": context_sources,
+                        "votedFor": target_id,
+                    },
+                )
+
+            # Add final answer node if we have a winner
+            selected_agent = state.get("selected_agent")
+            if selected_agent:
+                agent_index = agent_ids.index(selected_agent) + 1 if selected_agent in agent_ids else 0
+                nodes.append(
+                    {
+                        "id": f"{selected_agent}-final",
+                        "type": "final",
+                        "agentId": selected_agent,
+                        "label": "final",
+                        "timestamp": now,
+                        "round": 1,
+                        "contextSources": [],
+                        "votedFor": None,
+                    },
+                )
+
+        # Sort by timestamp
+        nodes.sort(key=lambda x: x.get("timestamp", 0))
+
+        # Calculate start/end times
+        timestamps = [n.get("timestamp", 0) for n in nodes if n.get("timestamp")]
+        start_time = min(timestamps) if timestamps else 0
+        end_time = max(timestamps) if timestamps else None
+
+        return {
+            "nodes": nodes,
+            "agents": agent_ids,
+            "startTime": start_time,
+            "endTime": end_time,
+        }
 
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str):

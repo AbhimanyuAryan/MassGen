@@ -1954,6 +1954,20 @@ Your answer:"""
                                         content=result_data,
                                         answer_number=answer_number,
                                     )
+                                # Record answer with context for timeline visualization
+                                if display and hasattr(display, "record_answer_with_context"):
+                                    agent_answers = self.coordination_tracker.answers_by_agent.get(agent_id, [])
+                                    answer_number = len(agent_answers)
+                                    agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                                    # Use same label format as coordination_tracker: "agent1.1"
+                                    answer_label = f"agent{agent_num}.{answer_number}"
+                                    context_sources = self.coordination_tracker.get_agent_context_labels(agent_id)
+                                    display.record_answer_with_context(
+                                        agent_id=agent_id,
+                                        answer_label=answer_label,
+                                        context_sources=context_sources,
+                                        round_num=answer_number,
+                                    )
                             # Update status file for real-time monitoring
                             log_session_dir = get_log_session_dir()
                             if log_session_dir:
@@ -2035,6 +2049,18 @@ Your answer:"""
                                             voter_id=agent_id,
                                             target_id=result_data.get("agent_id", ""),
                                             reason=result_data.get("reason", ""),
+                                        )
+                                    # Record vote with context for timeline visualization
+                                    if display and hasattr(display, "record_vote_with_context"):
+                                        agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                                        # Use format like "agent1.vote1"
+                                        vote_label = f"agent{agent_num}.vote1"
+                                        available_answers = self.coordination_tracker.iteration_available_labels.copy()
+                                        display.record_vote_with_context(
+                                            voter_id=agent_id,
+                                            vote_label=vote_label,
+                                            voted_for=result_data.get("agent_id", ""),
+                                            available_answers=available_answers,
                                         )
                                 # Update status file for real-time monitoring
                                 log_session_dir = get_log_session_dir()

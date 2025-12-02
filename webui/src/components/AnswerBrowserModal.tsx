@@ -7,9 +7,11 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight } from 'lucide-react';
+import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch } from 'lucide-react';
 import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
 import type { Answer, AnswerWorkspace } from '../types';
+import { FileViewerModal } from './FileViewerModal';
+import { TimelineView } from './timeline';
 
 // Types for workspace API responses
 interface WorkspaceInfo {
@@ -53,7 +55,7 @@ interface AnswerBrowserModalProps {
   initialTab?: TabType;
 }
 
-type TabType = 'answers' | 'votes' | 'workspace';
+type TabType = 'answers' | 'votes' | 'workspace' | 'timeline';
 
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
@@ -121,6 +123,7 @@ function buildFileTree(files: FileInfo[]): FileTreeNode[] {
 interface FileNodeProps {
   node: FileTreeNode;
   depth: number;
+  onFileClick?: (filePath: string) => void;
 }
 
 // Format file size for display
@@ -130,8 +133,16 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function FileNode({ node, depth }: FileNodeProps) {
+function FileNode({ node, depth, onFileClick }: FileNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+
+  const handleClick = () => {
+    if (node.isDirectory) {
+      setIsExpanded(!isExpanded);
+    } else if (onFileClick) {
+      onFileClick(node.path);
+    }
+  };
 
   return (
     <div>
@@ -141,9 +152,10 @@ function FileNode({ node, depth }: FileNodeProps) {
         className={`
           flex items-center gap-1 py-1 px-2 hover:bg-gray-700/30 dark:hover:bg-gray-700/30 rounded cursor-pointer
           text-sm text-gray-700 dark:text-gray-300
+          ${!node.isDirectory && onFileClick ? 'hover:bg-blue-900/30' : ''}
         `}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
-        onClick={() => node.isDirectory && setIsExpanded(!isExpanded)}
+        onClick={handleClick}
       >
         {node.isDirectory ? (
           isExpanded ? (
@@ -169,6 +181,11 @@ function FileNode({ node, depth }: FileNodeProps) {
             {formatFileSize(node.size)}
           </span>
         )}
+
+        {/* View icon for files */}
+        {!node.isDirectory && onFileClick && (
+          <Eye className="w-3.5 h-3.5 text-gray-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+        )}
       </motion.div>
 
       <AnimatePresence>
@@ -180,7 +197,7 @@ function FileNode({ node, depth }: FileNodeProps) {
             transition={{ duration: 0.2 }}
           >
             {node.children.map((child) => (
-              <FileNode key={child.path} node={child} depth={depth + 1} />
+              <FileNode key={child.path} node={child} depth={depth + 1} onFileClick={onFileClick} />
             ))}
           </motion.div>
         )}
@@ -226,6 +243,16 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   // Answer-linked workspace state
   const [answerWorkspaces, setAnswerWorkspaces] = useState<AnswerWorkspace[]>([]);
   const [selectedAnswerLabel, setSelectedAnswerLabel] = useState<string>('current');
+
+  // File viewer modal state
+  const [fileViewerOpen, setFileViewerOpen] = useState(false);
+  const [selectedFilePath, setSelectedFilePath] = useState<string>('');
+
+  // Handle file click from workspace browser
+  const handleFileClick = useCallback((filePath: string) => {
+    setSelectedFilePath(filePath);
+    setFileViewerOpen(true);
+  }, []);
 
   // Fetch available workspaces from API
   const fetchWorkspaces = useCallback(async () => {
@@ -511,6 +538,17 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   {totalWorkspaces}
                 </span>
               </button>
+              <button
+                onClick={() => setActiveTab('timeline')}
+                className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors border-b-2 ${
+                  activeTab === 'timeline'
+                    ? 'border-green-500 text-green-400'
+                    : 'border-transparent text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <GitBranch className="w-4 h-4" />
+                Timeline
+              </button>
             </div>
 
             {/* Tab Content */}
@@ -747,7 +785,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </div>
                 </div>
               </>
-            ) : (
+            ) : activeTab === 'workspace' ? (
               <>
                 {/* Per-Agent Workspace Selector Bar */}
                 <div className="px-6 py-3 border-b border-gray-700 bg-gray-800/50 flex items-center gap-4 flex-wrap">
@@ -876,7 +914,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                         )}
                       </div>
                       {fileTree.map((node) => (
-                        <FileNode key={node.path} node={node} depth={0} />
+                        <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
                       ))}
                     </div>
                   )}
@@ -894,7 +932,11 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </div>
                 )}
               </>
-            )}
+            ) : activeTab === 'timeline' ? (
+              <div className="flex-1 overflow-hidden">
+                <TimelineView />
+              </div>
+            ) : null}
 
             {/* Footer with stats */}
             <div className="px-6 py-3 border-t border-gray-700 bg-gray-900/50 flex items-center justify-between text-sm">
@@ -912,6 +954,14 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
           </motion.div>
         </>
       )}
+
+      {/* File Viewer Modal */}
+      <FileViewerModal
+        isOpen={fileViewerOpen}
+        onClose={() => setFileViewerOpen(false)}
+        filePath={selectedFilePath}
+        workspacePath={activeWorkspace?.path || ''}
+      />
     </AnimatePresence>
   );
 }

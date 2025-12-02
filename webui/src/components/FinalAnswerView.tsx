@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2 } from 'lucide-react';
 import { useAgentStore, selectSelectedAgent, selectAgents, selectResolvedFinalAnswer, selectAgentOrder } from '../stores/agentStore';
 import type { AnswerWorkspace } from '../types';
+import { FileViewerModal } from './FileViewerModal';
 
 // Types for workspace API responses
 interface WorkspaceInfo {
@@ -112,10 +113,19 @@ function buildFileTree(files: FileInfo[]): FileTreeNode[] {
 interface FileNodeProps {
   node: FileTreeNode;
   depth: number;
+  onFileClick?: (filePath: string) => void;
 }
 
-function FileNode({ node, depth }: FileNodeProps) {
+function FileNode({ node, depth, onFileClick }: FileNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+
+  const handleClick = () => {
+    if (node.isDirectory) {
+      setIsExpanded(!isExpanded);
+    } else if (onFileClick) {
+      onFileClick(node.path);
+    }
+  };
 
   return (
     <div>
@@ -125,9 +135,10 @@ function FileNode({ node, depth }: FileNodeProps) {
         className={`
           flex items-center gap-1 py-1.5 px-2 hover:bg-gray-100 dark:hover:bg-gray-700/30 rounded cursor-pointer
           text-sm text-gray-700 dark:text-gray-300
+          ${!node.isDirectory && onFileClick ? 'hover:bg-blue-100 dark:hover:bg-blue-900/30' : ''}
         `}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
-        onClick={() => node.isDirectory && setIsExpanded(!isExpanded)}
+        onClick={handleClick}
       >
         {node.isDirectory ? (
           isExpanded ? (
@@ -163,7 +174,7 @@ function FileNode({ node, depth }: FileNodeProps) {
             transition={{ duration: 0.2 }}
           >
             {node.children.map((child) => (
-              <FileNode key={child.path} node={child} depth={depth + 1} />
+              <FileNode key={child.path} node={child} depth={depth + 1} onFileClick={onFileClick} />
             ))}
           </motion.div>
         )}
@@ -200,6 +211,16 @@ export function FinalAnswerView({ onBackToAgents }: FinalAnswerViewProps) {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [answerWorkspaces, setAnswerWorkspaces] = useState<AnswerWorkspace[]>([]);
   const [selectedAnswerLabel, setSelectedAnswerLabel] = useState<string>('current');
+
+  // File viewer modal state
+  const [fileViewerOpen, setFileViewerOpen] = useState(false);
+  const [selectedFilePath, setSelectedFilePath] = useState<string>('');
+
+  // Handle file click from workspace browser
+  const handleFileClick = useCallback((filePath: string) => {
+    setSelectedFilePath(filePath);
+    setFileViewerOpen(true);
+  }, []);
 
   // Fetch workspaces
   const fetchWorkspaces = useCallback(async () => {
@@ -487,7 +508,7 @@ export function FinalAnswerView({ onBackToAgents }: FinalAnswerViewProps) {
                         <span>{workspaceFiles.length} files</span>
                       </div>
                       {fileTree.map((node) => (
-                        <FileNode key={node.path} node={node} depth={0} />
+                        <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
                       ))}
                     </div>
                   )}
@@ -497,6 +518,14 @@ export function FinalAnswerView({ onBackToAgents }: FinalAnswerViewProps) {
           )}
         </AnimatePresence>
       </main>
+
+      {/* File Viewer Modal */}
+      <FileViewerModal
+        isOpen={fileViewerOpen}
+        onClose={() => setFileViewerOpen(false)}
+        filePath={selectedFilePath}
+        workspacePath={winnerWorkspace?.path || ''}
+      />
     </motion.div>
   );
 }

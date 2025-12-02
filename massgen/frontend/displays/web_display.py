@@ -57,6 +57,9 @@ class WebDisplay(BaseDisplay):
         self._selected_agent: Optional[str] = None
         self._final_answer: Optional[str] = None
 
+        # Timeline events for visualization (answers, votes, final with context sources)
+        self._timeline_events: List[Dict[str, Any]] = []
+
         # Track file workspace changes per agent
         self._agent_files: Dict[str, List[Dict[str, Any]]] = {agent_id: [] for agent_id in agent_ids}
 
@@ -339,6 +342,15 @@ class WebDisplay(BaseDisplay):
                 },
             )
 
+        # Record final answer for timeline visualization
+        # Get context sources from iteration_available_labels (all answers used as input)
+        if selected_agent:
+            context_sources = []
+            if self.orchestrator and hasattr(self.orchestrator, "coordination_tracker"):
+                tracker = self.orchestrator.coordination_tracker
+                context_sources = tracker.iteration_available_labels.copy()
+            self.record_final_with_context(selected_agent, context_sources)
+
     def show_post_evaluation_content(self, content: str, agent_id: str) -> None:
         """Display post-evaluation streaming content.
 
@@ -437,6 +449,88 @@ class WebDisplay(BaseDisplay):
                 "voter_id": voter_id,
                 "target_id": target_id,
                 "reason": reason,
+            },
+        )
+
+    # =========================================================================
+    # Timeline Event Recording (for visualization)
+    # =========================================================================
+
+    def record_answer_with_context(
+        self,
+        agent_id: str,
+        answer_label: str,
+        context_sources: List[str],
+        round_num: int,
+    ) -> None:
+        """Record an answer node with its context sources for timeline visualization.
+
+        Args:
+            agent_id: Agent who submitted the answer
+            answer_label: Label like "answer1.1"
+            context_sources: List of answer labels this agent saw (e.g., ["answer2.1"])
+            round_num: Round number for this answer
+        """
+        self._timeline_events.append(
+            {
+                "id": f"{agent_id}-answer-{round_num}",
+                "type": "answer",
+                "agent_id": agent_id,
+                "label": answer_label,
+                "timestamp": time.time() * 1000,
+                "round": round_num,
+                "context_sources": context_sources,
+            },
+        )
+
+    def record_vote_with_context(
+        self,
+        voter_id: str,
+        vote_label: str,
+        voted_for: str,
+        available_answers: List[str],
+    ) -> None:
+        """Record a vote node with its available answers for timeline visualization.
+
+        Args:
+            voter_id: Agent who cast the vote
+            vote_label: Label like "vote1.1"
+            voted_for: Agent ID who received the vote
+            available_answers: List of answer labels voter could see
+        """
+        self._timeline_events.append(
+            {
+                "id": f"{voter_id}-vote",
+                "type": "vote",
+                "agent_id": voter_id,
+                "label": vote_label,
+                "timestamp": time.time() * 1000,
+                "round": 1,
+                "context_sources": available_answers,
+                "voted_for": voted_for,
+            },
+        )
+
+    def record_final_with_context(
+        self,
+        agent_id: str,
+        context_sources: List[str],
+    ) -> None:
+        """Record a final answer node with its context sources for timeline visualization.
+
+        Args:
+            agent_id: Winning agent who generated the final answer
+            context_sources: List of answer labels used as input for final answer
+        """
+        self._timeline_events.append(
+            {
+                "id": f"{agent_id}-final",
+                "type": "final",
+                "agent_id": agent_id,
+                "label": "final",
+                "timestamp": time.time() * 1000,
+                "round": 1,
+                "context_sources": context_sources,
             },
         )
 
