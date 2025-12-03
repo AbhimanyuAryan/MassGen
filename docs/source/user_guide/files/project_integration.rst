@@ -15,7 +15,7 @@ Quick Start
 
    # Run from your project directory - MassGen will offer to add it as context
    cd /path/to/your-project
-   uv tool run massgen "Enhance the website with dark/light theme toggle and interactive features"
+   uv run massgen "Enhance the website with dark/light theme toggle and interactive features"
 
 **Using explicit config** (for predefined setups):
 
@@ -291,7 +291,7 @@ Agents analyze your source code and suggest improvements:
 
    # Run from project directory - recommended for coding
    cd /home/user/project
-   uv tool run massgen "Review the authentication module for security issues and best practices"
+   uv run massgen "Review the authentication module for security issues and best practices"
 
    # Or with explicit config
    massgen \
@@ -319,7 +319,7 @@ Agents read project code to understand context and generate/update documentation
 
    # Run from project directory - recommended for coding
    cd /home/user/project
-   uv tool run massgen "Update the API documentation to reflect recent changes in the auth module"
+   uv run massgen "Update the API documentation to reflect recent changes in the auth module"
 
    # Or with explicit config
    massgen \
@@ -347,7 +347,7 @@ Agents access shared datasets and generate analysis reports:
 
    # Run from project directory - recommended
    cd /home/user
-   uv tool run massgen "Analyze the Q4 sales data and create a comprehensive report with visualizations"
+   uv run massgen "Analyze the Q4 sales data and create a comprehensive report with visualizations"
 
    # Or with explicit config
    massgen \
@@ -375,7 +375,7 @@ Agents examine existing projects and create modernized versions:
 
    # Run from project directory - recommended for coding
    cd /home/user/old-project
-   uv tool run massgen "Migrate the Flask 1.x application to Flask 3.x with modern best practices"
+   uv run massgen "Migrate the Flask 1.x application to Flask 3.x with modern best practices"
 
    # Or with explicit config
    massgen \
@@ -700,7 +700,7 @@ Next Steps
 ----------
 
 * :doc:`file_operations` - Learn more about workspace management and file operation safety
-* :doc:`mcp_integration` - Additional tools for project work
-* :doc:`planning_mode` - Combine with planning mode for safer coordination
-* :doc:`multi_turn_mode` - Iterative project development across turns
-* :doc:`../quickstart/running-massgen` - More examples
+* :doc:`../tools/mcp_integration` - Additional tools for project work
+* :doc:`../advanced/planning_mode` - Combine with planning mode for safer coordination
+* :doc:`../sessions/multi_turn_mode` - Iterative project development across turns
+* :doc:`../../quickstart/running-massgen` - More examples

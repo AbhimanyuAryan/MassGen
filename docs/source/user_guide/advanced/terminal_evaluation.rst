@@ -437,9 +437,9 @@ See Also
 --------
 
 * :doc:`multimodal` - Other multimodal tools (understand_video, understand_image, understand_audio)
-* :doc:`custom_tools` - Creating custom tools for your domain
-* :doc:`automation` - Running MassGen in automation mode for backend testing
-* :doc:`../development/writing_configs` - Best practices for config development
+* :doc:`../tools/custom_tools` - Creating custom tools for your domain
+* :doc:`../integration/automation` - Running MassGen in automation mode for backend testing
+* :doc:`../../development/writing_configs` - Best practices for config development
 * Case Study Template: ``docs/case_studies/case-study-template.md``
 
 External Resources

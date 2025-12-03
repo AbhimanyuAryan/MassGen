@@ -831,10 +831,10 @@ Next Steps
 
 * **Related Guides:**
 
-  * :doc:`custom_tools` - Learn about creating custom tools
+  * :doc:`../tools/custom_tools` - Learn about creating custom tools
   * :doc:`multimodal` - Multimodal capabilities
-  * :doc:`mcp_integration` - External tools via MCP
-  * :doc:`../reference/yaml_schema` - Complete YAML reference
+  * :doc:`../tools/mcp_integration` - External tools via MCP
+  * :doc:`../../reference/yaml_schema` - Complete YAML reference
 
 * **Configuration Examples:**
 

@@ -1068,10 +1068,10 @@ See ``massgen/configs/tools/code-execution/`` for example configurations:
 Next Steps
 ----------
 
-* :doc:`file_operations` - File system operations and workspace management
+* :doc:`../files/file_operations` - File system operations and workspace management
 * :doc:`mcp_integration` - Additional MCP tools beyond code execution
-* :doc:`../reference/supported_models` - Backend capabilities including code execution
-* :doc:`../quickstart/running-massgen` - More usage examples
+* :doc:`../../reference/supported_models` - Backend capabilities including code execution
+* :doc:`../../quickstart/running-massgen` - More usage examples
 
 References
 ----------

@@ -6,13 +6,13 @@ MassGen provides comprehensive file system support, enabling agents to read, wri
 Quick Start
 -----------
 
-**Single agent with file operations (using uv tool - recommended for coding):**
+**Single agent with file operations:**
 
 .. code-block:: bash
 
    # Run from your project directory
    cd /path/to/your-project
-   uv tool run massgen "Create a Python web scraper and save results to CSV"
+   uv run massgen "Create a Python web scraper and save results to CSV"
 
 **Or with explicit config:**
 
@@ -516,21 +516,15 @@ Example: Multi-Agent Document Processing
 Advanced Topics
 ---------------
 
-.. toctree::
-   :maxdepth: 1
-
-   project_integration
-   code_execution
-
 The sections above cover basic file operations and workspace management. For advanced features, see:
 
 * :doc:`project_integration` - Work with your existing codebase using context paths with file-level and directory-level access control, plus protected paths for fine-grained permission control
-* :doc:`code_execution` - Execute bash commands and scripts with MCP-based code execution, supporting both local and Docker isolation modes
+* :doc:`../tools/code_execution` - Execute bash commands and scripts with MCP-based code execution, supporting both local and Docker isolation modes
 
 Next Steps
 ----------
 
-* :doc:`code_execution` - Execute commands and scripts with local or Docker isolation
-* :doc:`mcp_integration` - Additional MCP tools beyond filesystem
-* :doc:`multi_turn_mode` - File operations across multiple conversation turns
-* :doc:`../quickstart/running-massgen` - More examples
+* :doc:`../tools/code_execution` - Execute commands and scripts with local or Docker isolation
+* :doc:`../tools/mcp_integration` - Additional MCP tools beyond filesystem
+* :doc:`../sessions/multi_turn_mode` - File operations across multiple conversation turns
+* :doc:`../../quickstart/running-massgen` - More examples

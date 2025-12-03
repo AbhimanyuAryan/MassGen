@@ -1376,7 +1376,7 @@ class FilesystemManager:
                     items_copied = 0
                     for item in source_path.iterdir():
                         if item.is_symlink():
-                            logger.warning(f"[FilesystemManager.save_snapshot] Skipping symlink: {item}")
+                            logger.debug(f"[FilesystemManager.save_snapshot] Skipping symlink: {item}")
                             continue
                         if item.is_file():
                             shutil.copy2(item, self.snapshot_storage / item.name)
@@ -1405,7 +1405,7 @@ class FilesystemManager:
                 items_copied = 0
                 for item in source_path.iterdir():
                     if item.is_symlink():
-                        logger.warning(f"[FilesystemManager.save_snapshot] Skipping symlink: {item}")
+                        logger.debug(f"[FilesystemManager.save_snapshot] Skipping symlink: {item}")
                         continue
                     if item.is_file():
                         shutil.copy2(item, dest_dir / item.name)
@@ -1446,7 +1446,7 @@ class FilesystemManager:
             for item in items_to_clear:
                 logger.info(f" - {item}")
                 if item.is_symlink():
-                    logger.warning(f"[FilesystemManager] Skipping symlink during clear: {item}")
+                    logger.debug(f"[FilesystemManager] Skipping symlink during clear: {item}")
                     continue
                 if item.is_file():
                     item.unlink()
@@ -1486,7 +1486,7 @@ class FilesystemManager:
             for item in items_to_clear:
                 logger.info(f" - Removing temp workspace item: {item}")
                 if item.is_symlink():
-                    logger.warning(f"[FilesystemManager] Skipping symlink during temp clear: {item}")
+                    logger.debug(f"[FilesystemManager] Skipping symlink during temp clear: {item}")
                     continue
                 if item.is_file():
                     item.unlink()

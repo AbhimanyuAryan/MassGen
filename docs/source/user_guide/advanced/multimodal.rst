@@ -798,7 +798,7 @@ Supported Backends
   * ``OPENAI_API_KEY`` must be set in your ``.env`` file for the understanding tools to function
   * The agent's backend type can be anything supported - only the custom tools need OpenAI API access
 
-See :doc:`custom_tools` for complete details on custom tool support by backend, and :doc:`backends` for all backend capabilities including web search, code execution, and MCP support.
+See :doc:`../tools/custom_tools` for complete details on custom tool support by backend, and :doc:`../backends` for all backend capabilities including web search, code execution, and MCP support.
 
 Configuration Examples
 ----------------------
@@ -1091,8 +1091,8 @@ Use Cases
 Next Steps
 ----------
 
-* :doc:`backends` - Backend-specific multimodal capabilities
-* :doc:`file_operations` - Workspace and file management
-* :doc:`tools` - Custom tools configuration and usage
-* :doc:`../examples/advanced_patterns` - Advanced multimodal patterns
-* :doc:`../reference/yaml_schema` - Complete configuration reference
+* :doc:`../backends` - Backend-specific multimodal capabilities
+* :doc:`../files/file_operations` - Workspace and file management
+* :doc:`../tools/index` - Custom tools configuration and usage
+* :doc:`../../examples/advanced_patterns` - Advanced multimodal patterns
+* :doc:`../../reference/yaml_schema` - Complete configuration reference

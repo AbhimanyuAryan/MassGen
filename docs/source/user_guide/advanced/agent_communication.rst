@@ -496,4 +496,4 @@ See Also
 --------
 
 - :doc:`agent_task_planning` - Task planning system for organizing work
-- :doc:`../reference/yaml_schema` - Complete YAML configuration reference
+- :doc:`../../reference/yaml_schema` - Complete YAML configuration reference

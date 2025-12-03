@@ -65,7 +65,8 @@ dependencies = [
     "mem0ai>=1.0.0",
     "reportlab>=4.0.0",
     "dspy>=2.4.0",
-    "textual>=0.47.0"
+    "textual>=0.47.0",
+    "litellm>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -108,7 +109,11 @@ web = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
 ]
+litellm = [
+    "litellm>=1.0.0",
+]
 all = [
+    "litellm>=1.0.0",
 ]
 
 [project.scripts]

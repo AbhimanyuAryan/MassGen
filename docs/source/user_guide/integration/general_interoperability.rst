@@ -860,15 +860,15 @@ All frameworks follow the same custom tool integration pattern. See the examples
 * Semantic Kernel
 * AutoGPT
 
-See :doc:`../development/contributing` for contribution guidelines.
+See :doc:`../../development/contributing` for contribution guidelines.
 
 Next Steps
 ----------
 
-* :doc:`custom_tools` - General custom tool development
-* :doc:`mcp_integration` - Model Context Protocol tools
-* :doc:`tools` - Complete tool system overview
-* :doc:`../examples/advanced_patterns` - Advanced integration patterns
+* :doc:`../tools/custom_tools` - General custom tool development
+* :doc:`../tools/mcp_integration` - Model Context Protocol tools
+* :doc:`../tools/index` - Complete tool system overview
+* :doc:`../../examples/advanced_patterns` - Advanced integration patterns
 
 Examples Repository
 -------------------
