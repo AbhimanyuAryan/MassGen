@@ -73,7 +73,7 @@ class ResponseFormatter(FormatterBase):
                             "type": "function_call_output",
                             "call_id": call_id,
                             "output": "[No output recorded for this tool call]",
-                        }
+                        },
                     )
                 else:
                     converted_messages.append(cleaned_fc)
