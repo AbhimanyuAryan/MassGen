@@ -9,18 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.20 (December 3, 2025)** - Web UI & Auto Docker Setup
+Browser-based real-time visualization with React frontend, WebSocket streaming, timeline views, and workspace browsing. Automatic Docker container setup for computer use agents.
+
 **v0.1.19 (December 2, 2025)** - LiteLLM Provider & Claude Strict Tool Use
 LiteLLM custom provider integration with programmatic API (`run()`, `build_config()`), Claude strict tool use with structured outputs support, and Gemini exponential backoff for rate limit resilience.
 
 **v0.1.18 (November 28, 2025)** - Agent Communication & Claude Advanced Tooling
 Agent-to-agent and human broadcast communication via `ask_others()` tool, Claude programmatic tool calling from code execution, and deferred tool discovery with server-side tool search.
 
-**v0.1.17 (November 26, 2025)** - Textual Terminal Display
-Interactive terminal UI using the Textual library with dark/light theme support, enhanced CoordinationUI integration, and improved content filtering for better agent coordination visualization.
-
 ---
 
-## [0.1.19] - 2025-12-02
+## [0.1.20] - 2025-12-03
+
+### Added
+- **Web UI System**: Browser-based real-time visualization for multi-agent coordination
+  - New `massgen/frontend/web/server.py` FastAPI server with WebSocket endpoints (1808 lines)
+  - New `massgen/frontend/displays/web_display.py` display adapter for web streaming (730 lines)
+  - React frontend with 18+ components: AgentCarousel, AnswerBrowser, Timeline, VoteVisualization
+  - CLI flags: `--web`, `--web-port`, `--web-host` for launching web server
+  - Quickstart wizard, real-time streaming with syntax highlighting, and multi-turn session support
+
+### Changed
+- **Automatic Computer Use Docker Setup**: Auto-creates Ubuntu 22.04 container with Xfce desktop for GUI automation
+  - New `setup_computer_use_docker()` function with auto-detection of `computer_use_docker_example` configs
+  - Container includes X11 virtual display (:99), xdotool, Firefox, Chromium, and scrot
+
+- **Response API Formatter Enhancement**: Improved function call handling for multi-turn contexts
+  - Preserves `function_call` entries and generates stub outputs for calls without recorded responses
+
+### Fixed
+- **Web UI Multi-turn Support**: Fixed frontend session continuation and follow-up question handling
+- **Timeline Tracking**: Fixed timeline arrows and backend event sequencing
+
+### Documentations, Configurations and Resources
+
+- **Web UI Guide**: New `docs/source/user_guide/webui.rst` (250 lines) covering display modes, timeline visualization, and workspace browsing
+
+- **Computer Use Documentation**: Enhanced `docs/source/user_guide/advanced/computer_use.rst` (+66 lines) with environment naming conventions and automatic setup instructions
+
+- **Filesystem-First Mode Documentation**: New `docs/source/user_guide/filesystem_first.rst` (872 lines, experimental v0.2.0+) documenting 98% context reduction via on-demand tool discovery
+
+- **LLM Council Comparison**: New `docs/source/reference/comparisons.rst` (155 lines) comparing MassGen vs LLM Council with feature tables, UI differences, and architectural comparisons
+
+### Technical Details
+- **Major Focus**: Web UI for real-time coordination visualization, automatic Docker setup for computer use agents
+- **Contributors**: @voidcenter @ncrispino @praneeth999 and the MassGen team
+
+## [0.1.19] - 2025-12-01
 
 ### Added
 - **LiteLLM Integration & Programmatic API**: MassGen as a LiteLLM custom provider with direct Python interface

@@ -227,7 +227,36 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.19 - Latest
+### v0.1.20 - Latest
+**New Features:** Web UI System, Automatic Computer Use Docker Setup, Response API Improvements
+
+**Key Features:**
+- **Web UI System**: Browser-based real-time visualization with React frontend, WebSocket streaming, and interactive components (AgentCarousel, AnswerBrowser, Timeline, VoteVisualization)
+- **Automatic Docker Setup**: Ubuntu 22.04 container creation for computer use agents with X11 virtual display, xdotool, Firefox, Chromium, and scrot
+- **Response API Improvements**: Enhanced multi-turn context handling with function call preservation and stub output generation
+
+**Documentation:**
+- `docs/source/user_guide/webui.rst` - Web UI guide
+- `docs/source/user_guide/advanced/computer_use.rst` - Enhanced computer use documentation
+- `docs/source/user_guide/filesystem_first.rst` - Filesystem-first mode documentation
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Web UI - browser-based multi-agent visualization
+# Prerequisites: API keys in .env
+uv run massgen --web --config @examples/basic/multi/three_agents_default \
+  "What are the advantages of multi-agent AI systems?"
+
+# Computer Use with Auto Docker Setup
+# Prerequisites: Docker running, ANTHROPIC_API_KEY in .env
+uv run massgen --config @examples/tools/custom_tools/claude_computer_use_docker_example \
+  "Open Firefox and search for Python documentation"
+```
+
+### v0.1.19
 **New Features:** LiteLLM Integration & Programmatic API, Claude Strict Tool Use & Structured Outputs, Gemini Exponential Backoff
 
 **Configuration Files:**
@@ -241,9 +270,6 @@ Most configurations use environment variables for API keys:so
 
 **Try It:**
 ```bash
-# Install or upgrade
-pip install --upgrade massgen
-
 # Claude Strict Tool Use - schema validation with structured outputs
 # Prerequisites: ANTHROPIC_API_KEY in .env
 uv run massgen --config massgen/configs/providers/claude/strict_tool_use_example.yaml \

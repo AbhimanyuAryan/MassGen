@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.19 Features](#-latest-features-v0119)
+- [v0.1.20 Features](#-latest-features-v0120)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.19](#recent-achievements-v0119)
-  - [v0.0.3 - v0.1.18](#previous-achievements-v003---v0118)
+  - [v0.1.20](#recent-achievements-v0120)
+  - [v0.0.3 - v0.1.19](#previous-achievements-v003---v0119)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.20 Roadmap](#v0120-roadmap)
+- [v0.1.21 Roadmap](#v0121-roadmap)
 </details>
 
 <details open>
@@ -155,56 +155,40 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.19)
+## 🆕 Latest Features (v0.1.20)
 
-**🎉 Released: December 2, 2025**
+**🎉 Released: December 3, 2025**
 
-**What's New in v0.1.19:**
-- **🔗 LiteLLM Integration** - Use MassGen as a drop-in LiteLLM custom provider with programmatic Python API
-- **🔒 Claude Strict Tool Use** - Schema validation with structured JSON outputs for Claude models
-- **⏳ Gemini Exponential Backoff** - Automatic retry mechanism for rate limit resilience
+**What's New in v0.1.20:**
+- **🌐 Web UI System** - Browser-based real-time visualization with React frontend and WebSocket streaming
+- **🐳 Auto Docker Setup** - Automatic Ubuntu 22.04 container creation for computer use agents
+- **🔄 Response API Improvements** - Enhanced multi-turn context handling
+- **📊 LLM Council Comparison** - Feature comparison with Karpathy's LLM Council showing MassGen's tool use and consensus advantages
 
 **Key Improvements:**
-- New `run()` and `build_config()` functions for programmatic execution without CLI
-- `MassGenLLM` custom provider class with `register_with_litellm()` one-line setup
-- `enable_strict_tool_use` config flag with recursive `additionalProperties: false` patching
-- `output_schema` parameter for structured JSON outputs (requires Sonnet 4.5 or Opus 4.1)
-- `BackoffConfig` with jittered exponential backoff and `Retry-After` header support
+- New `--web`, `--web-port`, `--web-host` CLI flags for launching web server
+- React frontend with AgentCarousel, AnswerBrowser, Timeline, and VoteVisualization components
+- `setup_computer_use_docker()` function with auto-detection for computer use configs
+- Pre-configured desktop environment with X11, xdotool, Firefox, Chromium, and scrot
+- New [comparison documentation](docs/source/reference/comparisons.rst) for multi-agent tool selection
 
-**Try v0.1.19 Features:**
+**Try v0.1.20 Features:**
 ```bash
 # Install or upgrade from PyPI
 pip install --upgrade massgen
 
-# Claude Strict Tool Use - schema validation with structured outputs
-# Prerequisites: ANTHROPIC_API_KEY in .env
-uv run massgen --config massgen/configs/providers/claude/strict_tool_use_example.yaml \
-  "Add 42 and 58, then get weather for Tokyo"
-
-# LiteLLM Integration - use MassGen as a custom provider
+# Web UI - browser-based multi-agent visualization
 # Prerequisites: API keys in .env
-python -c "
-from dotenv import load_dotenv; load_dotenv()
-import litellm
-from massgen import register_with_litellm
-register_with_litellm()
-response = litellm.completion(
-    model='massgen/build',
-    messages=[{'role': 'user', 'content': 'Compare AI approaches'}],
-    optional_params={'models': ['openai/gpt-5', 'gemini/gemini-2.5-flash']}
-)
-print(response.choices[0].message.content)
-"
+uv run massgen --web --config @examples/basic/multi/three_agents_default \
+  "What are the advantages of multi-agent AI systems?"
 
-# Programmatic Python API - run MassGen without CLI
-# Prerequisites: API keys in .env
-python -c "
-from dotenv import load_dotenv; load_dotenv()
-from massgen import run, build_config
-config = build_config(models=['gpt-5-nano'], num_agents=1)
-result = run(config=config, question='What is 2+2?')
-print(result['final_answer'])
-"
+# Web UI with custom port
+uv run massgen --web --web-port 8080 --config @examples/basic/multi/three_agents_default
+
+# Computer Use with Auto Docker Setup
+# Prerequisites: Docker running, ANTHROPIC_API_KEY in .env
+uv run massgen --config @examples/tools/custom_tools/claude_computer_use_docker_example \
+  "Open Firefox and search for Python documentation"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1143,28 +1127,31 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.19)
+### Recent Achievements (v0.1.20)
 
-**🎉 Released: December 2, 2025**
+**🎉 Released: December 3, 2025**
 
-#### LiteLLM Integration & Programmatic API
-- **Custom Provider**: MassGen as a drop-in LiteLLM provider via `MassGenLLM` class with `register_with_litellm()` one-line setup
-- **Programmatic API**: New `run()` and `build_config()` functions for direct Python execution without CLI
-- **Silent Output**: `NoneDisplay` class for suppressing output in programmatic/LiteLLM use cases
+#### Web UI System
+- **Browser-Based Visualization**: Real-time multi-agent coordination via React frontend with WebSocket streaming
+- **Interactive Components**: Agent carousel, answer browser, timeline view, and vote visualization
+- **CLI Integration**: New `--web`, `--web-port`, `--web-host` flags for launching web server
 
-#### Claude Strict Tool Use & Structured Outputs
-- **Strict Tool Validation**: `enable_strict_tool_use` config flag with recursive `additionalProperties: false` schema patching
-- **Structured JSON Outputs**: `output_schema` parameter for enforced response structures (requires Sonnet 4.5 or Opus 4.1)
-- **ConfigValidator Updates**: Validation for strict tool use and output schema configuration
+#### Automatic Computer Use Docker Setup
+- **Auto-Container Creation**: Ubuntu 22.04 with Xfce desktop for GUI automation
+- **Pre-configured Environment**: X11 virtual display (:99), xdotool, Firefox, Chromium, and scrot
 
-#### Gemini Exponential Backoff
-- **Rate Limit Resilience**: Automatic retry for HTTP 429 (rate limit) and 503 (service unavailable) errors
-- **Backoff Configuration**: `BackoffConfig` dataclass with jittered exponential backoff and `Retry-After` header support
+#### Response API Improvements
+- **Multi-turn Context Handling**: Enhanced function call preservation with stub output generation
 
-#### Configuration
-- `providers/claude/strict_tool_use_example.yaml`
+#### Documentation Updates
+- `docs/source/user_guide/webui.rst` - Web UI guide
+- `docs/source/user_guide/advanced/computer_use.rst` - Enhanced computer use documentation
+- `docs/source/user_guide/filesystem_first.rst` - Filesystem-first mode documentation
+- `docs/source/reference/comparisons.rst` - MassGen vs LLM Council comparison
 
-### Previous Achievements (v0.0.3 - v0.1.18)
+### Previous Achievements (v0.0.3 - v0.1.19)
+
+✅ **LiteLLM Integration & Claude Strict Tool Use (v0.1.19)**: MassGen as LiteLLM custom provider with `run()` and `build_config()` programmatic API, Claude strict tool use with structured outputs, Gemini exponential backoff for rate limit resilience
 
 ✅ **Agent Communication System (v0.1.18)**: Human broadcast Q&A via `ask_others()` tool with three modes, blocking execution with inline response delivery, session-persistent Q&A history
 
@@ -1346,21 +1333,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.20 Roadmap
+### v0.1.21 Roadmap
 
-Version 0.1.20 focuses on CUA Docker infrastructure and expanding model support:
+Version 0.1.21 focuses on expanding model support and improving documentation:
 
 #### Planned Features
-- **CUA Dockerfile for Optional Installation**: Provide optional Docker image for Computer Use Agent setup with pre-configured environment
-- **Grok 4.1 Fast Model Support**: Add support for xAI's latest high-speed model for rapid agent responses and cost-effective workflows
+- **Grok 4.1 Fast Model Support** (@praneeth999): Add support for xAI's latest high-speed model for rapid agent responses and cost-effective workflows
+- **Clarify Code Execution in Docs** (@ncrispino): Improve documentation clarity for code execution features with step-by-step guides
 
 Key technical approach:
-- **CUA Dockerfile**: Browser/desktop automation dependencies, X11/VNC support, simplified setup for computer use workflows
 - **Grok 4.1 Fast Integration**: Backend integration, token counting, pricing configuration, capability registration
+- **Documentation Improvements**: Clear examples, security considerations, and troubleshooting guides
 
-**Target Release**: December 3, 2025 (Wednesday @ 9am PT)
+**Target Release**: December 5, 2025 (Friday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.20 roadmap](ROADMAP_v0.1.20.md).
+For detailed milestones and technical specifications, see the [full v0.1.21 roadmap](ROADMAP_v0.1.21.md).
 
 ---
 
