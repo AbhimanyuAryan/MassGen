@@ -11,33 +11,34 @@ MassGen provides powerful computer use tools that allow AI agents to autonomousl
    * ``claude_computer_use`` - Anthropic Claude Computer Use (requires ``claude-sonnet-4-5`` or newer)
    * ``browser_automation`` - Simple browser automation (works with ANY model: gpt-4.1, gpt-4o, etc.)
    * ``computer_use`` - OpenAI Computer Use (requires ``computer-use-preview`` model from OpenAI)
-    - WARNING: OpenAI Computer Use model has not gone through sophisticated testing due to access restrictions on computer-use-preview model. Performance is not guaranteed. Be cautious while using.
+
+     - WARNING: OpenAI Computer Use model has not gone through sophisticated testing due to access restrictions on computer-use-preview model. Performance is not guaranteed. Be cautious while using.
 
    **Incoming Tools:**
 
    * ``UI-TARS_computer_use`` - From ByteDance, open sourced.
-   * ``qwen_computer_use`` - Fraom Alibaba Qwen, open sourced.
+   * ``qwen_computer_use`` - From Alibaba Qwen, open sourced.
 
-   **Environments:**
+**Environments:**
 
-   We try to accommodate as much systems as we can, but practically, we observe that computer use models tend to work best when they start on a browser of linux docker. Hence, we have two recommended environments:
+We try to accommodate as many systems as we can, but practically, we observe that computer use models tend to work best when they start on a browser or linux docker. Hence, we have two recommended environments:
 
-   * ``browser`` - Launch computer use agents in a browser, suitable for web tasks.
-   * ``linux docker`` - Launch computer use agents in a browser, suitable for all web and desktop tasks.
+* ``browser`` - Launch computer use agents in a browser, suitable for web tasks.
+* ``linux docker`` - Launch computer use agents in a Docker container, suitable for all web and desktop tasks.
 
-   See `here <https://github.com/massgen/MassGen/blob/main/scripts/computer_use_setup.md>`_ for quick set-up guides for those two environments, and `here <https://github.com/massgen/MassGen/blob/main/massgen/backend/docs/COMPUTER_USE_VISUALIZATION.md>`_ for visualization guides
+**Automatic Docker Setup:** MassGen will automatically create and configure the Docker container on first run when using a Docker-based computer use config. No manual setup required! The container includes Ubuntu 22.04 with Xfce desktop, X11 virtual display, xdotool, Firefox, Chromium, and scrot.
 
-   **Naming:**
+See `here <https://github.com/massgen/MassGen/blob/main/scripts/computer_use_setup.md>`_ for quick set-up guides for those two environments, and `here <https://github.com/massgen/MassGen/blob/main/massgen/backend/docs/COMPUTER_USE_VISUALIZATION.md>`_ for visualization guides.
 
-   We name our configs in this convention: ``${TOOL_NAME}_computer_use_${ENVIRONMENT}_example.yaml``.
+**Naming:**
 
-   For example, if you would like to use claude in linux docker environment.
+We name our configs in this convention: ``${TOOL_NAME}_computer_use_${ENVIRONMENT}_example.yaml``.
 
-   You should use the config ``massgen/configs/tools/custom_tools/claude_computer_use_docker_example.yaml``.
+For example, if you would like to use Claude in linux docker environment, you should use the config ``massgen/configs/tools/custom_tools/claude_computer_use_docker_example.yaml``.
 
-   If ``${ENVIRONMENT}`` is not specified, we use ``browser`` as default value.
+If ``${ENVIRONMENT}`` is not specified, we use ``browser`` as default value.
 
-   We welcome proposals of new tool and environment combinations!
+We welcome proposals of new tool and environment combinations!
 
 
 Overview
@@ -115,7 +116,7 @@ Quick Start
    playwright install
 
    # Run with gpt-4.1 or any other model
-   massgen \
+   uv run massgen \
      --config massgen/configs/tools/custom_tools/simple_browser_automation_example.yaml \
      "Go to Wikipedia and search for Jimmy Carter"
 
@@ -129,7 +130,7 @@ Browser automation:
    export GEMINI_API_KEY="your-api-key"
 
    # Run Gemini browser automation
-   massgen \
+   uv run massgen \
      --config massgen/configs/tools/custom_tools/gemini_computer_use_example.yaml \
      "Go to cnn.com and get the top headline"
 
@@ -140,11 +141,9 @@ Docker/Linux desktop automation:
    # Set API key
    export GEMINI_API_KEY="your-api-key"
 
-   # Setup Docker container (one-time)
-   ./scripts/setup_docker_cua.sh
-
    # Run Gemini desktop automation
-   massgen \
+   # Docker container is automatically created on first run!
+   uv run massgen \
      --config massgen/configs/tools/custom_tools/gemini_computer_use_docker_example.yaml \
      "Open Firefox and search for Python documentation"
 
@@ -155,11 +154,9 @@ Docker/Linux desktop automation:
    # Set API key
    export ANTHROPIC_API_KEY="your-api-key"
 
-   # Setup Docker container (one-time)
-   ./scripts/setup_docker_cua.sh
-
    # Run Claude desktop automation
-   massgen \
+   # Docker container is automatically created on first run!
+   uv run massgen \
      --config massgen/configs/tools/custom_tools/claude_computer_use_docker_example.yaml \
      "Navigate to Wikipedia and search for Artificial Intelligence"
 
@@ -262,7 +259,7 @@ Detailed Tool Guides
 
 * ``GEMINI_API_KEY`` environment variable
 * For browser: ``pip install playwright && playwright install``
-* For Docker: Docker running + ``./scripts/setup_docker_cua.sh``
+* For Docker: Docker installed and running (container auto-created on first run)
 * ``pip install google-genai docker`` (included in requirements.txt)
 
 2. Claude Computer Use
@@ -622,10 +619,10 @@ Use ``preset_args`` (not ``default_params``):
    # Shows: X0, X20, etc.
 
    # Run MassGen with DISPLAY variable (example using :20)
-   DISPLAY=:20 massgen --config gemini_computer_use_example.yaml
+   DISPLAY=:20 uv run massgen --config gemini_computer_use_example.yaml
 
    # For Claude browser
-   DISPLAY=:20 massgen --config claude_computer_use_browser_example.yaml
+   DISPLAY=:20 uv run massgen --config claude_computer_use_browser_example.yaml
 
 **What You'll See:**
 
@@ -655,7 +652,7 @@ Use ``preset_args`` (not ``default_params``):
    Xvfb :20 -screen 0 1440x900x24 &
 
    # Run with visible browser on virtual display
-   DISPLAY=:20 massgen --config config.yaml
+   DISPLAY=:20 uv run massgen --config config.yaml
 
    # To see it, use VNC or x11vnc
    x11vnc -display :20 -forever -shared -rfbport 5900 -nopw &
@@ -680,7 +677,7 @@ Terminal Output Monitoring
 
    # Enable debug logging
    export MASSGEN_LOG_LEVEL=DEBUG
-   massgen --config config.yaml
+   uv run massgen --config config.yaml
 
 Multi-Agent Computer Use
 -------------------------
@@ -874,5 +871,5 @@ Next Steps
 * **Setup Guides:**
 
   * ``scripts/computer_use_setup.md`` - Docker installation guide
-  * ``./scripts/setup_docker_cua.sh`` - Docker setup script
+  * ``./scripts/setup_docker_cua.sh`` - Manual Docker setup script (optional - auto-created on first run)
   * ``./scripts/enable_vnc_viewer.sh`` - VNC visualization setup
