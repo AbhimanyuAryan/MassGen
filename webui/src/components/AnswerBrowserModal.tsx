@@ -229,6 +229,17 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const [filterAgent, setFilterAgent] = useState<string | 'all'>('all');
   const [expandedAnswerId, setExpandedAnswerId] = useState<string | null>(null);
 
+  // Auto-expand final answer when modal opens with answers tab
+  useEffect(() => {
+    if (isOpen && activeTab === 'answers' && !expandedAnswerId) {
+      // Find the final answer (answerNumber === 0) and expand it
+      const finalAnswerEntry = answers.find(a => a.answerNumber === 0);
+      if (finalAnswerEntry) {
+        setExpandedAnswerId(finalAnswerEntry.id);
+      }
+    }
+  }, [isOpen, activeTab, answers, expandedAnswerId]);
+
   // Workspace state - now fetched from API
   const [workspaces, setWorkspaces] = useState<WorkspacesResponse>({ current: [], historical: [] });
   const [workspaceFiles, setWorkspaceFiles] = useState<FileInfo[]>([]);

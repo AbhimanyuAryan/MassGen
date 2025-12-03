@@ -173,7 +173,15 @@ export function App() {
     }
   }, []);
 
-  // Handle follow-up question submission
+  // Handle viewing full response from conversation history
+  const handleViewHistoryResponse = useCallback((_turn: number) => {
+    // Open answer browser to show the response from that turn
+    setBrowserInitialTab('answers');
+    setIsAnswerBrowserOpen(true);
+    // TODO: Could pass turn number to filter answers by turn
+  }, []);
+
+  // Handle follow-up question submission (from footer form)
   const handleFollowUp = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
@@ -186,6 +194,19 @@ export function App() {
       }
     },
     [followUpQuestion, status, startContinuation, continueConversation]
+  );
+
+  // Handle follow-up from FinalAnswerView (takes question string directly)
+  const handleFollowUpFromFinalAnswer = useCallback(
+    (question: string) => {
+      if (question.trim() && status === 'connected') {
+        // Update store state for new turn
+        startContinuation(question.trim());
+        // Send continue action to WebSocket
+        continueConversation(question.trim());
+      }
+    },
+    [status, startContinuation, continueConversation]
   );
 
   const handleConfigChange = useCallback((configPath: string) => {
@@ -258,9 +279,17 @@ export function App() {
       {question && (
         <div className="bg-gray-100/30 dark:bg-gray-800/30 border-b border-gray-200 dark:border-gray-700 px-6 py-3">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <div>
-              <span className="text-gray-500 dark:text-gray-500 text-sm">Question: </span>
-              <span className="text-gray-800 dark:text-gray-200">{question}</span>
+            <div className="flex items-center gap-3">
+              {/* Conversation history dropdown (floating, doesn't affect layout) */}
+              {turnNumber > 1 && (
+                <ConversationHistory
+                  onViewResponse={handleViewHistoryResponse}
+                />
+              )}
+              <div>
+                <span className="text-gray-500 dark:text-gray-500 text-sm">Question: </span>
+                <span className="text-gray-800 dark:text-gray-200">{question}</span>
+              </div>
             </div>
             <div className="text-xs text-gray-500">
               Config: <span className="text-gray-600 dark:text-gray-400">{configName}</span>
@@ -314,9 +343,6 @@ export function App() {
                 transition={{ duration: 0.2 }}
                 className="relative"
               >
-                {/* Previous turns conversation history */}
-                {turnNumber > 1 && <ConversationHistory />}
-
                 <AgentCarousel />
 
                 {/* Selecting Winner Overlay */}
@@ -517,7 +543,11 @@ export function App() {
       {/* Full-screen Final Answer View */}
       <AnimatePresence>
         {viewMode === 'finalComplete' && (
-          <FinalAnswerView onBackToAgents={handleBackToCoordination} />
+          <FinalAnswerView
+            onBackToAgents={handleBackToCoordination}
+            onFollowUp={handleFollowUpFromFinalAnswer}
+            isConnected={status === 'connected'}
+          />
         )}
       </AnimatePresence>
 

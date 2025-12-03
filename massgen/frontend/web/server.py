@@ -1277,11 +1277,13 @@ async def _save_session_metadata(
         question: The question/task that was asked
         orchestrator: The orchestrator instance (to get winning agent info)
         config_path: Path to the config file used
-        log_session_dir: The log session directory (e.g., .massgen/massgen_logs/log_xxx/turn_1)
+        log_session_dir: The log session directory (may include attempt subdirectory)
         turn_number: Current turn number (default 1 for first turn)
     """
     import json
     from datetime import datetime
+
+    from massgen.logger_config import get_log_session_dir_base, get_log_session_root
 
     if not log_session_dir or not log_session_dir.exists():
         print("[WebUI] Warning: log_session_dir not available, skipping metadata save")
@@ -1301,8 +1303,12 @@ async def _save_session_metadata(
             if stored_answer:
                 final_answer = stored_answer.strip()
 
-        # The log_session_dir is already the turn directory (e.g., .../log_xxx/turn_1)
-        turn_dir = log_session_dir
+        # Get the turn directory (without attempt subdirectory)
+        # log_session_dir may be log_xxx/turn_Y/attempt_1/ but we need log_xxx/turn_Y/
+        turn_dir = get_log_session_dir_base()
+        session_dir = get_log_session_root()
+
+        print(f"[WebUI] Saving metadata: turn_dir={turn_dir}, session_dir={session_dir}")
 
         # Save metadata.json at turn level (CLI-compatible format)
         metadata = {
@@ -1310,7 +1316,7 @@ async def _save_session_metadata(
             "timestamp": datetime.now().isoformat(),
             "winning_agent": winning_agent,
             "task": question,
-            "session_id": log_session_dir.parent.name,  # Use log dir name as session ID
+            "session_id": session_dir.name,  # Use log dir name as session ID (e.g., log_xxx)
         }
         metadata_file = turn_dir / "metadata.json"
         metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -1321,7 +1327,6 @@ async def _save_session_metadata(
         answer_file.write_text(final_answer, encoding="utf-8")
 
         # Save winning_agents_history.json at session level (for multi-turn memory sharing)
-        session_dir = log_session_dir.parent
         winning_agents_history = []
 
         # Load existing history if present
@@ -1404,8 +1409,16 @@ async def run_coordination_with_history(
             resolve_config_path,
         )
         from massgen.frontend.coordination_ui import CoordinationUI
-        from massgen.logger_config import get_log_session_dir, set_log_turn
+        from massgen.logger_config import (
+            get_log_session_dir,
+            set_log_base_session_dir,
+            set_log_turn,
+        )
         from massgen.orchestrator import Orchestrator
+
+        # IMPORTANT: Set the base session dir to reuse the existing session log directory
+        # This must happen before set_log_turn() or get_log_session_dir() is called
+        set_log_base_session_dir(session_log_dir.name)  # e.g., "log_20251202_235530_074788"
 
         # Restore session state from previous turns
         previous_turns = []
@@ -1417,6 +1430,8 @@ async def run_coordination_with_history(
 
             # The session_log_dir is the base log dir (e.g., .massgen/massgen_logs/log_xxx)
             # We need to tell restore_session to look in the massgen_logs directory
+            print(f"[WebUI] Attempting to restore session: session_log_dir={session_log_dir}")
+            print(f"[WebUI] session_log_dir.name={session_log_dir.name}, parent={session_log_dir.parent}")
             session_state = restore_session(
                 session_log_dir.name,  # e.g., "log_20251130_211636_581944"
                 session_storage=str(session_log_dir.parent),  # e.g., ".massgen/massgen_logs"
@@ -1426,8 +1441,13 @@ async def run_coordination_with_history(
                 winning_agents_history = session_state.winning_agents_history
                 conversation_history = session_state.conversation_history or []
                 print(f"[WebUI] Restored {len(previous_turns)} previous turns, {len(winning_agents_history)} winners, {len(conversation_history)} history messages")
+                if conversation_history:
+                    print(f"[WebUI] Conversation history preview: {conversation_history[0] if conversation_history else 'empty'}")
+            else:
+                print(f"[WebUI] restore_session returned None for {session_log_dir.name}")
         except Exception as e:
-            print(f"[WebUI] Warning: Could not restore session state: {e}")
+            print(f"[WebUI] ERROR restoring session state: {e}")
+            traceback.print_exc()
             # Continue anyway - first follow-up might work without full history
 
         # Set the turn number for logging

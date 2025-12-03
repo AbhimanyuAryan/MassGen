@@ -7,10 +7,11 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send } from 'lucide-react';
 import { useAgentStore, selectSelectedAgent, selectAgents, selectResolvedFinalAnswer, selectAgentOrder } from '../stores/agentStore';
 import type { AnswerWorkspace } from '../types';
 import { FileViewerModal } from './FileViewerModal';
+import { ConversationHistory } from './ConversationHistory';
 
 // Types for workspace API responses
 interface WorkspaceInfo {
@@ -187,11 +188,14 @@ type TabType = 'answer' | 'workspace';
 
 interface FinalAnswerViewProps {
   onBackToAgents: () => void;
+  onFollowUp?: (question: string) => void;
+  isConnected?: boolean;
 }
 
-export function FinalAnswerView({ onBackToAgents }: FinalAnswerViewProps) {
+export function FinalAnswerView({ onBackToAgents, onFollowUp, isConnected = true }: FinalAnswerViewProps) {
   const [activeTab, setActiveTab] = useState<TabType>('answer');
   const [copied, setCopied] = useState(false);
+  const [followUpQuestion, setFollowUpQuestion] = useState('');
 
   const finalAnswer = useAgentStore(selectResolvedFinalAnswer);
   const selectedAgent = useAgentStore(selectSelectedAgent);
@@ -307,6 +311,15 @@ export function FinalAnswerView({ onBackToAgents }: FinalAnswerViewProps) {
     }
   }, [finalAnswer]);
 
+  // Handle follow-up question submission
+  const handleFollowUpSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    if (followUpQuestion.trim() && onFollowUp) {
+      onFollowUp(followUpQuestion.trim());
+      setFollowUpQuestion('');
+    }
+  }, [followUpQuestion, onFollowUp]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -396,7 +409,11 @@ export function FinalAnswerView({ onBackToAgents }: FinalAnswerViewProps) {
               transition={{ duration: 0.2 }}
               className="h-full overflow-y-auto custom-scrollbar p-6"
             >
-              <div className="max-w-4xl mx-auto">
+              <div className="max-w-4xl mx-auto space-y-6">
+                {/* Conversation History - shown at top for context */}
+                <ConversationHistory />
+
+                {/* Final Answer Content */}
                 <div className="bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
                   {!finalAnswer || finalAnswer === '__PENDING__' ? (
                     <div className="flex flex-col items-center justify-center py-12 text-gray-500">
@@ -518,6 +535,35 @@ export function FinalAnswerView({ onBackToAgents }: FinalAnswerViewProps) {
           )}
         </AnimatePresence>
       </main>
+
+      {/* Follow-up Input Footer */}
+      {onFollowUp && (
+        <footer className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-6 py-4">
+          <form onSubmit={handleFollowUpSubmit} className="max-w-4xl mx-auto flex gap-4">
+            <input
+              type="text"
+              value={followUpQuestion}
+              onChange={(e) => setFollowUpQuestion(e.target.value)}
+              placeholder="Ask a follow-up question..."
+              disabled={!isConnected}
+              className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-3
+                       text-gray-900 dark:text-gray-100 placeholder-gray-500
+                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            <button
+              type="submit"
+              disabled={!followUpQuestion.trim() || !isConnected}
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-400 dark:disabled:bg-gray-600
+                       disabled:cursor-not-allowed rounded-lg transition-colors text-white
+                       flex items-center gap-2"
+            >
+              <Send className="w-5 h-5" />
+              <span>Continue</span>
+            </button>
+          </form>
+        </footer>
+      )}
 
       {/* File Viewer Modal */}
       <FileViewerModal

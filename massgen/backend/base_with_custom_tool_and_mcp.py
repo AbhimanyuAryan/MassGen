@@ -1509,34 +1509,6 @@ class CustomToolAndMCPBackend(LLMBackend):
 
         return None
 
-    def _extract_text_from_mcp_result(self, result: Any) -> str:
-        """Extract text string from MCP CallToolResult for API compatibility.
-
-        MCP tools return CallToolResult objects with .content as an array of
-        TextContent objects. This method extracts the text for use in API
-        responses that require plain string output.
-
-        Args:
-            result: CallToolResult object or other result type
-
-        Returns:
-            Plain text string suitable for API output field
-        """
-        # Handle CallToolResult objects (have .content attribute)
-        if hasattr(result, "content"):
-            text = self._extract_text_from_content(result.content)
-            if text:
-                return text
-
-        # Handle dict results (error cases from MCPExecutionManager)
-        if isinstance(result, dict):
-            if "error" in result:
-                return f"Error: {result['error']}"
-            return json.dumps(result, indent=2, ensure_ascii=False)
-
-        # Fallback to str()
-        return str(result)
-
     # MCP support methods
     async def _setup_mcp_tools(self) -> None:
         """Initialize MCP client for mcp_tools-based servers (stdio + streamable-http)."""
@@ -1747,9 +1719,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             return f"Error: {result['error']}", result
 
         # Note: Reminder injection happens in _execute_tool_with_logging, not here
-        # Extract text from CallToolResult content array for Response API compatibility
-        result_str = self._extract_text_from_mcp_result(result)
-        return result_str, result
+        return str(result), result
 
     async def _process_upload_files(
         self,

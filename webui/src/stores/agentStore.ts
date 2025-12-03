@@ -115,6 +115,11 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       agentUIStates[id] = createAgentUIState();
     });
 
+    // Check if this is a continuation (turnNumber > 1 means startContinuation was called)
+    // In that case, preserve the conversation history that startContinuation already set up
+    const currentState = get();
+    const isContinuation = currentState.turnNumber > 1 && currentState.conversationHistory.length > 0;
+
     set({
       sessionId,
       question,
@@ -131,6 +136,20 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       orchestratorEvents: [],
       viewMode: 'coordination',
       agentUIState: agentUIStates,
+      // Preserve conversation history if this is a continuation, otherwise start fresh
+      ...(isContinuation
+        ? {
+            // Keep existing history and turnNumber from startContinuation
+            conversationHistory: currentState.conversationHistory,
+            turnNumber: currentState.turnNumber,
+          }
+        : {
+            // Fresh start - add initial question to conversation history for Turn 1
+            conversationHistory: [
+              { role: 'user', content: question, turn: 1 },
+            ],
+            turnNumber: 1,
+          }),
     });
   },
 
