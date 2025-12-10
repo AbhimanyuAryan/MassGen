@@ -4,9 +4,9 @@
 agents:
   - id: "agent_a"
     backend:
-      type: "chatcompletion"
-      base_url: "https://openrouter.ai/api/v1"
-      model: "x-ai/grok-4.1-fast"
+      # type: "chatcompletion"
+      # base_url: "https://openrouter.ai/api/v1"
+      # model: "x-ai/grok-4.1-fast"
       # type: "openai"
       # model: "gpt-5-mini"
       # type: "gemini"

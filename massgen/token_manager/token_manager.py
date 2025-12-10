@@ -62,6 +62,122 @@ class TokenUsage:
 
 
 @dataclass
+class ToolExecutionMetric:
+    """Metrics for a single tool execution.
+
+    Tracks timing, success/failure, and character counts for token estimation.
+    Uses character-based estimation (~4 chars per token) for low overhead.
+    """
+
+    tool_name: str
+    tool_type: str  # "mcp", "custom", "provider"
+    call_id: str
+    agent_id: str
+    round_number: int
+    start_time: float
+    end_time: float = 0.0
+    success: bool = True
+    error_message: Optional[str] = None
+    input_chars: int = 0  # Character count in arguments
+    output_chars: int = 0  # Character count in result
+
+    @property
+    def execution_time_ms(self) -> float:
+        """Execution time in milliseconds."""
+        return (self.end_time - self.start_time) * 1000 if self.end_time else 0
+
+    @property
+    def input_tokens_est(self) -> int:
+        """Estimated input tokens (~4 chars per token)."""
+        return self.input_chars // 4
+
+    @property
+    def output_tokens_est(self) -> int:
+        """Estimated output tokens (~4 chars per token)."""
+        return self.output_chars // 4
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "tool_name": self.tool_name,
+            "tool_type": self.tool_type,
+            "call_id": self.call_id,
+            "agent_id": self.agent_id,
+            "round_number": self.round_number,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "execution_time_ms": round(self.execution_time_ms, 2),
+            "success": self.success,
+            "error_message": self.error_message,
+            "input_chars": self.input_chars,
+            "output_chars": self.output_chars,
+            "input_tokens_est": self.input_tokens_est,
+            "output_tokens_est": self.output_tokens_est,
+        }
+
+
+@dataclass
+class RoundTokenUsage:
+    """Token usage for a single coordination round.
+
+    Tracks token delta (consumption) within a round that ends with
+    an answer, vote, restart, or timeout.
+    """
+
+    round_number: int
+    agent_id: str
+    round_type: str  # "initial_answer", "enforcement", "presentation"
+    outcome: str = ""  # "answer", "vote", "restarted", "timeout", "error"
+
+    # Token breakdown (delta from previous round)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_input_tokens: int = 0
+    estimated_cost: float = 0.0
+
+    # Context window usage
+    context_window_size: int = 0  # Model's max context
+    context_usage_pct: float = 0.0  # input_tokens / context_window_size * 100
+
+    # Tool usage in this round
+    tool_calls_count: int = 0
+
+    # Token tracking source ("api" = from API response, "estimated" = fallback estimation)
+    token_source: str = "api"
+
+    # Timing
+    start_time: float = 0.0
+    end_time: float = 0.0
+
+    @property
+    def duration_ms(self) -> float:
+        """Round duration in milliseconds."""
+        return (self.end_time - self.start_time) * 1000 if self.end_time else 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "round_number": self.round_number,
+            "agent_id": self.agent_id,
+            "round_type": self.round_type,
+            "outcome": self.outcome,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
+            "estimated_cost": round(self.estimated_cost, 6),
+            "context_window_size": self.context_window_size,
+            "context_usage_pct": round(self.context_usage_pct, 2),
+            "tool_calls_count": self.tool_calls_count,
+            "token_source": self.token_source,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration_ms": round(self.duration_ms, 2),
+        }
+
+
+@dataclass
 class ModelPricing:
     """Pricing information for a model."""
 

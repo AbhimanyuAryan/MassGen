@@ -212,6 +212,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
         response_completed = False
         content = ""
         finish_reason_received = None  # Track finish reason to know when to expect usage
+        usage_received_this_request = False  # Track if API returned usage for this specific request
 
         async for chunk in stream:
             try:
@@ -304,6 +305,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
                 # Handle usage metadata (comes after finish_reason)
                 if hasattr(chunk, "usage") and chunk.usage:
+                    usage_received_this_request = True
                     # Use standardized helper for comprehensive token tracking
                     self._update_token_usage_from_api_response(
                         chunk.usage,
@@ -323,6 +325,14 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
         # Fallback: if we exited the loop without getting usage (some providers don't send it)
         # Handle the "stop"/"length" case that might have been missed
         if finish_reason_received in ["stop", "length"] and response_completed:
+            # Estimate tokens if API didn't return usage data for this request
+            # (e.g., Grok, some OpenAI-compatible providers that don't support stream_options)
+            if not usage_received_this_request and content:
+                self._estimate_token_usage(
+                    current_messages,
+                    content,
+                    all_params.get("model", "unknown"),
+                )
             yield StreamChunk(type="done")
             return
 
@@ -695,9 +705,9 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                                 type="complete_message",
                                 complete_message=complete_message,
                             )
-                            log_stream_chunk(log_prefix, "done", None, agent_id)
-                            yield StreamChunk(type="done")
-                            return
+                            # DON'T yield done yet - wait for usage chunk first
+                            # (OpenAI-compatible APIs send usage in a final chunk after finish_reason)
+                            # The done chunk will be yielded after usage is captured below
 
                         elif choice.finish_reason in ["stop", "length"]:
                             if search_sources_used > 0:
@@ -726,10 +736,9 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                                 type="complete_message",
                                 complete_message=complete_message,
                             )
-                            log_stream_chunk(log_prefix, "done", None, agent_id)
-                            yield StreamChunk(type="done")
-                            # DON'T return yet - continue processing to capture final usage chunk
+                            # DON'T yield done yet - wait for usage chunk first
                             # (OpenAI-compatible APIs send usage in a final chunk after finish_reason)
+                            # The done chunk will be yielded after usage is captured below
 
                 # Optionally handle usage metadata
                 if hasattr(chunk, "usage") and chunk.usage:
@@ -754,9 +763,11 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                                 content=search_msg,
                             )
 
-                    # After receiving usage, we can safely exit
+                    # After receiving usage, yield done and exit
                     # (this is the final chunk that comes after finish_reason)
-                    break
+                    log_stream_chunk(log_prefix, "done", None, agent_id)
+                    yield StreamChunk(type="done")
+                    return  # Exit completely after usage is captured
 
             except Exception as chunk_error:
                 error_msg = f"Chunk processing error: {chunk_error}"

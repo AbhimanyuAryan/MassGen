@@ -1896,11 +1896,233 @@ class RichTerminalDisplay(TerminalDisplay):
 
         self.console.print(table)
 
+        # Show tool metrics summary if available
+        self._show_tool_metrics_summary()
+
+        # Show round metrics summary if available
+        self._show_round_metrics_summary()
+
         # Wait for user to continue
         input("\nPress Enter to return to agent selector...")
 
         # Add separator
         self.console.print("\n" + "=" * 80 + "\n")
+
+    def _show_tool_metrics_summary(self) -> None:
+        """Display tool execution metrics summary."""
+        from rich.table import Table
+
+        try:
+            if not hasattr(self, "orchestrator") or not self.orchestrator:
+                return
+
+            # Collect tool metrics from all agents
+            all_tools: Dict[str, Dict[str, Any]] = {}
+            total_calls = 0
+            total_failures = 0
+            total_time_ms = 0.0
+            total_input_tokens = 0
+            total_output_tokens = 0
+
+            for agent_id, agent in self.orchestrator.agents.items():
+                if agent and hasattr(agent, "backend") and hasattr(agent.backend, "get_tool_metrics_summary"):
+                    summary = agent.backend.get_tool_metrics_summary()
+                    if summary:
+                        total_calls += summary.get("total_calls", 0)
+                        total_failures += summary.get("total_failures", 0)
+                        total_time_ms += summary.get("total_execution_time_ms", 0)
+
+                        for tool_name, stats in summary.get("by_tool", {}).items():
+                            if tool_name not in all_tools:
+                                all_tools[tool_name] = {
+                                    "call_count": 0,
+                                    "success_count": 0,
+                                    "failure_count": 0,
+                                    "total_time_ms": 0.0,
+                                    "tool_type": stats.get("tool_type", "unknown"),
+                                    "input_tokens_est": 0,
+                                    "output_tokens_est": 0,
+                                }
+                            all_tools[tool_name]["call_count"] += stats.get("call_count", 0)
+                            all_tools[tool_name]["success_count"] += stats.get("success_count", 0)
+                            all_tools[tool_name]["failure_count"] += stats.get("failure_count", 0)
+                            all_tools[tool_name]["total_time_ms"] += stats.get("total_execution_time_ms", 0)
+                            all_tools[tool_name]["input_tokens_est"] += stats.get("input_tokens_est", 0)
+                            all_tools[tool_name]["output_tokens_est"] += stats.get("output_tokens_est", 0)
+                            total_input_tokens += stats.get("input_tokens_est", 0)
+                            total_output_tokens += stats.get("output_tokens_est", 0)
+
+            if total_calls == 0:
+                return  # No tool calls to show
+
+            # Create tool metrics table
+            self.console.print()  # Add spacing
+            table = Table(
+                title="🔧 Tool Execution Summary",
+                show_header=True,
+                header_style="bold cyan",
+                border_style=self.colors["border"],
+            )
+
+            table.add_column("Tool", style="cyan", no_wrap=True)
+            table.add_column("Type", style="dim")
+            table.add_column("Calls", justify="right", style="white")
+            table.add_column("Success", justify="right", style="green")
+            table.add_column("Failed", justify="right", style="red")
+            table.add_column("In Tokens", justify="right", style="magenta")
+            table.add_column("Out Tokens", justify="right", style="blue")
+            table.add_column("Avg Time", justify="right", style="yellow")
+            table.add_column("Total Time", justify="right", style="dim")
+
+            # Sort by call count descending
+            sorted_tools = sorted(all_tools.items(), key=lambda x: x[1]["call_count"], reverse=True)
+
+            for tool_name, stats in sorted_tools:
+                avg_time = stats["total_time_ms"] / stats["call_count"] if stats["call_count"] > 0 else 0
+                table.add_row(
+                    tool_name,
+                    stats["tool_type"],
+                    str(stats["call_count"]),
+                    str(stats["success_count"]),
+                    str(stats["failure_count"]) if stats["failure_count"] > 0 else "-",
+                    f"{stats['input_tokens_est']:,}" if stats["input_tokens_est"] > 0 else "-",
+                    f"{stats['output_tokens_est']:,}" if stats["output_tokens_est"] > 0 else "-",
+                    f"{avg_time:.0f}ms",
+                    f"{stats['total_time_ms']:.0f}ms",
+                )
+
+            # Add totals row
+            if len(all_tools) > 1:
+                avg_total = total_time_ms / total_calls if total_calls > 0 else 0
+                table.add_row(
+                    "TOTAL",
+                    "",
+                    str(total_calls),
+                    str(total_calls - total_failures),
+                    str(total_failures) if total_failures > 0 else "-",
+                    f"{total_input_tokens:,}" if total_input_tokens > 0 else "-",
+                    f"{total_output_tokens:,}" if total_output_tokens > 0 else "-",
+                    f"{avg_total:.0f}ms",
+                    f"{total_time_ms:.0f}ms",
+                    style="bold",
+                )
+
+            self.console.print(table)
+
+        except Exception:
+            pass  # Fail silently - metrics display is non-critical
+
+    def _show_round_metrics_summary(self) -> None:
+        """Display round token usage summary."""
+        from rich.table import Table
+
+        try:
+            if not hasattr(self, "orchestrator") or not self.orchestrator:
+                return
+
+            # Collect round history from all agents
+            all_rounds = []
+            for agent_id, agent in self.orchestrator.agents.items():
+                if agent and hasattr(agent, "backend") and hasattr(agent.backend, "get_round_token_history"):
+                    rounds = agent.backend.get_round_token_history()
+                    all_rounds.extend(rounds)
+
+            if not all_rounds:
+                return  # No rounds to show
+
+            # Aggregate by outcome
+            by_outcome: Dict[str, Dict[str, Any]] = {}
+            total_input = 0
+            total_output = 0
+            total_cost = 0.0
+            total_duration = 0.0
+            max_context_pct = 0.0
+
+            for r in all_rounds:
+                outcome = r.get("outcome", "unknown")
+                if outcome not in by_outcome:
+                    by_outcome[outcome] = {"count": 0, "input": 0, "output": 0, "cost": 0.0, "duration": 0.0}
+                by_outcome[outcome]["count"] += 1
+                by_outcome[outcome]["input"] += r.get("input_tokens", 0)
+                by_outcome[outcome]["output"] += r.get("output_tokens", 0)
+                by_outcome[outcome]["cost"] += r.get("estimated_cost", 0.0)
+                by_outcome[outcome]["duration"] += r.get("duration_ms", 0.0)
+
+                total_input += r.get("input_tokens", 0)
+                total_output += r.get("output_tokens", 0)
+                total_cost += r.get("estimated_cost", 0.0)
+                total_duration += r.get("duration_ms", 0.0)
+                ctx_pct = r.get("context_usage_pct", 0.0)
+                if ctx_pct > max_context_pct:
+                    max_context_pct = ctx_pct
+
+            # Create round metrics table
+            self.console.print()  # Add spacing
+            table = Table(
+                title="📊 Round Token Usage Summary",
+                show_header=True,
+                header_style="bold cyan",
+                border_style=self.colors["border"],
+            )
+
+            table.add_column("Outcome", style="cyan", no_wrap=True)
+            table.add_column("Rounds", justify="right", style="white")
+            table.add_column("Input Tokens", justify="right", style="green")
+            table.add_column("Output Tokens", justify="right", style="blue")
+            table.add_column("Est. Cost", justify="right", style="bold green")
+            table.add_column("Avg Duration", justify="right", style="yellow")
+
+            # Define outcome order and emoji
+            outcome_display = {
+                "answer": ("✅ answer", "green"),
+                "vote": ("🗳️  vote", "blue"),
+                "presentation": ("🎤 presentation", "cyan"),
+                "post_evaluation": ("🔍 post-eval", "magenta"),
+                "restarted": ("🔄 restarted", "yellow"),
+                "error": ("❌ error", "red"),
+                "timeout": ("⏱️  timeout", "red"),
+            }
+
+            for outcome in ["answer", "vote", "presentation", "post_evaluation", "restarted", "error", "timeout"]:
+                if outcome in by_outcome:
+                    stats = by_outcome[outcome]
+                    display_name, style = outcome_display.get(outcome, (outcome, "white"))
+                    avg_duration = stats["duration"] / stats["count"] if stats["count"] > 0 else 0
+                    cost_str = f"${stats['cost']:.4f}" if stats["cost"] < 0.01 else f"${stats['cost']:.3f}"
+                    table.add_row(
+                        display_name,
+                        str(stats["count"]),
+                        f"{stats['input']:,}",
+                        f"{stats['output']:,}",
+                        cost_str,
+                        f"{avg_duration / 1000:.1f}s",
+                        style=style,
+                    )
+
+            # Add totals row
+            if len(by_outcome) > 1:
+                avg_total_duration = total_duration / len(all_rounds) if all_rounds else 0
+                total_cost_str = f"${total_cost:.4f}" if total_cost < 0.01 else f"${total_cost:.3f}"
+                table.add_row(
+                    "TOTAL",
+                    str(len(all_rounds)),
+                    f"{total_input:,}",
+                    f"{total_output:,}",
+                    total_cost_str,
+                    f"{avg_total_duration / 1000:.1f}s",
+                    style="bold",
+                )
+
+            self.console.print(table)
+
+            # Show context window usage warning if high
+            if max_context_pct > 50:
+                self.console.print(
+                    f"\n[yellow]⚠️  Peak context window usage: {max_context_pct:.1f}%[/yellow]",
+                )
+
+        except Exception:
+            pass  # Fail silently - metrics display is non-critical
 
     def _show_coordination_rounds_table(self) -> None:
         """Display the coordination rounds table with rich formatting."""
@@ -2479,6 +2701,9 @@ class RichTerminalDisplay(TerminalDisplay):
     def _get_all_agent_costs(self) -> Dict[str, Any]:
         """Collect token usage from all agent backends.
 
+        Uses round history totals when available for consistency with the Round Summary table.
+        Falls back to cumulative token_usage if no round history exists.
+
         Returns:
             Dictionary with per-agent TokenUsage and aggregated totals.
         """
@@ -2493,10 +2718,30 @@ class RichTerminalDisplay(TerminalDisplay):
                 return result
 
             for agent_id, agent in self.orchestrator.agents.items():
-                if agent and hasattr(agent, "backend") and hasattr(agent.backend, "token_usage"):
-                    usage = agent.backend.token_usage
-                    result["agents"][agent_id] = usage
-                    result["total"].add(usage)
+                if agent and hasattr(agent, "backend"):
+                    backend = agent.backend
+
+                    # Prefer round history totals for consistency with Round Summary table
+                    if hasattr(backend, "get_round_token_history"):
+                        rounds = backend.get_round_token_history()
+                        if rounds:
+                            # Sum up tokens from all rounds
+                            usage = TokenUsage()
+                            for r in rounds:
+                                usage.input_tokens += r.get("input_tokens", 0)
+                                usage.output_tokens += r.get("output_tokens", 0)
+                                usage.reasoning_tokens += r.get("reasoning_tokens", 0)
+                                usage.cached_input_tokens += r.get("cached_input_tokens", 0)
+                                usage.estimated_cost += r.get("estimated_cost", 0.0)
+                            result["agents"][agent_id] = usage
+                            result["total"].add(usage)
+                            continue
+
+                    # Fallback to cumulative token_usage if no round history
+                    if hasattr(backend, "token_usage") and backend.token_usage:
+                        usage = backend.token_usage
+                        result["agents"][agent_id] = usage
+                        result["total"].add(usage)
         except Exception:
             pass  # Fail silently - cost display is non-critical
 
