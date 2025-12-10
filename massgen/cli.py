@@ -4549,9 +4549,9 @@ Environment Variables:
 
             print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
-            # Auto-open browser if question+config provided (unless --no-browser)
+            # Auto-open browser if question+config provided (unless --no-browser or automation mode)
             no_browser = getattr(args, "no_browser", False)
-            if auto_url and config_path and not no_browser:
+            if auto_url and config_path and not no_browser and not automation_mode:
                 import threading
                 import webbrowser
 
@@ -4562,7 +4562,7 @@ Environment Variables:
                     webbrowser.open(auto_url)
 
                 threading.Thread(target=open_browser, daemon=True).start()
-            run_server(host=args.web_host, port=args.web_port, config_path=config_path)
+            run_server(host=args.web_host, port=args.web_port, config_path=config_path, automation_mode=automation_mode)
         except ImportError as e:
             print(f"{BRIGHT_RED}❌ Web UI dependencies not installed.{RESET}")
             print(f"{BRIGHT_CYAN}   Run: pip install massgen{RESET}")

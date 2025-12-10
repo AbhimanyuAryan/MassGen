@@ -262,6 +262,10 @@ export interface SessionState {
   agentUIState: Record<string, AgentUIState>;
   // Skip animation when restoring from snapshot
   restoredFromSnapshot: boolean;
+  // Automation mode: shows simplified timeline view for LLM/automation usage
+  automationMode: boolean;
+  // Log directory path for status.json monitoring
+  logDir?: string;
 }
 
 // Union type for all WebSocket events

@@ -122,11 +122,12 @@ def get_default_config() -> Optional[str]:
     return _default_config_path
 
 
-def create_app(config_path: Optional[str] = None) -> "FastAPI":
+def create_app(config_path: Optional[str] = None, automation_mode: bool = False) -> "FastAPI":
     """Create and configure the FastAPI application.
 
     Args:
         config_path: Default config path for coordination sessions
+        automation_mode: If True, UI shows automation-friendly timeline view
     """
     if not FASTAPI_AVAILABLE:
         raise ImportError(
@@ -142,6 +143,9 @@ def create_app(config_path: Optional[str] = None) -> "FastAPI":
         description="Real-time multi-agent coordination visualization",
         version="0.1.0",
     )
+
+    # Store automation_mode in app state for WebSocket access
+    app.state.automation_mode = automation_mode
 
     # CORS for development
     app.add_middleware(
@@ -1123,7 +1127,17 @@ def create_app(config_path: Optional[str] = None) -> "FastAPI":
                 await websocket.send_json(
                     {
                         "type": "state_snapshot",
+                        "automation_mode": app.state.automation_mode,
                         **display.get_state_snapshot(),
+                    },
+                )
+            else:
+                # Send init message with automation_mode even without display
+                await websocket.send_json(
+                    {
+                        "type": "init",
+                        "automation_mode": app.state.automation_mode,
+                        "session_id": session_id,
                     },
                 )
 
@@ -1824,6 +1838,7 @@ def run_server(
     port: int = 8000,
     reload: bool = False,
     config_path: Optional[str] = None,
+    automation_mode: bool = False,
 ) -> None:
     """Run the web server.
 
@@ -1832,6 +1847,7 @@ def run_server(
         port: Port to listen on
         reload: Enable auto-reload for development
         config_path: Default config path for coordination sessions
+        automation_mode: If True, UI shows automation-friendly timeline view
     """
     try:
         import uvicorn
@@ -1844,13 +1860,34 @@ def run_server(
     if config_path:
         set_default_config(config_path)
 
-    uvicorn.run(
-        "massgen.frontend.web.server:create_app",
-        host=host,
-        port=port,
-        reload=reload,
-        factory=True,
-    )
+    # Create app directly with automation_mode (can't pass args via factory string)
+    app = create_app(config_path=config_path, automation_mode=automation_mode)
+
+    # In automation mode, suppress verbose logging to keep stdout clean
+    if automation_mode:
+        import logging
+        import warnings
+
+        # Suppress uvicorn access logs and info messages
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+
+        # Suppress websockets deprecation warnings
+        warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets")
+        warnings.filterwarnings("ignore", category=DeprecationWarning, module="uvicorn.protocols.websockets")
+
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+        )
+    else:
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+        )
 
 
 # For running directly: python -m massgen.frontend.web.server

@@ -75,6 +75,9 @@ const initialState: SessionState = {
   agentUIState: {},
   // Skip animation when restoring from snapshot
   restoredFromSnapshot: false,
+  // Automation mode: shows simplified timeline view
+  automationMode: false,
+  logDir: undefined,
 };
 
 const createAgentUIState = (): AgentUIState => ({
@@ -292,25 +295,39 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     // Clear the selectingWinner flag now that consensus is reached
     set({ selectingWinner: false });
 
-    // Instead of creating a new empty round (which loses already-streaming content),
-    // just rename the winner's current round to 'final'. The content is already there.
-    set((state) => {
-      const agent = state.agents[winnerId];
-      if (!agent) return state;
+    // Check the current round's status to decide how to handle it
+    const agent = get().agents[winnerId];
+    if (agent) {
+      const currentRound = agent.rounds.find(r => r.id === agent.currentRoundId);
 
-      const updatedRounds = agent.rounds.map((round) =>
-        round.id === agent.currentRoundId
-          ? { ...round, label: 'final' }  // Just rename, don't create new empty round
-          : round
-      );
+      if (currentRound && currentRound.label === 'current') {
+        // Current round is still "current" (not finalized) - just rename it to 'final'
+        // This preserves any content that's already streaming
+        console.log('[DEBUG] setConsensus: Renaming current round to final');
+        set((state) => {
+          const agentState = state.agents[winnerId];
+          if (!agentState) return state;
 
-      return {
-        agents: {
-          ...state.agents,
-          [winnerId]: { ...agent, rounds: updatedRounds },
-        },
-      };
-    });
+          const updatedRounds = agentState.rounds.map((round) =>
+            round.id === agentState.currentRoundId
+              ? { ...round, label: 'final' }
+              : round
+          );
+
+          return {
+            agents: {
+              ...state.agents,
+              [winnerId]: { ...agentState, rounds: updatedRounds },
+            },
+          };
+        });
+      } else {
+        // Current round is already finalized (e.g., 'vote1.1')
+        // Create a new 'final' round for the final answer content
+        console.log('[DEBUG] setConsensus: Creating new final round (current is finalized)');
+        store.startNewRound(winnerId, 'final', 'final');
+      }
+    }
 
     // Set selected agent
     set({ selectedAgent: winnerId });
@@ -809,6 +826,13 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     switch (event.type) {
       case 'init':
         if ('agents' in event && 'question' in event) {
+          // Set automation mode if provided
+          if ('automation_mode' in event) {
+            set({ automationMode: (event as { automation_mode: boolean }).automation_mode });
+          }
+          if ('log_dir' in event) {
+            set({ logDir: (event as { log_dir: string }).log_dir });
+          }
           store.initSession(
             event.session_id,
             event.question,
@@ -816,6 +840,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             'theme' in event ? event.theme : 'dark',
             'agent_models' in event ? (event as { agent_models: Record<string, string> }).agent_models : undefined
           );
+        } else if ('automation_mode' in event) {
+          // Handle init without agents (just automation_mode flag)
+          set({ automationMode: (event as { automation_mode: boolean }).automation_mode });
         }
         break;
 
@@ -1036,7 +1063,17 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             vote_targets?: Record<string, string>;
             agent_status?: Record<string, string>;
             agent_outputs?: Record<string, string[]>;
+            automation_mode?: boolean;
+            log_dir?: string;
           };
+
+          // Set automation mode if provided
+          if (snapshot.automation_mode !== undefined) {
+            set({ automationMode: snapshot.automation_mode });
+          }
+          if (snapshot.log_dir) {
+            set({ logDir: snapshot.log_dir });
+          }
 
           // Initialize session with agent_models
           store.initSession(
@@ -1132,6 +1169,8 @@ export const selectOrchestratorEvents = (state: AgentStore) => state.orchestrato
 export const selectViewMode = (state: AgentStore) => state.viewMode;
 export const selectSelectingWinner = (state: AgentStore) => state.selectingWinner;
 export const selectRestoredFromSnapshot = (state: AgentStore) => state.restoredFromSnapshot;
+export const selectAutomationMode = (state: AgentStore) => state.automationMode;
+export const selectLogDir = (state: AgentStore) => state.logDir;
 
 /**
  * Clean streaming content by removing tool/MCP noise that shouldn't appear in final answers.
