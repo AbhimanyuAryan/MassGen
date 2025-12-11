@@ -104,7 +104,7 @@ class BroadcastToolkit(BaseToolkit):
                     + ("the human user" if self.broadcast_mode == "human" else "other agents")
                     + " for collaborative problem-solving. Use this when you need input, coordination, or decisions. "
                     + sensitivity_guidance
-                    + " Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
+                    + " Example: ask_others(question='What SSR capabilities does the project require?')"
                 ),
                 "input_schema": {
                     "type": "object",
@@ -134,7 +134,7 @@ class BroadcastToolkit(BaseToolkit):
                         + ("the human user" if self.broadcast_mode == "human" else "other agents")
                         + " for collaborative problem-solving. Use this when you need input, coordination, or decisions. "
                         + sensitivity_guidance
-                        + " Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
+                        + " Example: ask_others(question='What SSR capabilities does the project require?')"
                     ),
                     "parameters": {
                         "type": "object",

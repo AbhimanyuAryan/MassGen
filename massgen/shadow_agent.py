@@ -164,6 +164,14 @@ class ShadowAgentSpawner:
         # Get parent's identity/persona (user-configured system message)
         parent_identity = parent_agent.get_configurable_system_message() or ""
 
+        # Get response_depth from orchestrator config (controls test-time compute scaling)
+        response_depth = "medium"
+        if hasattr(self.orchestrator, "config") and hasattr(self.orchestrator.config, "coordination_config"):
+            response_depth = getattr(self.orchestrator.config.coordination_config, "response_depth", "medium")
+
+        # Build depth-specific instructions for test-time compute scaling
+        depth_instruction = self._get_depth_instruction(response_depth)
+
         # Build shadow prompt with identity but no workflow tools
         prompt_parts = []
 
@@ -172,9 +180,12 @@ class ShadowAgentSpawner:
             prompt_parts.append("\n---\n")
 
         prompt_parts.append(
-            """## BROADCAST RESPONSE MODE
+            f"""## BROADCAST RESPONSE MODE
 
 You are responding to a question from another agent in your team.
+
+**Response Depth: {response_depth.upper()}**
+{depth_instruction}
 
 **Your Task:**
 1. Read the question carefully
@@ -184,7 +195,6 @@ You are responding to a question from another agent in your team.
 **Important:**
 - You do NOT have access to any tools in this mode
 - Simply provide your answer as text
-- Be concise but thorough
 - Your response will be sent back to the asking agent
 - After responding, this session ends (single-turn)
 
@@ -192,6 +202,37 @@ Focus on being helpful to your teammate.""",
         )
 
         return "\n".join(prompt_parts)
+
+    def _get_depth_instruction(self, response_depth: str) -> str:
+        """Get depth-specific instruction for test-time compute scaling.
+
+        This controls how thorough/complex shadow agent responses should be,
+        implementing test-time compute scaling for multi-agent systems.
+
+        Args:
+            response_depth: "low", "medium", or "high"
+
+        Returns:
+            Depth-specific instruction string
+        """
+        if response_depth == "low":
+            return """Suggest SIMPLE, MINIMAL solutions:
+- Prefer basic technologies (vanilla HTML/CSS/JS, simple libraries)
+- Avoid complex frameworks or architectures
+- Focus on getting the job done with minimal dependencies
+- Keep responses brief and to the point"""
+        elif response_depth == "high":
+            return """Suggest SOPHISTICATED, COMPREHENSIVE solutions:
+- Recommend modern frameworks and best practices (React, Next.js, TypeScript, etc.)
+- Include architecture considerations (SSR, component libraries, testing, CI/CD)
+- Suggest professional-grade tooling and patterns
+- Provide thorough, detailed responses with examples"""
+        else:  # medium (default)
+            return """Suggest BALANCED solutions:
+- Use appropriate technology for the task complexity
+- Include standard best practices without over-engineering
+- Balance simplicity with maintainability
+- Be concise but thorough"""
 
     def _build_current_turn_context(
         self,

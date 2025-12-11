@@ -65,7 +65,7 @@ The ``ask_others()`` tool waits for all responses before returning:
 .. code-block:: python
 
    # Agent calls ask_others()
-   result = ask_others("Should I use OAuth2 or JWT for authentication?")
+   result = ask_others("What authentication patterns are already implemented in the codebase?")
 
    # Tool blocks and waits for responses
    # Returns: {
@@ -102,6 +102,11 @@ All broadcast settings are in the orchestrator's coordination config:
        # Options: "low" | "medium" | "high"
        broadcast_sensitivity: "medium"
 
+       # Response depth for shadow agents (test-time compute scaling)
+       # Controls how thorough/complex suggested solutions should be
+       # Options: "low" | "medium" | "high"
+       response_depth: "medium"
+
 Complete Configuration Examples
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -134,6 +139,7 @@ Complete Configuration Examples
      coordination:
        broadcast: "agents"  # Enable agent-to-agent communication
        broadcast_sensitivity: "high"  # Agents use ask_others() frequently
+       response_depth: "medium"  # Balanced solution complexity
        broadcast_timeout: 300
        max_broadcasts_per_agent: 10
 
@@ -166,6 +172,7 @@ Complete Configuration Examples
      coordination:
        broadcast: "human"  # Human will be prompted for responses
        broadcast_sensitivity: "high"
+       response_depth: "medium"  # Balanced solution complexity
        broadcast_timeout: 60  # Shorter timeout for interactive sessions
        max_broadcasts_per_agent: 5
 
@@ -192,7 +199,7 @@ Other agents are NOT prompted - only the human answers questions:
       📢 BROADCAST FROM AGENT_A
       ======================================================================
 
-      Should I use OAuth2 or JWT for authentication?
+      What authentication patterns are already implemented in the codebase?
 
       ──────────────────────────────────────────────────────────────────────
       Options:
@@ -460,6 +467,58 @@ parent agent's conversation history:
    [INFO] While you were working, agent_a asked: "Should we use PostgreSQL?"
    Your shadow agent responded: "Yes, PostgreSQL is a good choice because..."
    (This is just for your awareness - you may continue your work.)
+
+Response Depth (Test-Time Compute Scaling)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``response_depth`` parameter controls **test-time compute scaling** for shadow
+agent responses. This concept is inspired by recent AI research showing that allocating
+more compute at inference time leads to better results (e.g., OpenAI's o1/o3 models).
+
+In MassGen, shadow agents responding to broadcasts represent a form of test-time compute.
+The ``response_depth`` parameter allows you to control this scaling - similar to how a
+human might decide how much effort to put into a response based on task importance.
+
+**Options:**
+
+``low``
+   Quick, simple responses with minimal solutions. Shadow agents will:
+
+   - Prefer basic technologies (vanilla HTML/CSS/JS, simple libraries)
+   - Avoid complex frameworks or architectures
+   - Focus on getting the job done with minimal dependencies
+   - Keep responses brief and to the point
+
+``medium`` (default)
+   Balanced effort with standard solutions. Shadow agents will:
+
+   - Use appropriate technology for the task complexity
+   - Include standard best practices without over-engineering
+   - Balance simplicity with maintainability
+   - Be concise but thorough
+
+``high``
+   Thorough, comprehensive responses with sophisticated solutions. Shadow agents will:
+
+   - Recommend modern frameworks and best practices (React, Next.js, TypeScript, etc.)
+   - Include architecture considerations (SSR, component libraries, testing, CI/CD)
+   - Suggest professional-grade tooling and patterns
+   - Provide detailed responses with examples
+
+**Example:**
+
+.. code-block:: yaml
+
+   orchestrator:
+     coordination:
+       broadcast: "agents"
+       response_depth: "high"  # Get sophisticated, comprehensive suggestions
+
+**Use Cases:**
+
+- Use ``low`` for quick prototypes or learning projects
+- Use ``medium`` (default) for standard development work
+- Use ``high`` for production systems requiring enterprise-grade solutions
 
 Serialized Human Mode
 ~~~~~~~~~~~~~~~~~~~~~
