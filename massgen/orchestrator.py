@@ -4002,8 +4002,10 @@ Your answer:"""
 
             # End round tracking for post-evaluation phase (moved from post_evaluate_answer finally block
             # to ensure it completes before save_coordination_logs is called)
-            if self._selected_agent and hasattr(self._selected_agent.backend, "end_round_tracking"):
-                self._selected_agent.backend.end_round_tracking("post_evaluation")
+            if self._selected_agent:
+                selected_agent = self.agents.get(self._selected_agent)
+                if selected_agent and hasattr(selected_agent.backend, "end_round_tracking"):
+                    selected_agent.backend.end_round_tracking("post_evaluation")
 
             # Check if restart was requested
             if self.restart_pending and self.current_attempt < (self.max_attempts - 1):
