@@ -334,17 +334,16 @@ class Orchestrator(ChatAgent):
                 self._inject_planning_tools_for_all_agents()
                 logger.info("[Orchestrator] Planning tools injection complete")
 
-        # NOTE: Memory MCP tools are disabled - using file-based approach with task completion reminders
-        # Agents use standard file tools to manage memory files in workspace/memory/
-        # Reminders to save memory are triggered automatically when completing high-priority tasks
-        # See planning_dataclasses.py update_task_status() for reminder logic
-        #
-        # # Inject memory tools if enabled
-        # if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
-        #     if self.config.coordination_config.enable_memory_filesystem_mode:
-        #         logger.info(f"[Orchestrator] Injecting memory tools for {len(self.agents)} agents")
-        #         self._inject_memory_tools_for_all_agents()
-        #         logger.info("[Orchestrator] Memory tools injection complete")
+        # Inject memory MCP tools and set up auto-compression if filesystem memory is enabled
+        # Memory MCP provides the compression_complete tool needed for agent-driven compression
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
+            if self.config.coordination_config.enable_memory_filesystem_mode:
+                logger.info(f"[Orchestrator] Injecting memory tools for {len(self.agents)} agents")
+                self._inject_memory_tools_for_all_agents()
+                logger.info("[Orchestrator] Memory tools injection complete")
+
+                # Set up agent-driven compression on each agent
+                self._setup_agent_driven_compression()
 
         # NLIP Configuration
         self.enable_nlip = enable_nlip
@@ -941,6 +940,14 @@ class Orchestrator(ChatAgent):
             else:
                 logger.warning(f"[Orchestrator] Agent {agent_id} has no filesystem_manager")
 
+        # Check if full memory tools should be enabled (default: False, only compression_complete)
+        enable_memory_tools = (
+            hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_mcp_tools") and self.config.coordination_config.enable_memory_mcp_tools
+        )
+        if enable_memory_tools:
+            args.append("--enable-memory-tools")
+            logger.info("[Orchestrator] Enabling full memory MCP tools (create, append, remove, load)")
+
         config = {
             "name": f"memory_{agent_id}",
             "type": "stdio",
@@ -952,6 +959,106 @@ class Orchestrator(ChatAgent):
         }
 
         return config
+
+    def _setup_agent_driven_compression(self) -> None:
+        """
+        Set up agent-driven compression for all agents with filesystem memory enabled.
+
+        This configures each agent's SingleAgent instance to use the AgentDrivenCompressor,
+        which coordinates with the compression_complete MCP tool for context management.
+
+        Also creates ContextWindowMonitor for each agent to track token usage and
+        determine when compression should be triggered.
+        """
+        from pathlib import Path as PathlibPath
+
+        from .memory._context_monitor import ContextWindowMonitor
+
+        # Get compression settings from coordination config
+        trigger_threshold = 0.75
+        target_ratio = 0.20
+
+        if hasattr(self.config, "coordination_config"):
+            coord_config = self.config.coordination_config
+            if hasattr(coord_config, "compression_trigger_threshold"):
+                trigger_threshold = coord_config.compression_trigger_threshold
+            if hasattr(coord_config, "compression_target_ratio"):
+                target_ratio = coord_config.compression_target_ratio
+
+        logger.info(
+            f"[Orchestrator] Setting up agent-driven compression " f"(trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%)",
+        )
+
+        for agent_id, agent in self.agents.items():
+            # Get workspace path from filesystem manager
+            workspace_path = None
+            if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
+                if agent.backend.filesystem_manager and agent.backend.filesystem_manager.cwd:
+                    workspace_path = PathlibPath(agent.backend.filesystem_manager.cwd)
+
+            if not workspace_path:
+                logger.warning(f"[Orchestrator] Agent {agent_id} has no workspace path, skipping compression setup")
+                continue
+
+            # Create context monitor if agent doesn't have one
+            # This is required for compression to work - tracks token usage
+            if not agent.context_monitor:
+                # Get model name and provider from backend
+                model_name = "unknown"
+                provider = "openai"  # Default provider
+
+                if hasattr(agent, "backend"):
+                    backend = agent.backend
+                    # Model can be in backend.model or backend.config["model"]
+                    if hasattr(backend, "model") and backend.model:
+                        model_name = backend.model
+                    elif hasattr(backend, "config") and isinstance(backend.config, dict):
+                        model_name = backend.config.get("model", "unknown")
+
+                    # Determine provider from backend class name or model name
+                    backend_class = type(backend).__name__.lower()
+                    if "claude" in backend_class or "anthropic" in backend_class:
+                        provider = "anthropic"
+                    elif "gemini" in backend_class or "google" in backend_class:
+                        provider = "google"
+                    elif "grok" in backend_class:
+                        provider = "xai"
+                    # For chatcompletion/openrouter backends, try to infer from model name
+                    elif model_name != "unknown":
+                        model_lower = model_name.lower()
+                        if "claude" in model_lower or "anthropic" in model_lower:
+                            provider = "anthropic"
+                        elif "gemini" in model_lower or "google" in model_lower:
+                            provider = "google"
+                        elif "grok" in model_lower or "x-ai" in model_lower:
+                            provider = "xai"
+                        elif "openrouter" in str(getattr(backend, "config", {}).get("base_url", "")):
+                            provider = "openrouter"
+
+                agent.context_monitor = ContextWindowMonitor(
+                    model_name=model_name,
+                    provider=provider,
+                    trigger_threshold=trigger_threshold,
+                    target_ratio=target_ratio,
+                    enabled=True,
+                )
+                logger.info(
+                    f"[Orchestrator] Created context monitor for {agent_id}: "
+                    f"{agent.context_monitor.context_window:,} tokens, "
+                    f"trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%",
+                )
+
+            # Set up agent-driven compressor on the agent
+            try:
+                agent.set_agent_driven_compressor(
+                    workspace_path=workspace_path,
+                    fallback_compressor=getattr(agent, "context_compressor", None),
+                    trigger_threshold=trigger_threshold,
+                    target_ratio=target_ratio,
+                )
+                logger.info(f"[Orchestrator] Set up agent-driven compression for {agent_id}")
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Failed to set up compression for {agent_id}: {e}")
 
     @staticmethod
     def _get_chunk_type_value(chunk) -> str:
@@ -2760,7 +2867,16 @@ Your answer:"""
         # Save any partial work before injecting update
         snapshot_timestamp = await self._save_partial_work_on_restart(agent_id)
 
-        # Build and inject update message with ONLY the new answers
+        # Inject directly into the agent's conversation buffer (single source of truth)
+        # This ensures the injection is seen by the agent on the next LLM call
+        agent = self.agents.get(agent_id)
+        if agent and hasattr(agent, "conversation_buffer"):
+            agent.conversation_buffer.inject_update(new_answers, anonymize=True)
+            logger.info(f"[Orchestrator] Injected update into {agent_id}'s conversation buffer")
+        else:
+            logger.warning(f"[Orchestrator] Agent {agent_id} doesn't have conversation_buffer, falling back to conversation_messages")
+
+        # Also append to conversation_messages for backward compatibility
         update_message = self._build_update_message(agent_id, new_answers)
         conversation_messages.append(update_message)
 
@@ -3432,7 +3548,14 @@ Your answer:"""
                     agent_id=agent_id,
                 )
 
-            for attempt in range(max_attempts):
+            # Track if injection just occurred (to use buffer messages instead of enforcement_msg)
+            injection_just_occurred = False
+
+            # Use while loop so injection doesn't count as an attempt
+            # (injection is an update, not a failed attempt)
+            attempt = 0
+            is_first_real_attempt = True  # Track first LLM call separately from attempt counter
+            while attempt < max_attempts:
                 logger.info(f"[Orchestrator] Agent {agent_id} attempt {attempt + 1}/{max_attempts}")
 
                 if self._check_restart_pending(agent_id):
@@ -3446,12 +3569,13 @@ Your answer:"""
                     if should_continue:
                         # Has new answers, inject update and continue
                         yield ("content", f"📨 [{agent_id}] receiving update with new answers\n")
+                        injection_just_occurred = True  # Flag to use buffer on next iteration
                         continue  # Agent continues working with update
                     # else: No new answers (already has all context), just clear flag and proceed normally
 
                 # Stream agent response with workflow tools
                 # TODO: Need to still log this redo enforcement msg in the context.txt, and this & others in the coordination tracker.
-                if attempt == 0:
+                if is_first_real_attempt:
                     # First attempt: orchestrator provides initial conversation
                     # But we need the agent to have this in its history for subsequent calls
                     # First attempt: provide complete conversation and reset agent's history
@@ -3464,6 +3588,33 @@ Your answer:"""
                         orchestrator_turn=self._current_turn + 1,  # Next turn number
                         previous_winners=self._winning_agents_history.copy(),
                     )
+                    is_first_real_attempt = False  # Only first LLM call uses this path
+                elif injection_just_occurred:
+                    # After injection: use buffer's to_messages() which includes the injected update
+                    # The injection was added directly to the agent's conversation_buffer
+                    injection_just_occurred = False  # Clear flag
+                    if hasattr(agent, "conversation_buffer"):
+                        buffer_messages = agent.conversation_buffer.to_messages()
+                        logger.info(f"[Orchestrator] Using buffer messages after injection ({len(buffer_messages)} messages)")
+                        chat_stream = agent.chat(
+                            buffer_messages,
+                            self.workflow_tools,
+                            reset_chat=True,  # Reset to buffer state (includes injection)
+                            current_stage=CoordinationStage.INITIAL_ANSWER,
+                            orchestrator_turn=self._current_turn + 1,
+                            previous_winners=self._winning_agents_history.copy(),
+                        )
+                    else:
+                        # Fallback: use conversation_messages (has injection appended)
+                        logger.warning("[Orchestrator] No buffer, using conversation_messages after injection")
+                        chat_stream = agent.chat(
+                            conversation_messages,
+                            self.workflow_tools,
+                            reset_chat=True,
+                            current_stage=CoordinationStage.INITIAL_ANSWER,
+                            orchestrator_turn=self._current_turn + 1,
+                            previous_winners=self._winning_agents_history.copy(),
+                        )
                 else:
                     # Subsequent attempts: send enforcement message (set by error handling)
 
@@ -3636,6 +3787,7 @@ Your answer:"""
                             error_msg,
                             "Vote rejected due to multiple votes.",
                         )
+                        attempt += 1  # Error counts as an attempt
                         continue  # Retry this attempt
                     else:
                         yield (
@@ -3664,6 +3816,7 @@ Your answer:"""
 
                         # Send tool error response for all tool calls that caused the violation
                         enforcement_msg = self._create_tool_error_messages(agent, tool_calls, error_msg)
+                        attempt += 1  # Error counts as an attempt
                         continue  # Retry this attempt
                     else:
                         yield (
@@ -3713,6 +3866,7 @@ Your answer:"""
                                     yield ("content", f"❌ {error_msg}")
                                     # Create proper tool error message for retry
                                     enforcement_msg = self._create_tool_error_messages(agent, [tool_call], error_msg)
+                                    attempt += 1  # Error counts as an attempt
                                     continue
                                 else:
                                     yield (
@@ -3753,6 +3907,7 @@ Your answer:"""
                                     yield ("content", f"❌ {error_msg}")
                                     # Create proper tool error message for retry
                                     enforcement_msg = self._create_tool_error_messages(agent, [tool_call], error_msg)
+                                    attempt += 1  # Error counts as an attempt
                                     continue  # Retry with updated conversation
                                 else:
                                     yield (
@@ -3806,6 +3961,7 @@ Your answer:"""
                                     yield ("content", f"❌ {count_error}")
                                     # Create proper tool error message for retry
                                     enforcement_msg = self._create_tool_error_messages(agent, [tool_call], count_error)
+                                    attempt += 1  # Error counts as an attempt
                                     continue
                                 else:
                                     yield (
@@ -3832,6 +3988,7 @@ Your answer:"""
                                     yield ("content", f"❌ {novelty_error}")
                                     # Create proper tool error message for retry
                                     enforcement_msg = self._create_tool_error_messages(agent, [tool_call], novelty_error)
+                                    attempt += 1  # Error counts as an attempt
                                     continue
                                 else:
                                     yield (
@@ -3866,6 +4023,7 @@ Your answer:"""
                                         yield ("content", f"❌ {error_msg}")
                                         # Create proper tool error message for retry
                                         enforcement_msg = self._create_tool_error_messages(agent, [tool_call], error_msg)
+                                        attempt += 1  # Error counts as an attempt
                                         continue
                                     else:
                                         yield (
@@ -3927,6 +4085,7 @@ Your answer:"""
                         else:
                             # No tool calls, just a plain text response - use default enforcement
                             enforcement_msg = self.message_templates.enforcement_message()
+                        attempt += 1  # Error counts as an attempt
                         continue  # Retry with updated conversation
                     else:
                         # Last attempt failed, agent did not provide proper workflow response
@@ -4002,8 +4161,10 @@ Your answer:"""
 
             # End round tracking for post-evaluation phase (moved from post_evaluate_answer finally block
             # to ensure it completes before save_coordination_logs is called)
-            if self._selected_agent and hasattr(self._selected_agent.backend, "end_round_tracking"):
-                self._selected_agent.backend.end_round_tracking("post_evaluation")
+            # Note: _selected_agent is an agent_id string, not an agent object
+            selected_agent_obj = self.agents.get(self._selected_agent) if self._selected_agent else None
+            if selected_agent_obj and hasattr(selected_agent_obj, "backend") and hasattr(selected_agent_obj.backend, "end_round_tracking"):
+                selected_agent_obj.backend.end_round_tracking("post_evaluation")
 
             # Check if restart was requested
             if self.restart_pending and self.current_attempt < (self.max_attempts - 1):
@@ -4221,14 +4382,17 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         enable_command_execution = False
         docker_mode = False
         enable_sudo = False
+        concurrent_tool_execution = False
         if hasattr(agent, "config") and agent.config:
             enable_command_execution = agent.config.backend_params.get("enable_mcp_command_line", False)
             docker_mode = agent.config.backend_params.get("command_line_execution_mode", "local") == "docker"
             enable_sudo = agent.config.backend_params.get("command_line_docker_enable_sudo", False)
+            concurrent_tool_execution = agent.config.backend_params.get("concurrent_tool_execution", False)
         elif hasattr(agent, "backend") and hasattr(agent.backend, "backend_params"):
             enable_command_execution = agent.backend.backend_params.get("enable_mcp_command_line", False)
             docker_mode = agent.backend.backend_params.get("command_line_execution_mode", "local") == "docker"
             enable_sudo = agent.backend.backend_params.get("command_line_docker_enable_sudo", False)
+            concurrent_tool_execution = agent.backend.backend_params.get("concurrent_tool_execution", False)
         # Check if audio generation is enabled for this agent
         enable_audio_generation = False
         if hasattr(agent, "config") and agent.config:
@@ -4270,6 +4434,7 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             enable_command_execution=enable_command_execution,
             docker_mode=docker_mode,
             enable_sudo=enable_sudo,
+            concurrent_tool_execution=concurrent_tool_execution,
         )
 
         # Change the status of all agents that were not selected to AgentStatus.COMPLETED

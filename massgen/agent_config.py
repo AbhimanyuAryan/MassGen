@@ -66,6 +66,14 @@ class CoordinationConfig:
                                        provided for creating/updating/loading memories. Short-term
                                        memories auto-inject into all agents' system prompts. Long-term
                                        memories load on-demand. Inspired by Letta's context hierarchy.
+        compression_trigger_threshold: Context window usage (0.0-1.0) at which to trigger compression.
+                                       Default is 0.75 (75%). Only used when enable_memory_filesystem_mode=True.
+        compression_target_ratio: Target context percentage (0.0-1.0) after compression.
+                                  Default is 0.20 (20%). Only used when enable_memory_filesystem_mode=True.
+        enable_memory_mcp_tools: If True, enables full memory MCP tools (create_memory, append_to_memory,
+                                 remove_memory, load_memory). Default is False - agents use file writing
+                                 for memories. The compression_complete tool is always available when
+                                 enable_memory_filesystem_mode=True.
         use_skills: If True, enables skills system using openskills. Agents can invoke skills
                    via bash commands (openskills read <skill-name>). Requires command line
                    execution to be enabled.
@@ -92,6 +100,9 @@ class CoordinationConfig:
     max_broadcasts_per_agent: int = 10
     task_planning_filesystem_mode: bool = False
     enable_memory_filesystem_mode: bool = False
+    compression_trigger_threshold: float = 0.75
+    compression_target_ratio: float = 0.20
+    enable_memory_mcp_tools: bool = False
     use_skills: bool = False
     massgen_skills: List[str] = field(default_factory=list)
     skills_directory: str = ".agent/skills"

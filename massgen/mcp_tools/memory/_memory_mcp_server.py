@@ -108,6 +108,7 @@ async def create_server() -> fastmcp.FastMCP:
     parser.add_argument("--agent-id", required=True, help="Agent ID")
     parser.add_argument("--orchestrator-id", required=True, help="Orchestrator ID")
     parser.add_argument("--workspace-path", required=False, help="Agent workspace path for filesystem persistence")
+    parser.add_argument("--enable-memory-tools", action="store_true", help="Enable full memory tools (create, append, remove, load). Default: only compression_complete")
     args = parser.parse_args()
 
     # Set workspace path if provided
@@ -124,7 +125,14 @@ async def create_server() -> fastmcp.FastMCP:
     mcp.agent_id = args.agent_id
     mcp.orchestrator_id = args.orchestrator_id
 
-    @mcp.tool()
+    # Check if full memory tools should be enabled
+    enable_memory_tools = args.enable_memory_tools
+    if enable_memory_tools:
+        logger.info("Full memory tools enabled (create, append, remove, load)")
+    else:
+        logger.info("Only compression_complete tool enabled (memory via file writing)")
+
+    # Define memory tools (only registered if enable_memory_tools is True)
     def create_memory(
         name: str,
         description: str,
@@ -200,7 +208,6 @@ async def create_server() -> fastmcp.FastMCP:
                 "error": str(e),
             }
 
-    @mcp.tool()
     def append_to_memory(
         name: str,
         content: str,
@@ -254,7 +261,6 @@ async def create_server() -> fastmcp.FastMCP:
                 "error": str(e),
             }
 
-    @mcp.tool()
     def remove_memory(name: str) -> Dict[str, Any]:
         """Delete a memory from storage.
 
@@ -298,7 +304,6 @@ async def create_server() -> fastmcp.FastMCP:
                 "error": str(e),
             }
 
-    @mcp.tool()
     def load_memory(name: str) -> Dict[str, Any]:
         """Load a long-term memory into context.
 
@@ -339,6 +344,58 @@ async def create_server() -> fastmcp.FastMCP:
                 "operation": "load_memory",
                 "error": str(e),
             }
+
+    def compression_complete() -> Dict[str, Any]:
+        """Signal that context compression memory writes are complete.
+
+        Call this AFTER writing short-term and long-term memories using
+        file writing tools. The system will validate that the required
+        memory files exist and then truncate the conversation history.
+
+        This tool is part of the auto-compression flow:
+        1. System detects context window approaching limit (~75%)
+        2. System injects compression request asking you to save memories
+        3. You write memory/short_term/recent.md with conversation summary
+        4. You optionally write memory/long_term/*.md for persistent info
+        5. You call this tool to signal completion
+        6. System validates and truncates conversation to ~20%
+
+        Returns:
+            Dictionary confirming compression signal received
+
+        Example:
+            # After writing memories
+            compression_complete()
+        """
+        logger.info("Compression complete signal received from agent")
+
+        # Check if recent.md exists (validation)
+        recent_exists = False
+        if _workspace_path:
+            recent_file = _workspace_path / "memory" / "short_term" / "recent.md"
+            recent_exists = recent_file.exists()
+            if recent_exists:
+                logger.info(f"Validated: {recent_file} exists")
+            else:
+                logger.warning(f"Warning: {recent_file} not found")
+
+        return {
+            "success": True,
+            "operation": "compression_complete",
+            "message": "Compression acknowledged. Context will be truncated.",
+            "recent_memory_exists": recent_exists,
+        }
+
+    # Always register compression_complete tool
+    mcp.tool()(compression_complete)
+
+    # Conditionally register memory management tools
+    if enable_memory_tools:
+        mcp.tool()(create_memory)
+        mcp.tool()(append_to_memory)
+        mcp.tool()(remove_memory)
+        mcp.tool()(load_memory)
+        logger.info("Registered memory tools: create_memory, append_to_memory, remove_memory, load_memory")
 
     return mcp
 

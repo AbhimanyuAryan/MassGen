@@ -67,6 +67,15 @@ class LLMBackend(ABC):
         # Initialize utility classes
         self.token_usage = TokenUsage()
 
+        # Track last API call's input tokens (for compression decisions)
+        # This is different from token_usage.input_tokens which is cumulative
+        self._last_call_input_tokens: int = 0
+
+        # Mid-stream compression check (between tool calls)
+        # Set via set_compression_check() method by chat_agent when compression is enabled
+        self._compression_threshold: Optional[float] = None  # e.g., 0.75 = 75% of context window
+        self._context_window_size: Optional[int] = None  # Model's context window in tokens
+
         # Round-level token tracking
         self._round_token_history: List[RoundTokenUsage] = []
         self._current_round_number: int = 0
@@ -270,6 +279,93 @@ class LLMBackend(ABC):
             StreamChunk: Standardized response chunks
         """
 
+    async def stream_with_tools_logged(
+        self,
+        stream_generator: AsyncGenerator[StreamChunk, None],
+        agent_id: str,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Wrap a streaming generator with LLM call logging.
+
+        Use this wrapper in backend implementations to log all LLM API calls.
+        The wrapper handles start/end call tracking, chunk recording, and
+        token usage extraction.
+
+        Args:
+            stream_generator: The actual streaming generator from the LLM API
+            agent_id: ID of the agent making the call
+            model: Model name being used
+            messages: Input messages sent to the LLM
+            tools: Tools available to the LLM
+
+        Yields:
+            StreamChunk: Passes through chunks from the wrapped generator
+
+        Example:
+            async def _stream_api_call(self, messages, tools, **kwargs):
+                # Raw API call implementation
+                ...
+
+            async def stream_with_tools(self, messages, tools, **kwargs):
+                raw_stream = self._stream_api_call(messages, tools, **kwargs)
+                async for chunk in self.stream_with_tools_logged(
+                    raw_stream,
+                    agent_id=kwargs.get("agent_id", "unknown"),
+                    model=kwargs.get("model", self.config.get("model", "unknown")),
+                    messages=messages,
+                    tools=tools,
+                ):
+                    yield chunk
+        """
+        from ..llm_call_logger import get_llm_call_logger
+
+        llm_logger = get_llm_call_logger()
+        call_id = ""
+
+        if llm_logger and llm_logger.enabled:
+            call_id = llm_logger.start_call(
+                agent_id=agent_id,
+                backend_name=self.get_provider_name(),
+                model=model,
+                messages=messages,
+                tools=tools,
+            )
+
+        finish_reason = ""
+        try:
+            async for chunk in stream_generator:
+                # Record chunk if logging is enabled
+                if llm_logger and call_id:
+                    chunk_type = chunk.type if isinstance(chunk.type, str) else str(chunk.type)
+
+                    # Track finish_reason from done chunks
+                    if chunk_type == "done":
+                        finish_reason = "stop"
+                    elif chunk.tool_calls:
+                        finish_reason = "tool_calls"
+
+                    llm_logger.record_chunk(
+                        call_id=call_id,
+                        chunk_type=chunk_type,
+                        content=chunk.content,
+                        tool_calls=chunk.tool_calls,
+                        reasoning=chunk.reasoning_delta,
+                        finish_reason=finish_reason if chunk_type == "done" else None,
+                    )
+
+                yield chunk
+
+        finally:
+            if llm_logger and call_id:
+                llm_logger.end_call(
+                    call_id=call_id,
+                    input_tokens=self._last_call_input_tokens,
+                    output_tokens=self.token_usage.output_tokens,
+                    finish_reason=finish_reason,
+                )
+
     @abstractmethod
     def get_provider_name(self) -> str:
         """Get the name of this provider."""
@@ -325,6 +421,49 @@ class LLMBackend(ABC):
     def reset_token_usage(self):
         """Reset token usage tracking."""
         self.token_usage = TokenUsage()
+
+    # ==================== Mid-Stream Compression Check ====================
+
+    def set_compression_check(self, threshold: float, context_window: int) -> None:
+        """Enable mid-stream compression checking between tool calls.
+
+        When enabled, the backend will check after each API call if the input tokens
+        exceed the threshold percentage of the context window. If so, it yields a
+        special 'compression_needed' chunk to signal the agent to trigger compression.
+
+        Args:
+            threshold: Fraction of context window that triggers compression (e.g., 0.75)
+            context_window: Model's context window size in tokens
+        """
+        self._compression_threshold = threshold
+        self._context_window_size = context_window
+        logger.info(
+            f"[{self.__class__.__name__}] Mid-stream compression check enabled: " f"threshold={threshold*100:.0f}%, context_window={context_window:,}",
+        )
+
+    def should_trigger_compression(self) -> bool:
+        """Check if current token usage should trigger compression.
+
+        Returns:
+            True if _last_call_input_tokens exceeds threshold percentage of context window
+        """
+        if self._compression_threshold is None or self._context_window_size is None:
+            return False
+
+        if self._last_call_input_tokens <= 0:
+            return False
+
+        usage_percent = self._last_call_input_tokens / self._context_window_size
+        should_compress = usage_percent >= self._compression_threshold
+
+        if should_compress:
+            logger.warning(
+                f"[{self.__class__.__name__}] Mid-stream compression triggered: "
+                f"{self._last_call_input_tokens:,}/{self._context_window_size:,} tokens "
+                f"({usage_percent*100:.1f}%) >= {self._compression_threshold*100:.0f}% threshold",
+            )
+
+        return should_compress
 
     # ==================== Round Token Tracking ====================
 
@@ -481,7 +620,10 @@ class LLMBackend(ABC):
         # Extract detailed token breakdown for visibility
         breakdown = self.token_calculator.extract_token_breakdown(usage)
 
-        # Update all TokenUsage fields
+        # Track last call's input tokens (for compression - need per-call, not cumulative)
+        self._last_call_input_tokens = breakdown.get("input_tokens", 0)
+
+        # Update all TokenUsage fields (cumulative)
         self.token_usage.input_tokens += breakdown.get("input_tokens", 0)
         self.token_usage.output_tokens += breakdown.get("output_tokens", 0)
         self.token_usage.estimated_cost += cost

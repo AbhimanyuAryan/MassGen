@@ -40,12 +40,12 @@ agents:
       # model: "gemini-2.5-pro"
       # type: "openai"
       # model: "gpt-5-codex"
-      # type: "chatcompletion"
-      # base_url: "https://openrouter.ai/api/v1"
-      # model: "x-ai/grok-4.1-fast"
-      type: "claude"
-      model: "claude-sonnet-4-5-20250929"
-      enable_strict_tool_use: true
+      type: "chatcompletion"
+      base_url: "https://openrouter.ai/api/v1"
+      model: "x-ai/grok-4.1-fast"
+      # type: "claude"
+      # model: "claude-sonnet-4-5-20250929"
+      # enable_strict_tool_use: true
       # type: "grok"
       # model: "grok-4-1-fast-reasoning"
       cwd: "workspace1"
@@ -54,6 +54,10 @@ agents:
       enable_code_based_tools: true          # MCP tools → Python code in servers/
       exclude_file_operation_mcps: true      # Use command-line for file ops (write_file/edit_file kept for clean file creation)
       enable_mcp_command_line: true          # Enable execute_command
+
+      # Parallel tool execution - tools called together run simultaneously
+      # WARNING: Do not call dependent tools together (e.g., mkdir + write to that dir)
+      concurrent_tool_execution: true
 
       # Command line execution (required for code-based tools)
       command_line_execution_mode: "docker"
@@ -102,12 +106,12 @@ agents:
     backend:
       # type: "claude_code"
       # model: "claude-sonnet-4-5-20250929"
-      # type: "chatcompletion"
-      # base_url: "https://openrouter.ai/api/v1"
-      # model: "x-ai/grok-4.1-fast"
-      type: "claude"
-      model: "claude-sonnet-4-5-20250929"
-      enable_strict_tool_use: true
+      type: "chatcompletion"
+      base_url: "https://openrouter.ai/api/v1"
+      model: "x-ai/grok-4.1-fast"
+      # type: "claude"
+      # model: "claude-sonnet-4-5-20250929"
+      # enable_strict_tool_use: true
       # type: "grok"
       # model: "grok-4-1-fast-reasoning"
       cwd: "workspace2"
@@ -116,6 +120,10 @@ agents:
       enable_code_based_tools: true          # MCP tools → Python code in servers/
       exclude_file_operation_mcps: true      # Use command-line for file ops (write_file/edit_file kept for clean file creation)
       enable_mcp_command_line: true          # Enable execute_command
+
+      # Parallel tool execution - tools called together run simultaneously
+      # WARNING: Do not call dependent tools together (e.g., mkdir + write to that dir)
+      concurrent_tool_execution: true
 
       # Command line execution (required for code-based tools)
       command_line_execution_mode: "docker"
@@ -199,6 +207,9 @@ orchestrator:
 
     # Filesystem Memory Mode
     enable_memory_filesystem_mode: true
+    # Go low for testing
+    compression_trigger_threshold: 0.01  # Optional, default 75%
+    compression_target_ratio: 0.005       # Optional, default 20%
 
 
 # ============ Timeout Configuration ============

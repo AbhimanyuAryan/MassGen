@@ -880,9 +880,10 @@ class CommandExecutionSection(SystemPromptSection):
     Args:
         docker_mode: Whether commands execute in Docker containers
         enable_sudo: Whether sudo is available in Docker containers
+        concurrent_tool_execution: Whether tools execute in parallel
     """
 
-    def __init__(self, docker_mode: bool = False, enable_sudo: bool = False):
+    def __init__(self, docker_mode: bool = False, enable_sudo: bool = False, concurrent_tool_execution: bool = False):
         super().__init__(
             title="Command Execution",
             priority=Priority.MEDIUM,
@@ -890,6 +891,7 @@ class CommandExecutionSection(SystemPromptSection):
         )
         self.docker_mode = docker_mode
         self.enable_sudo = enable_sudo
+        self.concurrent_tool_execution = concurrent_tool_execution
 
     def build_content(self) -> str:
         parts = ["## Command Execution"]
@@ -919,6 +921,16 @@ class CommandExecutionSection(SystemPromptSection):
                     "- For system packages, ask the user to rebuild the Docker image with " "needed packages",
                 )
 
+            parts.append("")
+
+        if self.concurrent_tool_execution:
+            parts.append("**PARALLEL TOOL EXECUTION ENABLED**")
+            parts.append("- Multiple tool calls in your response will execute SIMULTANEOUSLY, not sequentially")
+            parts.append("- Do NOT call dependent tools together in the same response:")
+            parts.append("  - BAD: `mkdir foo` + `write_file foo/bar.txt` (directory may not exist yet)")
+            parts.append("  - BAD: `execute_command 'python server.py'` + `execute_command 'curl localhost'` (server not ready)")
+            parts.append("- Each tool call should be independent and not rely on another tool's output")
+            parts.append("- If you need sequential execution, make separate responses for each step")
             parts.append("")
 
         return "\n".join(parts)

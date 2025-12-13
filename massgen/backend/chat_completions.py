@@ -27,6 +27,7 @@ from openai import AsyncOpenAI
 
 from ..api_params_handler import ChatCompletionsAPIParamsHandler
 from ..formatter import ChatCompletionsFormatter
+from ..llm_call_logger import get_llm_call_logger
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..stream_chunk import ChunkType
 
@@ -203,6 +204,18 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                 api_params["tools"] = []
             api_params["tools"].extend(provider_tools)
 
+        # Start LLM call logging
+        llm_logger = get_llm_call_logger()
+        llm_call_id = ""
+        if llm_logger and llm_logger.enabled:
+            llm_call_id = llm_logger.start_call(
+                agent_id=all_params.get("agent_id", "unknown"),
+                backend_name=self.get_provider_name(),
+                model=all_params.get("model", self.config.get("model", "unknown")),
+                messages=current_messages,
+                tools=api_params.get("tools", tools),
+            )
+
         # Start streaming
         stream = await client.chat.completions.create(**api_params)
 
@@ -227,6 +240,13 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                         if getattr(delta, "content", None):
                             content_chunk = delta.content
                             content += content_chunk
+                            # Record chunk for LLM call logging
+                            if llm_logger and llm_call_id:
+                                llm_logger.record_chunk(
+                                    call_id=llm_call_id,
+                                    chunk_type="content",
+                                    content=content_chunk,
+                                )
                             yield StreamChunk(type="content", content=content_chunk)
 
                         # Tool calls streaming (OpenAI-style)
@@ -294,12 +314,27 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                                     },
                                 )
 
+                            # Record tool_calls chunk for LLM call logging
+                            if llm_logger and llm_call_id:
+                                llm_logger.record_chunk(
+                                    call_id=llm_call_id,
+                                    chunk_type="tool_calls",
+                                    tool_calls=final_tool_calls,
+                                    finish_reason="tool_calls",
+                                )
                             yield StreamChunk(type="tool_calls", tool_calls=final_tool_calls)
 
                             response_completed = True
                             # DON'T break yet - continue to capture usage chunk
 
                         elif choice.finish_reason in ["stop", "length"]:
+                            # Record finish for LLM call logging
+                            if llm_logger and llm_call_id:
+                                llm_logger.record_chunk(
+                                    call_id=llm_call_id,
+                                    chunk_type="done",
+                                    finish_reason=choice.finish_reason,
+                                )
                             response_completed = True
                             # DON'T return yet - continue to capture usage chunk
 
@@ -313,6 +348,14 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                     )
                     # Now we can safely exit or continue based on finish reason
                     if finish_reason_received in ["stop", "length"]:
+                        # End LLM call logging before returning
+                        if llm_logger and llm_call_id:
+                            llm_logger.end_call(
+                                call_id=llm_call_id,
+                                input_tokens=self._last_call_input_tokens,
+                                output_tokens=self.token_usage.output_tokens,
+                                finish_reason=finish_reason_received,
+                            )
                         yield StreamChunk(type="done")
                         return
                     elif finish_reason_received == "tool_calls":
@@ -333,6 +376,14 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                     content,
                     all_params.get("model", "unknown"),
                 )
+            # End LLM call logging before returning
+            if llm_logger and llm_call_id:
+                llm_logger.end_call(
+                    call_id=llm_call_id,
+                    input_tokens=self._last_call_input_tokens,
+                    output_tokens=self.token_usage.output_tokens,
+                    finish_reason=finish_reason_received,
+                )
             yield StreamChunk(type="done")
             return
 
@@ -344,6 +395,14 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
             # If there are provider calls (non-MCP, non-custom), let API handle them
             if provider_calls:
                 logger.info(f"Provider function calls detected: {[call['name'] for call in provider_calls]}. Ending local processing.")
+                # End LLM call logging before returning
+                if llm_logger and llm_call_id:
+                    llm_logger.end_call(
+                        call_id=llm_call_id,
+                        input_tokens=self._last_call_input_tokens,
+                        output_tokens=self.token_usage.output_tokens,
+                        finish_reason="tool_calls",
+                    )
                 yield StreamChunk(type="done")
                 return
 
@@ -556,16 +615,54 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
             if functions_executed:
                 updated_messages = self._trim_message_history(updated_messages)
 
+                # Check if compression is needed before continuing with more tool calls
+                # This prevents runaway context growth during multi-turn tool execution
+                if self.should_trigger_compression():
+                    logger.warning(
+                        f"[{self.__class__.__name__}] Mid-stream compression check: " f"yielding compression_needed chunk before next tool round",
+                    )
+                    yield StreamChunk(
+                        type="compression_needed",
+                        content=f"Context window usage exceeded threshold: {self._last_call_input_tokens:,} tokens",
+                    )
+                    # Don't return - continue with recursive call after yielding the signal
+                    # The agent can decide to interrupt or continue
+
+                # End LLM call logging before recursion (this call is complete, recursion starts a new one)
+                if llm_logger and llm_call_id:
+                    llm_logger.end_call(
+                        call_id=llm_call_id,
+                        input_tokens=self._last_call_input_tokens,
+                        output_tokens=self.token_usage.output_tokens,
+                        finish_reason="tool_calls",
+                    )
+
                 # Recursive call with updated messages
                 async for chunk in self._stream_with_custom_and_mcp_tools(updated_messages, tools, client, **kwargs):
                     yield chunk
             else:
                 # No functions were executed, we're done
+                # End LLM call logging before returning
+                if llm_logger and llm_call_id:
+                    llm_logger.end_call(
+                        call_id=llm_call_id,
+                        input_tokens=self._last_call_input_tokens,
+                        output_tokens=self.token_usage.output_tokens,
+                        finish_reason="tool_calls",
+                    )
                 yield StreamChunk(type="done")
                 return
 
         elif response_completed:
             # Response completed with no function calls - we're done (base case)
+            # End LLM call logging before returning
+            if llm_logger and llm_call_id:
+                llm_logger.end_call(
+                    call_id=llm_call_id,
+                    input_tokens=self._last_call_input_tokens,
+                    output_tokens=self.token_usage.output_tokens,
+                    finish_reason="stop",
+                )
             yield StreamChunk(
                 type="mcp_status",
                 status="mcp_session_complete",

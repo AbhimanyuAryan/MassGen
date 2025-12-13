@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
 from .backend.base import LLMBackend, StreamChunk
+from .conversation_buffer import AgentConversationBuffer
 from .logger_config import logger
 from .memory import ConversationMemory, PersistentMemoryBase
 from .stream_chunk import ChunkType
@@ -187,12 +188,20 @@ class SingleAgent(ChatAgent):
         # Format: [{"agent_id": "agent_b", "turn": 1}, {"agent_id": "agent_a", "turn": 2}]
         self._previous_winners = []
 
+        # Conversation buffer - single source of truth for all streaming content
+        # See docs/dev_notes/conversation_buffer_design.md for architecture
+        self.conversation_buffer = AgentConversationBuffer(agent_id=self.agent_id)
+
         # Memory recording configuration
         self._record_all_tool_calls = record_all_tool_calls  # Record ALL tools (not just workflow)
         self._record_reasoning = record_reasoning  # Record reasoning chunks
 
         # Create context compressor if monitor and conversation_memory exist
         self.context_compressor = None
+        self.agent_driven_compressor = None
+        self._compression_pending = False
+        self._compression_usage_info = None
+
         if self.context_monitor and self.conversation_memory:
             from .memory._compression import ContextCompressor
             from .token_manager.token_manager import TokenCostCalculator
@@ -203,6 +212,10 @@ class SingleAgent(ChatAgent):
                 persistent_memory=self.persistent_memory,
             )
             logger.info(f"🗜️  Context compressor created for {self.agent_id}")
+
+            # Agent-driven compressor will be initialized with workspace path
+            # when filesystem memory is enabled (set via set_agent_driven_compressor)
+            self.agent_driven_compressor = None
 
         # Add system message to history if provided
         if self.system_message:
@@ -250,6 +263,9 @@ class SingleAgent(ChatAgent):
         self._current_turn_reasoning = []
         self._current_turn_mcp_calls = []
 
+        # Agent-driven compression flag (set when compression_complete tool is called)
+        self._should_truncate_after_stream = False
+
         # Optional accumulators (based on config)
         all_tool_calls_executed = [] if self._record_all_tool_calls else None
         reasoning_chunks = [] if self._record_reasoning else None
@@ -262,6 +278,8 @@ class SingleAgent(ChatAgent):
                     assistant_response += chunk.content
                     # Also track for shadow agents to access
                     self._current_turn_content += chunk.content
+                    # Record to conversation buffer (single source of truth)
+                    self.conversation_buffer.add_content(chunk.content)
                     yield chunk
                 elif chunk_type == "tool_calls":
                     chunk_tool_calls = getattr(chunk, "tool_calls", []) or []
@@ -269,6 +287,13 @@ class SingleAgent(ChatAgent):
 
                     # Track for shadow agents (always)
                     self._current_turn_tool_calls.extend(chunk_tool_calls)
+
+                    # Record to conversation buffer
+                    for tc in chunk_tool_calls:
+                        tool_name = tc.get("name", tc.get("function", {}).get("name", "unknown"))
+                        tool_args = tc.get("arguments", tc.get("function", {}).get("arguments", {}))
+                        call_id = tc.get("id", tc.get("call_id"))
+                        self.conversation_buffer.add_tool_call(tool_name, tool_args, call_id)
 
                     # Optionally accumulate ALL tool calls for memory
                     if self._record_all_tool_calls and chunk_tool_calls:
@@ -280,6 +305,8 @@ class SingleAgent(ChatAgent):
                     # Track for shadow agents (always capture reasoning)
                     if hasattr(chunk, "content") and chunk.content:
                         self._current_turn_reasoning.append({"type": "reasoning", "content": chunk.content})
+                        # Record to conversation buffer
+                        self.conversation_buffer.add_reasoning(chunk.content)
 
                     # Optionally accumulate reasoning chunks for memory
                     if self._record_reasoning and hasattr(chunk, "content") and chunk.content:
@@ -294,12 +321,48 @@ class SingleAgent(ChatAgent):
                     if self._record_reasoning and hasattr(chunk, "content") and chunk.content:
                         reasoning_summaries.append(chunk.content)
                     yield chunk
+                elif chunk_type == "compression_needed":
+                    # Mid-stream compression signal from backend
+                    # This is triggered when context exceeds threshold between tool rounds
+                    logger.warning(
+                        f"⚠️ [{self.agent_id}] Mid-stream compression needed: {getattr(chunk, 'content', '')}",
+                    )
+                    # Set pending flag so compression triggers after this stream
+                    if self.agent_driven_compressor and not self._compression_pending:
+                        self._compression_pending = True
+                        # Build usage info for the compression request
+                        if self.context_monitor:
+                            self._compression_usage_info = {
+                                "current_tokens": self.backend._last_call_input_tokens if hasattr(self.backend, "_last_call_input_tokens") else 0,
+                                "max_tokens": self.context_monitor.context_window,
+                                "usage_percent": (self.backend._last_call_input_tokens / self.context_monitor.context_window)
+                                if hasattr(self.backend, "_last_call_input_tokens") and self.context_monitor.context_window > 0
+                                else 0,
+                                "should_compress": True,
+                                "target_tokens": int(self.context_monitor.context_window * self.context_monitor.target_ratio),
+                                "trigger_threshold": self.context_monitor.trigger_threshold,
+                                "target_ratio": self.context_monitor.target_ratio,
+                            }
+                        logger.info(
+                            f"📝 Mid-stream compression pending for {self.agent_id}: " f"will request agent summarization next turn",
+                        )
+                    yield chunk  # Pass through so orchestrator can see it too
                 elif chunk_type == "mcp_status":
                     # Extract status for broadcast checking (always needed)
                     status = getattr(chunk, "status", "")
                     content = getattr(chunk, "content", "")
 
                     import re
+
+                    # Check for compression_complete tool call (agent-driven compression)
+                    if status == "mcp_tool_called" and "compression_complete" in content:
+                        if self.agent_driven_compressor:
+                            logger.info("🔄 Detected compression_complete tool call")
+                            should_truncate = self.agent_driven_compressor.on_compression_complete_tool_called()
+                            if should_truncate:
+                                # Mark that we need to truncate after this stream completes
+                                self._compression_pending = False  # Clear pending flag
+                                self._should_truncate_after_stream = True
 
                     # Track MCP tool calls for shadow agents (always) and optionally for memory
                     # Status 1: Tool call initiated - "🔧 [MCP Tool] Calling tool_name..."
@@ -315,6 +378,8 @@ class SingleAgent(ChatAgent):
                             }
                             # Track for shadow agents
                             self._current_turn_mcp_calls.append(mcp_call)
+                            # Record to conversation buffer (will be updated with args/result)
+                            self.conversation_buffer.add_tool_call(tool_name, {}, call_id=None)
                             # Track for memory if enabled
                             if self._record_all_tool_calls and all_tool_calls_executed is not None:
                                 all_tool_calls_executed.append(mcp_call.copy())
@@ -350,6 +415,8 @@ class SingleAgent(ChatAgent):
                                 if tool.get("name") == tool_name and not tool.get("result"):
                                     tool["result"] = result
                                     break
+                            # Record tool result to conversation buffer
+                            self.conversation_buffer.add_tool_result(tool_name, None, result)
                             # Update memory tracking if enabled
                             if self._record_all_tool_calls and all_tool_calls_executed:
                                 for tool in reversed(all_tool_calls_executed):
@@ -381,6 +448,10 @@ class SingleAgent(ChatAgent):
                                 yield StreamChunk(type="tool_calls", tool_calls=response_tool_calls)
                     # Complete response is for internal use - don't yield it
                 elif chunk_type == "done":
+                    # Flush conversation buffer - commits all pending content to entries
+                    self.conversation_buffer.flush_turn()
+                    logger.debug(f"📝 [done] Flushed conversation buffer: {len(self.conversation_buffer)} entries")
+
                     # Debug: Log what we have before assembling
                     logger.debug(f"🔍 [done] assistant_response length: {len(assistant_response)}")
 
@@ -540,14 +611,67 @@ class SingleAgent(ChatAgent):
 
                     # Log context usage after response (if monitor enabled)
                     if self.context_monitor:
-                        # Use conversation history for accurate token count
-                        current_history = self.conversation_history if not self.conversation_memory else await self.conversation_memory.get_messages()
-                        usage_info = self.context_monitor.log_context_usage(current_history, turn_number=self._turn_number)
+                        # Try to get actual token usage from backend (most accurate)
+                        # Use _last_call_input_tokens (per-call) not token_usage.input_tokens (cumulative)
+                        # This captures the full context sent to API including system prompts, tools, etc.
+                        actual_input_tokens = None
+                        if hasattr(self, "backend") and hasattr(self.backend, "_last_call_input_tokens"):
+                            actual_input_tokens = self.backend._last_call_input_tokens
 
-                        # Compress if needed
-                        if self.context_compressor and usage_info.get("should_compress"):
+                        if actual_input_tokens and actual_input_tokens > 0:
+                            # Use actual API token usage for compression decision
+                            usage_info = self.context_monitor.log_context_usage_from_tokens(
+                                actual_input_tokens,
+                                turn_number=self._turn_number,
+                            )
+                            logger.debug(
+                                f"[{self.agent_id}] Using actual API token count: {actual_input_tokens:,} tokens",
+                            )
+                        else:
+                            # Fallback to estimating from conversation history
+                            current_history = self.conversation_history if not self.conversation_memory else await self.conversation_memory.get_messages()
+                            usage_info = self.context_monitor.log_context_usage(current_history, turn_number=self._turn_number)
+
+                        # Debug: log compression decision context
+                        logger.debug(
+                            f"[{self.agent_id}] Compression check: "
+                            f"agent_driven_compressor={self.agent_driven_compressor is not None}, "
+                            f"context_compressor={self.context_compressor is not None}, "
+                            f"_should_truncate={self._should_truncate_after_stream}, "
+                            f"_compression_pending={self._compression_pending}",
+                        )
+
+                        # Check if agent-driven compression signaled truncation
+                        if self._should_truncate_after_stream:
                             logger.info(
-                                f"🔄 Attempting compression for {self.agent_id} " f"({usage_info['current_tokens']:,} → {usage_info['target_tokens']:,} tokens)",
+                                f"🔄 Performing truncation after agent compression for {self.agent_id} " f"({usage_info['current_tokens']:,} → {usage_info['target_tokens']:,} tokens)",
+                            )
+                            compression_stats = await self.context_compressor.compress_if_needed(
+                                messages=current_history,
+                                current_tokens=usage_info["current_tokens"],
+                                target_tokens=usage_info["target_tokens"],
+                                should_compress=True,
+                            )
+                            if compression_stats and self.conversation_memory:
+                                self.conversation_history = await self.conversation_memory.get_messages()
+                                self._compression_has_occurred = True
+                                logger.info(
+                                    f"✅ Truncation complete after agent compression: " f"{len(self.conversation_history)} messages",
+                                )
+                            self._should_truncate_after_stream = False
+
+                        # Check if agent-driven compression should be requested (deferred to next turn)
+                        elif self.agent_driven_compressor and self.agent_driven_compressor.should_request_compression(usage_info):
+                            self._compression_pending = True
+                            self._compression_usage_info = usage_info
+                            logger.info(
+                                f"📝 Compression pending for {self.agent_id}: " f"{usage_info['usage_percent']*100:.0f}% usage, " f"will request agent summarization next turn",
+                            )
+
+                        # Fallback: Use algorithmic compression if agent-driven not enabled
+                        elif self.context_compressor and usage_info.get("should_compress") and not self.agent_driven_compressor:
+                            logger.info(
+                                f"🔄 Attempting algorithmic compression for {self.agent_id} " f"({usage_info['current_tokens']:,} → {usage_info['target_tokens']:,} tokens)",
                             )
                             compression_stats = await self.context_compressor.compress_if_needed(
                                 messages=current_history,
@@ -612,6 +736,10 @@ class SingleAgent(ChatAgent):
             # Clear history but keep system message if it exists
             system_messages = [msg for msg in self.conversation_history if msg.get("role") == "system"]
             self.conversation_history = system_messages.copy()
+            # Clear conversation buffer but re-add system message
+            self.conversation_buffer.clear()
+            for msg in system_messages:
+                self.conversation_buffer.add_system_message(msg.get("content", ""))
             # Clear backend history while maintaining session
             if self.backend.is_stateful():
                 await self.backend.clear_history()
@@ -630,6 +758,16 @@ class SingleAgent(ChatAgent):
 
             # Reset conversation history to the provided messages
             self.conversation_history = messages.copy()
+            # Reset conversation buffer and populate with initial messages
+            self.conversation_buffer.clear()
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    self.conversation_buffer.add_system_message(content)
+                elif role == "user":
+                    self.conversation_buffer.add_user_message(content)
+                # Note: assistant messages from history are typically not present on reset
             # Reset backend state completely
             if self.backend.is_stateful():
                 await self.backend.reset_state()
@@ -641,6 +779,18 @@ class SingleAgent(ChatAgent):
         else:
             # Regular conversation - append new messages to agent's history
             self.conversation_history.extend(messages)
+            # Also append to conversation buffer
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "system":
+                    self.conversation_buffer.add_system_message(content)
+                elif role == "user":
+                    self.conversation_buffer.add_user_message(content)
+                elif role == "assistant":
+                    # For assistant messages (e.g., from enforcement), add directly
+                    self.conversation_buffer.add_content(content)
+                    self.conversation_buffer.flush_turn()
             # Add to conversation memory
             if self.conversation_memory:
                 try:
@@ -725,6 +875,15 @@ class SingleAgent(ChatAgent):
         if current_stage:
             self.backend.set_stage(current_stage)
 
+        # Inject compression request if pending (agent-driven compression)
+        if self._compression_pending and self.agent_driven_compressor:
+            compression_msg = self.agent_driven_compressor.build_compression_request(
+                usage_info=self._compression_usage_info,
+            )
+            backend_messages.append(compression_msg)
+            self._compression_pending = False
+            logger.info(f"📝 Injected compression request for {self.agent_id}")
+
         # Log context usage before processing (if monitor enabled)
         self._turn_number += 1
         if self.context_monitor:
@@ -791,6 +950,58 @@ class SingleAgent(ChatAgent):
 
         # Add new system message at the beginning
         self.conversation_history.insert(0, {"role": "system", "content": system_message})
+
+    def set_agent_driven_compressor(
+        self,
+        workspace_path: str,
+        fallback_compressor: Optional[Any] = None,
+        max_attempts: int = 2,
+        short_term_path: str = "memory/short_term",
+        long_term_path: str = "memory/long_term",
+        trigger_threshold: float = 0.75,
+        target_ratio: float = 0.20,
+    ) -> None:
+        """
+        Enable agent-driven compression with filesystem memory.
+
+        Args:
+            workspace_path: Path to agent workspace
+            fallback_compressor: Optional compressor to use if agent fails
+            max_attempts: Max retries before fallback
+            short_term_path: Relative path for short-term memories
+            long_term_path: Relative path for long-term memories
+            trigger_threshold: Context usage (0.0-1.0) at which to trigger compression
+            target_ratio: Target context percentage after compression
+        """
+        from pathlib import Path
+
+        from .memory._compression import AgentDrivenCompressor
+
+        self.agent_driven_compressor = AgentDrivenCompressor(
+            workspace_path=Path(workspace_path),
+            fallback_compressor=fallback_compressor or self.context_compressor,
+            max_attempts=max_attempts,
+            short_term_path=short_term_path,
+            long_term_path=long_term_path,
+        )
+
+        # Update context monitor thresholds if available
+        if self.context_monitor:
+            self.context_monitor.trigger_threshold = trigger_threshold
+            self.context_monitor.target_ratio = target_ratio
+            logger.info(
+                f"📝 Agent-driven compressor enabled for {self.agent_id} " f"(trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%)",
+            )
+
+            # Enable mid-stream compression check on backend
+            # This allows the backend to signal when compression is needed between tool calls
+            if hasattr(self, "backend") and hasattr(self.backend, "set_compression_check"):
+                self.backend.set_compression_check(
+                    threshold=trigger_threshold,
+                    context_window=self.context_monitor.context_window,
+                )
+        else:
+            logger.info(f"📝 Agent-driven compressor enabled for {self.agent_id}")
 
 
 class ConfigurableAgent(SingleAgent):

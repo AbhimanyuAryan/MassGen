@@ -1460,6 +1460,9 @@ async def run_question_with_history(
             max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
             task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
             enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+            compression_trigger_threshold=coord_cfg.get("compression_trigger_threshold", 0.75),
+            compression_target_ratio=coord_cfg.get("compression_target_ratio", 0.20),
+            enable_memory_mcp_tools=coord_cfg.get("enable_memory_mcp_tools", False),
             use_skills=coord_cfg.get("use_skills", False),
             massgen_skills=coord_cfg.get("massgen_skills", []),
             skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
@@ -1543,6 +1546,9 @@ async def run_question_with_history(
                 max_broadcasts_per_agent=coordination_settings.get("max_broadcasts_per_agent", 10),
                 task_planning_filesystem_mode=coordination_settings.get("task_planning_filesystem_mode", False),
                 enable_memory_filesystem_mode=coordination_settings.get("enable_memory_filesystem_mode", False),
+                compression_trigger_threshold=coordination_settings.get("compression_trigger_threshold", 0.75),
+                compression_target_ratio=coordination_settings.get("compression_target_ratio", 0.20),
+                enable_memory_mcp_tools=coordination_settings.get("enable_memory_mcp_tools", False),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
                 skills_directory=coordination_settings.get("skills_directory", ".agent/skills"),
@@ -1892,6 +1898,9 @@ async def run_single_question(
                 max_broadcasts_per_agent=coordination_settings.get("max_broadcasts_per_agent", 10),
                 task_planning_filesystem_mode=coordination_settings.get("task_planning_filesystem_mode", False),
                 enable_memory_filesystem_mode=coordination_settings.get("enable_memory_filesystem_mode", False),
+                compression_trigger_threshold=coordination_settings.get("compression_trigger_threshold", 0.75),
+                compression_target_ratio=coordination_settings.get("compression_target_ratio", 0.20),
+                enable_memory_mcp_tools=coordination_settings.get("enable_memory_mcp_tools", False),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
                 skills_directory=coordination_settings.get("skills_directory", ".agent/skills"),
@@ -1965,6 +1974,9 @@ async def run_single_question(
                 max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
                 task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
                 enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                compression_trigger_threshold=coord_cfg.get("compression_trigger_threshold", 0.75),
+                compression_target_ratio=coord_cfg.get("compression_target_ratio", 0.20),
+                enable_memory_mcp_tools=coord_cfg.get("enable_memory_mcp_tools", False),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
@@ -4189,6 +4201,12 @@ async def main(args):
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
 
+    # Initialize LLM call logger if requested
+    if args.save_llm_calls:
+        from .llm_call_logger import LLMCallLogger, set_llm_call_logger
+
+        set_llm_call_logger(LLMCallLogger(enabled=True, save_chunks=args.save_llm_chunks))
+
     # Check if bare `massgen` with no args - use default config if it exists
     if not args.backend and not args.model and not args.config:
         # Use resolve_config_path to check project-level then global config
@@ -4769,6 +4787,16 @@ Environment Variables:
     parser.add_argument("--no-display", action="store_true", help="Disable visual coordination display")
     parser.add_argument("--no-logs", action="store_true", help="Disable logging")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode with verbose logging")
+    parser.add_argument(
+        "--save-llm-calls",
+        action="store_true",
+        help="Save all LLM API calls to JSON files in llm_calls/ directory for debugging and training",
+    )
+    parser.add_argument(
+        "--save-llm-chunks",
+        action="store_true",
+        help="Include raw streaming chunks in LLM call logs (requires --save-llm-calls)",
+    )
     parser.add_argument(
         "--web",
         action="store_true",
