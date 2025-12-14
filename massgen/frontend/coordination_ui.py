@@ -10,7 +10,9 @@ import queue
 import threading
 from typing import Any, Dict, List, Optional
 
+from ..cancellation import CancellationRequested
 from .displays.base_display import BaseDisplay
+from .displays.none_display import NoneDisplay
 from .displays.rich_terminal_display import RichTerminalDisplay, is_rich_available
 from .displays.silent_display import SilentDisplay
 from .displays.simple_display import SimpleDisplay
@@ -25,6 +27,15 @@ except ImportError:
     TextualTerminalDisplay = None
 
     def is_textual_available():
+        return False
+
+
+try:
+    from .displays.web_display import WebDisplay, is_web_display_available
+except ImportError:
+    WebDisplay = None
+
+    def is_web_display_available():
         return False
 
 
@@ -44,7 +55,7 @@ class CoordinationUI:
         Args:
             display: Custom display instance (overrides display_type)
             logger: Custom logger instance
-            display_type: Type of display ("terminal", "simple", "rich_terminal", "textual_terminal")
+            display_type: Type of display ("terminal", "simple", "rich_terminal", "textual_terminal", "web")
             enable_final_presentation: Whether to ask winning agent to present final answer
             **kwargs: Additional configuration passed to display/logger
         """
@@ -123,11 +134,19 @@ class CoordinationUI:
         try:
             # Process coordination stream
             async for chunk in orchestrator.chat_simple(question):
-                # Check if user requested quit
+                # Check if user requested quit (pressed 'q' in Rich display)
                 if self.display and hasattr(self.display, "_user_quit_requested") and self.display._user_quit_requested:
-                    # User pressed 'q' - exit gracefully
+                    # User pressed 'q' - cancel current turn, not entire session
                     user_quit = True
-                    raise SystemExit(0)
+                    raise CancellationRequested(partial_saved=False)
+
+                # Check if Ctrl+C was pressed (cancellation manager flag)
+                if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager and orchestrator.cancellation_manager.is_cancelled:
+                    user_quit = True
+                    # Update display to show cancellation status before stopping
+                    if self.display and hasattr(self.display, "update_system_status"):
+                        self.display.update_system_status("⏸️ Cancelling turn...")
+                    raise CancellationRequested(partial_saved=orchestrator.cancellation_manager._partial_saved)
 
                 content = getattr(chunk, "content", "") or ""
                 source = getattr(chunk, "source", None)
@@ -146,6 +165,14 @@ class CoordinationUI:
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
+
+                # Handle cancelled chunk from orchestrator (e.g., during final presentation)
+                elif chunk_type == "cancelled":
+                    user_quit = True
+                    if self.display and hasattr(self.display, "update_system_status"):
+                        self.display.update_system_status("⏸️ Cancelling turn...")
+                    partial_saved = orchestrator.cancellation_manager._partial_saved if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager else False
+                    raise CancellationRequested(partial_saved=partial_saved)
 
                 # Filter out mcp_status chunks - display via agent panel instead of console
                 elif chunk_type == "mcp_status":
@@ -277,8 +304,9 @@ class CoordinationUI:
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
 
-            # Ensure Textual display shows final answer even if streaming chunks were filtered
-            if self.display_type == "textual_terminal" and hasattr(self.display, "show_final_answer"):
+            # Ensure display shows final answer even if streaming chunks were filtered
+            # This applies to all display types that have show_final_answer method
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
                 display_answer = (final_result or "").strip()
                 if display_answer:
                     self._final_answer_shown = True
@@ -298,8 +326,15 @@ class CoordinationUI:
 
             return final_result
 
+        except CancellationRequested:
+            # User pressed 'q' to cancel turn - propagate up to CLI
+            # Don't mark as failed - this is a soft cancellation
+            if self.logger:
+                self.logger.finalize_session("Turn cancelled by user", success=True)
+            raise
+
         except SystemExit:
-            # User pressed 'q' - cleanup and exit gracefully
+            # Hard exit requested - cleanup and exit gracefully
             if self.logger:
                 self.logger.finalize_session("User quit", success=True)
             # Cleanup agent backends
@@ -349,6 +384,34 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass
 
+            # Determine if coordination completed successfully
+            is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
+
+            # ALWAYS cleanup display resources (stop live, restore terminal) regardless of completion status
+            # This is critical for proper terminal restoration after cancellation
+            if self.display:
+                try:
+                    self.display.cleanup()
+                except Exception:
+                    # Fallback: at minimum stop the live display
+                    if hasattr(self.display, "live") and self.display.live:
+                        try:
+                            self.display.live.stop()
+                        except Exception:
+                            pass
+
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
+
     def reset(self):
         """Reset UI state for next coordination session."""
         # Clean up display if exists
@@ -390,11 +453,14 @@ class CoordinationUI:
         final_answer = ""
 
         # Reset display to ensure clean state for each coordination
-        if self.display is not None:
+        # But preserve web displays - they have their own lifecycle managed by the web server
+        if self.display is not None and self.display_type != "web":
             self.display.cleanup()
-        self.display = None
+            self.display = None
 
         self.orchestrator = orchestrator
+        # Set bidirectional reference so orchestrator can access UI (for broadcast prompts)
+        orchestrator.coordination_ui = self
 
         # Auto-detect agent IDs if not provided
         if agent_ids is None:
@@ -410,6 +476,8 @@ class CoordinationUI:
                 self.display = SimpleDisplay(self.agent_ids, **self.config)
             elif self.display_type == "silent":
                 self.display = SilentDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "none":
+                self.display = NoneDisplay(self.agent_ids, **self.config)
             elif self.display_type == "rich_terminal":
                 if not is_rich_available():
                     print("⚠️  Rich library not available. Falling back to terminal display.")
@@ -424,6 +492,13 @@ class CoordinationUI:
                     self.display = TerminalDisplay(self.agent_ids, **self.config)
                 else:
                     self.display = TextualTerminalDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "web":
+                # WebDisplay must be passed in from the web server with broadcast configured
+                if self.display is None:
+                    raise ValueError(
+                        "WebDisplay must be passed to CoordinationUI when using " "display_type='web'. Create it via the web server.",
+                    )
+                # Display already set - just use it
             else:
                 raise ValueError(f"Unknown display type: {self.display_type}")
 
@@ -445,6 +520,14 @@ class CoordinationUI:
             print()
 
         self.display.initialize(question, log_filename)
+
+        # Emit status that display is ready (for web UI)
+        if hasattr(self.display, "_emit"):
+            self.display._emit("preparation_status", {"status": "Display initialized...", "detail": "Starting orchestrator"})
+
+        # Reset quit flag for new turn (allows 'q' to cancel this turn)
+        if hasattr(self.display, "reset_quit_request"):
+            self.display.reset_quit_request()
 
         # Initialize variables to avoid reference before assignment error in finally block
         selected_agent = None
@@ -514,12 +597,24 @@ class CoordinationUI:
             full_response = ""
             final_answer = ""
 
+            # Emit status that we're about to start the orchestrator
+            if hasattr(self.display, "_emit"):
+                self.display._emit("preparation_status", {"status": "Connecting to agents...", "detail": "Initializing streams"})
+
             async for chunk in orchestrator.chat_simple(question):
-                # Check if user requested quit
+                # Check if user requested quit (pressed 'q' in Rich display)
                 if self.display and hasattr(self.display, "_user_quit_requested") and self.display._user_quit_requested:
-                    # User pressed 'q' - exit gracefully
+                    # User pressed 'q' - cancel current turn, not entire session
                     user_quit = True
-                    raise SystemExit(0)
+                    raise CancellationRequested(partial_saved=False)
+
+                # Check if Ctrl+C was pressed (cancellation manager flag)
+                if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager and orchestrator.cancellation_manager.is_cancelled:
+                    user_quit = True
+                    # Update display to show cancellation status before stopping
+                    if self.display and hasattr(self.display, "update_system_status"):
+                        self.display.update_system_status("⏸️ Cancelling turn...")
+                    raise CancellationRequested(partial_saved=orchestrator.cancellation_manager._partial_saved)
 
                 content = getattr(chunk, "content", "") or ""
                 source = getattr(chunk, "source", None)
@@ -532,12 +627,29 @@ class CoordinationUI:
                         self.display.update_agent_status(source, status)
                     continue
 
+                # Handle preparation status updates (for web UI progress)
+                elif chunk_type == "preparation_status":
+                    status = getattr(chunk, "status", None)
+                    detail = getattr(chunk, "detail", "")
+                    if status and hasattr(self.display, "_emit"):
+                        # WebDisplay has _emit method for WebSocket broadcasts
+                        self.display._emit("preparation_status", {"status": status, "detail": detail})
+                    continue
+
                 # Filter out debug chunks from display
                 elif chunk_type == "debug":
                     # Log debug info but don't display it
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
+
+                # Handle cancelled chunk from orchestrator (e.g., during final presentation)
+                elif chunk_type == "cancelled":
+                    user_quit = True
+                    if self.display and hasattr(self.display, "update_system_status"):
+                        self.display.update_system_status("⏸️ Cancelling turn...")
+                    partial_saved = orchestrator.cancellation_manager._partial_saved if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager else False
+                    raise CancellationRequested(partial_saved=partial_saved)
 
                 # Filter out mcp_status chunks - display via agent panel instead of console
                 elif chunk_type == "mcp_status":
@@ -673,8 +785,9 @@ class CoordinationUI:
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
 
-            # Ensure Textual display shows final answer even if streaming chunks were filtered
-            if self.display_type == "textual_terminal" and hasattr(self.display, "show_final_answer"):
+            # Ensure display shows final answer even if streaming chunks were filtered
+            # This applies to all display types that have show_final_answer method
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
                 display_answer = (final_result or "").strip()
                 if display_answer:
                     self._final_answer_shown = True
@@ -695,8 +808,14 @@ class CoordinationUI:
 
             return final_result
 
+        except CancellationRequested:
+            # User pressed 'q' to cancel turn - propagate up to CLI
+            # Don't mark as failed - this is a soft cancellation
+            if self.logger:
+                self.logger.finalize_session("Turn cancelled by user", success=True)
+            raise
         except SystemExit:
-            # User pressed 'q' - cleanup and exit gracefully
+            # Hard exit requested - cleanup and exit gracefully
             if self.logger:
                 self.logger.finalize_session("User quit", success=True)
             # Cleanup agent backends
@@ -744,19 +863,34 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass  # Silently handle cancellation
 
-            # Only cleanup (which shows inspection menu) if coordination is truly finished
+            # Determine if coordination completed successfully
             # Check workflow_phase to see if we're in "presenting" state (finished) vs still coordinating (restarting)
             is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
-            if self.display and is_finished:
-                self.display.cleanup()
 
-            # Don't print - display already showed this info
-            # if selected_agent:
-            #     print(f"✅ Selected by: {selected_agent}")
-            #     if vote_results.get("vote_counts"):
-            #         vote_summary = ", ".join([f"{agent}: {count}" for agent, count in vote_results["vote_counts"].items()])
-            #         print(f"🗳️ Vote results: {vote_summary}")
-            # print()
+            # ALWAYS cleanup display resources (stop live, restore terminal) regardless of completion status
+            # This is critical for proper terminal restoration after cancellation
+            if self.display:
+                try:
+                    self.display.cleanup()
+                except Exception:
+                    # Fallback: at minimum stop the live display
+                    if hasattr(self.display, "live") and self.display.live:
+                        try:
+                            self.display.live.stop()
+                        except Exception:
+                            pass
+
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
 
             if self.logger and is_finished:
                 session_info = self.logger.finalize_session(
@@ -791,11 +925,14 @@ class CoordinationUI:
         final_answer = ""
 
         # Reset display to ensure clean state for each coordination
-        if self.display is not None:
+        # But preserve web displays - they have their own lifecycle managed by the web server
+        if self.display is not None and self.display_type != "web":
             self.display.cleanup()
-        self.display = None
+            self.display = None
 
         self.orchestrator = orchestrator
+        # Set bidirectional reference so orchestrator can access UI (for broadcast prompts)
+        orchestrator.coordination_ui = self
 
         # Auto-detect agent IDs if not provided
         if agent_ids is None:
@@ -811,6 +948,8 @@ class CoordinationUI:
                 self.display = SimpleDisplay(self.agent_ids, **self.config)
             elif self.display_type == "silent":
                 self.display = SilentDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "none":
+                self.display = NoneDisplay(self.agent_ids, **self.config)
             elif self.display_type == "rich_terminal":
                 if not is_rich_available():
                     print("⚠️  Rich library not available. Falling back to terminal display.")
@@ -825,6 +964,13 @@ class CoordinationUI:
                     self.display = TerminalDisplay(self.agent_ids, **self.config)
                 else:
                     self.display = TextualTerminalDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "web":
+                # WebDisplay must be passed in from the web server with broadcast configured
+                if self.display is None:
+                    raise ValueError(
+                        "WebDisplay must be passed to CoordinationUI when using " "display_type='web'. Create it via the web server.",
+                    )
+                # Display already set - just use it
             else:
                 raise ValueError(f"Unknown display type: {self.display_type}")
 
@@ -845,6 +991,10 @@ class CoordinationUI:
 
         self.display.initialize(question, log_filename)
 
+        # Reset quit flag for new turn (allows 'q' to cancel this turn)
+        if hasattr(self.display, "reset_quit_request"):
+            self.display.reset_quit_request()
+
         # Initialize variables to avoid reference before assignment error in finally block
         selected_agent = None
         vote_results = {}
@@ -858,11 +1008,19 @@ class CoordinationUI:
 
             # Use the orchestrator's chat method with full message context
             async for chunk in orchestrator.chat(messages):
-                # Check if user requested quit
+                # Check if user requested quit (pressed 'q' in Rich display)
                 if self.display and hasattr(self.display, "_user_quit_requested") and self.display._user_quit_requested:
-                    # User pressed 'q' - exit gracefully
+                    # User pressed 'q' - cancel current turn, not entire session
                     user_quit = True
-                    raise SystemExit(0)
+                    raise CancellationRequested(partial_saved=False)
+
+                # Check if Ctrl+C was pressed (cancellation manager flag)
+                if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager and orchestrator.cancellation_manager.is_cancelled:
+                    user_quit = True
+                    # Update display to show cancellation status before stopping
+                    if self.display and hasattr(self.display, "update_system_status"):
+                        self.display.update_system_status("⏸️ Cancelling turn...")
+                    raise CancellationRequested(partial_saved=orchestrator.cancellation_manager._partial_saved)
 
                 content = getattr(chunk, "content", "") or ""
                 source = getattr(chunk, "source", None)
@@ -875,12 +1033,29 @@ class CoordinationUI:
                         self.display.update_agent_status(source, status)
                     continue
 
+                # Handle preparation status updates (for web UI progress)
+                elif chunk_type == "preparation_status":
+                    status = getattr(chunk, "status", None)
+                    detail = getattr(chunk, "detail", "")
+                    if status and hasattr(self.display, "_emit"):
+                        # WebDisplay has _emit method for WebSocket broadcasts
+                        self.display._emit("preparation_status", {"status": status, "detail": detail})
+                    continue
+
                 # Filter out debug chunks from display
                 elif chunk_type == "debug":
                     # Log debug info but don't display it
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
+
+                # Handle cancelled chunk from orchestrator (e.g., during final presentation)
+                elif chunk_type == "cancelled":
+                    user_quit = True
+                    if self.display and hasattr(self.display, "update_system_status"):
+                        self.display.update_system_status("⏸️ Cancelling turn...")
+                    partial_saved = orchestrator.cancellation_manager._partial_saved if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager else False
+                    raise CancellationRequested(partial_saved=partial_saved)
 
                 # Filter out mcp_status chunks - display via agent panel instead of console
                 elif chunk_type == "mcp_status":
@@ -1027,6 +1202,18 @@ class CoordinationUI:
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
 
+            # Ensure display shows final answer even if streaming chunks were filtered
+            # This applies to all display types that have show_final_answer method
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
+                display_answer = (final_result or "").strip()
+                if display_answer:
+                    self._final_answer_shown = True
+                    self.display.show_final_answer(
+                        display_answer,
+                        vote_results=vote_results,
+                        selected_agent=selected_agent or "Unknown",
+                    )
+
             # Finalize session
             if self.logger:
                 session_info = self.logger.finalize_session(
@@ -1038,8 +1225,14 @@ class CoordinationUI:
 
             return final_result
 
+        except CancellationRequested:
+            # User pressed 'q' or Ctrl+C to cancel turn - propagate up to CLI
+            # Don't mark as failed - this is a soft cancellation
+            if self.logger:
+                self.logger.finalize_session("Turn cancelled by user", success=True)
+            raise
         except SystemExit:
-            # User pressed 'q' - cleanup and exit gracefully
+            # Hard exit requested - cleanup and exit gracefully
             if self.logger:
                 self.logger.finalize_session("User quit", success=True)
             # Cleanup agent backends
@@ -1087,10 +1280,33 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass  # Silently handle cancellation
 
-            # Only cleanup (which shows inspection menu) if coordination is truly finished
+            # Determine if coordination completed successfully
             is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
-            if self.display and is_finished:
-                self.display.cleanup()
+
+            # ALWAYS cleanup display resources (stop live, restore terminal) regardless of completion status
+            # This is critical for proper terminal restoration after cancellation
+            if self.display:
+                try:
+                    self.display.cleanup()
+                except Exception:
+                    # Fallback: at minimum stop the live display
+                    if hasattr(self.display, "live") and self.display.live:
+                        try:
+                            self.display.live.stop()
+                        except Exception:
+                            pass
+
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
 
     def _display_vote_results(self, vote_results: Dict[str, Any]):
         """Display voting results in a formatted table."""
@@ -1181,7 +1397,9 @@ class CoordinationUI:
 
         else:
             # Thinking content
-            if self.orchestrator and self.display_type == "textual_terminal" and hasattr(self.display, "stream_final_answer_chunk"):
+            # For displays that support streaming final answer (textual_terminal and web),
+            # route content through stream_final_answer_chunk when the selected agent is streaming
+            if self.orchestrator and hasattr(self.display, "stream_final_answer_chunk"):
                 status = self.orchestrator.get_status()
                 if status:
                     selected_agent = status.get("selected_agent")
@@ -1262,6 +1480,9 @@ class CoordinationUI:
                 "**",
                 "result ignored",
                 "restart pending",
+                "🏆",  # Selected Agent banner
+                "🎤",  # presenting final answer
+                "🔍",  # Post-evaluation
             ]
         ):
             # Extract clean final answer content
@@ -1337,6 +1558,64 @@ class CoordinationUI:
         except Exception:
             # On any error, fallback to immediate display
             print(content, end="", flush=True)
+
+    async def prompt_for_broadcast_response(self, broadcast_request: Any) -> Optional[str]:
+        """Prompt human for response to a broadcast question.
+
+        Args:
+            broadcast_request: BroadcastRequest object with question details
+
+        Returns:
+            Human's response string, or None if skipped/timeout
+        """
+
+        # Skip human input in automation mode
+        if self.config.get("automation_mode", False):
+            print(f"\n📢 [Automation Mode] Skipping human input for broadcast from {broadcast_request.sender_agent_id}")
+            print(f"   Question: {broadcast_request.question[:100]}{'...' if len(broadcast_request.question) > 100 else ''}\n")
+            return None
+
+        # Delegate to display if it supports broadcast prompts
+        if self.display and hasattr(self.display, "prompt_for_broadcast_response"):
+            return await self.display.prompt_for_broadcast_response(broadcast_request)
+
+        # Fallback: Basic terminal implementation
+        print("\n" + "=" * 70)
+        print(f"📢 BROADCAST FROM {broadcast_request.sender_agent_id.upper()}")
+        print("=" * 70)
+        print(f"\n{broadcast_request.question}\n")
+        print("─" * 70)
+        print("Options:")
+        print("  • Type your response and press Enter")
+        print("  • Press Enter alone to skip")
+        print(f"  • You have {broadcast_request.timeout} seconds to respond")
+        print("=" * 70)
+
+        try:
+            # Use asyncio to read input with timeout
+            response = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    input,
+                    "Your response (or Enter to skip): ",
+                ),
+                timeout=float(broadcast_request.timeout),
+            )
+
+            response = response.strip()
+            if response:
+                print(f"\n✓ Response submitted: {response[:50]}{'...' if len(response) > 50 else ''}\n")
+                return response
+            else:
+                print("\n⏭️  Skipped (no response)\n")
+                return None
+
+        except asyncio.TimeoutError:
+            print("\n⏱️  Timeout - no response submitted\n")
+            return None
+        except Exception as e:
+            print(f"\n❌ Error getting response: {e}\n")
+            return None
 
 
 # Convenience functions for common use cases

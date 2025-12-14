@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import mimetypes
+import time
 import uuid
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ from ..nlip.schema import (
     NLIPTokenField,
     NLIPToolCall,
 )
+from ..token_manager.token_manager import ToolExecutionMetric
 from ..tool import ToolManager
 from ..utils import CoordinationStage
 from .base import LLMBackend, StreamChunk
@@ -318,6 +320,10 @@ class CustomToolAndMCPBackend(LLMBackend):
         self._mcp_tool_failures = 0
         self._mcp_function_names: set[str] = set()
 
+        # Granular tool execution metrics tracking
+        self._tool_execution_metrics: List["ToolExecutionMetric"] = []
+        self._current_round_number: int = 0
+
         # Circuit breaker for MCP tools (stdio + streamable-http)
         self._mcp_tools_circuit_breaker = None
         self._circuit_breakers_enabled = MCPCircuitBreaker is not None
@@ -364,6 +370,73 @@ class CustomToolAndMCPBackend(LLMBackend):
         self._nlip_router = nlip_router
         self._nlip_enabled = enabled
         logger.info(f"[NLIP] Router injected, enabled={enabled}")
+
+    def set_round_number(self, round_number: int) -> None:
+        """Set the current round number for tool metrics tracking."""
+        self._current_round_number = round_number
+
+    def get_tool_metrics(self) -> List[Dict[str, Any]]:
+        """Get all tool execution metrics as list of dicts."""
+        return [m.to_dict() for m in self._tool_execution_metrics]
+
+    def get_tool_metrics_summary(self) -> Dict[str, Any]:
+        """Get aggregated tool metrics summary.
+
+        Returns:
+            Dictionary with total counts and per-tool breakdown.
+        """
+        if not self._tool_execution_metrics:
+            return {
+                "total_calls": 0,
+                "total_failures": 0,
+                "total_execution_time_ms": 0,
+                "by_tool": {},
+            }
+
+        by_tool: Dict[str, Dict[str, Any]] = {}
+        total_failures = 0
+        total_time_ms = 0.0
+
+        for m in self._tool_execution_metrics:
+            name = m.tool_name
+            if name not in by_tool:
+                by_tool[name] = {
+                    "call_count": 0,
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "total_execution_time_ms": 0.0,
+                    "total_input_chars": 0,
+                    "total_output_chars": 0,
+                    "tool_type": m.tool_type,
+                }
+            by_tool[name]["call_count"] += 1
+            if m.success:
+                by_tool[name]["success_count"] += 1
+            else:
+                by_tool[name]["failure_count"] += 1
+                total_failures += 1
+            by_tool[name]["total_execution_time_ms"] += m.execution_time_ms
+            by_tool[name]["total_input_chars"] += m.input_chars
+            by_tool[name]["total_output_chars"] += m.output_chars
+            total_time_ms += m.execution_time_ms
+
+        # Calculate averages
+        for tool_stats in by_tool.values():
+            count = tool_stats["call_count"]
+            if count > 0:
+                tool_stats["avg_execution_time_ms"] = round(
+                    tool_stats["total_execution_time_ms"] / count,
+                    2,
+                )
+                tool_stats["input_tokens_est"] = tool_stats["total_input_chars"] // 4
+                tool_stats["output_tokens_est"] = tool_stats["total_output_chars"] // 4
+
+        return {
+            "total_calls": len(self._tool_execution_metrics),
+            "total_failures": total_failures,
+            "total_execution_time_ms": round(total_time_ms, 2),
+            "by_tool": by_tool,
+        }
 
     def _backend_call_to_nlip(self, call: Dict[str, Any]) -> Optional[NLIPToolCall]:
         """
@@ -752,7 +825,43 @@ class CustomToolAndMCPBackend(LLMBackend):
         """
         import json
 
-        # Parse arguments
+        tool_name = call.get("name", "")
+
+        # Check if this is a broadcast tool - handle specially
+        if tool_name in ("ask_others", "respond_to_broadcast", "check_broadcast_status", "get_broadcast_responses") and hasattr(self, "_broadcast_toolkit"):
+            # Parse arguments
+            arguments = call["arguments"] if isinstance(call["arguments"], str) else json.dumps(call["arguments"])
+            # Get agent_id from execution context (set in stream_with_tools from kwargs)
+            agent_id = self._execution_context.agent_id if self._execution_context and self._execution_context.agent_id else "unknown"
+
+            # Call broadcast toolkit method
+            try:
+                if tool_name == "ask_others":
+                    result = await self._broadcast_toolkit.execute_ask_others(arguments, agent_id)
+                elif tool_name == "respond_to_broadcast":
+                    result = await self._broadcast_toolkit.execute_respond_to_broadcast(arguments, agent_id)
+                elif tool_name == "check_broadcast_status":
+                    result = await self._broadcast_toolkit.execute_check_broadcast_status(arguments, agent_id)
+                elif tool_name == "get_broadcast_responses":
+                    result = await self._broadcast_toolkit.execute_get_broadcast_responses(arguments, agent_id)
+
+                # Yield final result
+                yield CustomToolChunk(
+                    data=result,
+                    completed=True,
+                    accumulated_result=result,
+                )
+                return
+            except Exception as e:
+                error_result = json.dumps({"error": str(e), "status": "error"})
+                yield CustomToolChunk(
+                    data=error_result,
+                    completed=True,
+                    accumulated_result=error_result,
+                )
+                return
+
+        # Parse arguments for regular custom tools
         arguments = json.loads(call["arguments"]) if isinstance(call["arguments"], str) else call["arguments"]
 
         # Ensure agent_cwd is always injected if filesystem_manager is available
@@ -892,6 +1001,19 @@ class CustomToolAndMCPBackend(LLMBackend):
             logic before reaching this method.
         """
         tool_name = call.get("name", "")
+        call_id = call.get("call_id", str(uuid.uuid4()))
+        arguments_str = call.get("arguments", "{}")
+
+        # Create metrics tracker at start
+        metric = ToolExecutionMetric(
+            tool_name=tool_name,
+            tool_type=config.tool_type,
+            call_id=call_id,
+            agent_id=self.agent_id or "unknown",
+            round_number=self._current_round_number,
+            start_time=time.time(),
+            input_chars=len(arguments_str),
+        )
 
         if tool_name in ["new_answer", "vote"]:
             error_msg = f"CRITICAL: Workflow tool {tool_name} incorrectly routed to execution"
@@ -913,8 +1035,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 source=f"{config.source_prefix}{tool_name}",
             )
 
-            # Yield arguments chunk
-            arguments_str = call.get("arguments", "{}")
+            # Yield arguments chunk (arguments_str already extracted above)
             yield StreamChunk(
                 type=config.chunk_type,
                 status="function_call",
@@ -968,6 +1089,11 @@ class CustomToolAndMCPBackend(LLMBackend):
                     content=f"{config.error_emoji} {error_msg}",
                     source=f"{config.source_prefix}{tool_name}",
                 )
+                # Record MCP failure metrics
+                metric.end_time = time.time()
+                metric.success = False
+                metric.error_message = error_msg[:500]
+                self._tool_execution_metrics.append(metric)
                 return
 
             # Append result to messages
@@ -1035,6 +1161,12 @@ class CustomToolAndMCPBackend(LLMBackend):
             processed_call_ids.add(call.get("call_id", ""))
             logger.info(f"Executed {config.tool_type} tool: {tool_name}")
 
+            # Record successful execution metrics
+            metric.end_time = time.time()
+            metric.output_chars = len(display_result)
+            metric.success = True
+            self._tool_execution_metrics.append(metric)
+
         except Exception as e:
             # Log error
             logger.error(f"Error executing {config.tool_type} tool {tool_name}: {e}")
@@ -1063,6 +1195,12 @@ class CustomToolAndMCPBackend(LLMBackend):
             self._append_tool_error_message(updated_messages, call, error_msg, config.tool_type)
 
             processed_call_ids.add(call.get("call_id", ""))
+
+            # Record failed execution metrics
+            metric.end_time = time.time()
+            metric.success = False
+            metric.error_message = str(e)[:500]  # Truncate long errors
+            self._tool_execution_metrics.append(metric)
 
     async def _run_tool_call(
         self,
@@ -2116,7 +2254,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         self._execution_context = ExecutionContext(
             messages=messages,
             agent_system_message=kwargs.get("system_message", None),
-            agent_id=self.agent_id,
+            agent_id=agent_id or self.agent_id,  # Use kwargs agent_id, fallback to instance attribute
             backend_name=self.backend_name,
             current_stage=self.coordination_stage,
         )
@@ -2258,6 +2396,17 @@ class CustomToolAndMCPBackend(LLMBackend):
             else:
                 stream = await client.messages.create(**api_params)
         else:
+            # Enable usage tracking in streaming responses (required for token counting)
+            # Chat Completions API (used by Grok, Groq, Together, Fireworks, etc.)
+            if api_params.get("stream"):
+                api_params["stream_options"] = {"include_usage": True}
+
+            # Track messages for interrupted stream estimation (multi-agent restart handling)
+            if hasattr(self, "_interrupted_stream_messages"):
+                self._interrupted_stream_messages = processed_messages.copy()
+                self._interrupted_stream_model = all_params.get("model", "gpt-4o")
+                self._stream_usage_received = False
+
             stream = await client.chat.completions.create(**api_params)
 
         async for chunk in self._process_stream(stream, all_params, agent_id):
