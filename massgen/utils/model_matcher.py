@@ -23,6 +23,7 @@ COMMON_MODELS_BY_PROVIDER = {
         "anthropic/claude-3.5-sonnet",
         "anthropic/claude-3.5-haiku",
         # OpenAI models
+        "openai/gpt-5.2",
         "openai/gpt-5",
         "openai/gpt-5-mini",
         "openai/gpt-4o",
@@ -156,12 +157,16 @@ COMMON_MODELS_BY_PROVIDER = {
         "qwen-long-latest",
         "qwen3-coder-plus",
         "qwen3-vl-plus",
+        "qwen3-vl-235b-a22b-thinking",
         "qwen3-235b-a22b",
         "qwen3-32b",
         "qwen3-14b",
         "qwen3-8b",
         "qwen2.5-72b-instruct",
         "qwq-32b",
+    ],
+    "uitars": [
+        "ui-tars-1.5",
     ],
 }
 
