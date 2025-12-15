@@ -3352,12 +3352,20 @@ class ConfigBuilder:
             console.print(f"\n[error]❌ Error: {e}[/error]")
             return None
 
-    def _generate_quickstart_config(self, agents_config: List[Dict], context_path: Optional[str] = None, use_docker: bool = True) -> Dict:
+    def _generate_quickstart_config(
+        self,
+        agents_config: List[Dict],
+        context_path: Optional[str] = None,
+        context_paths: Optional[List[Dict]] = None,
+        use_docker: bool = True,
+    ) -> Dict:
         """Generate a full-featured config from the quickstart agent specifications.
 
         Args:
             agents_config: List of dicts with 'id', 'type', 'model' for each agent
-            context_path: Optional path to add as context path (avoids runtime prompt)
+            context_path: Deprecated. Optional path to add as context path (avoids runtime prompt)
+            context_paths: List of context path dicts with 'path' and 'permission' keys.
+                          Each entry: {"path": "/path", "permission": "read" or "write"}
             use_docker: Whether to use Docker for code execution (True) or local mode (False)
 
         Returns:
@@ -3464,8 +3472,12 @@ class ConfigBuilder:
             }
 
         # Always set context_paths to avoid runtime prompt
-        # If user said yes, add their path; if no, set empty list
-        if context_path:
+        # Priority: context_paths (new) > context_path (deprecated) > empty list
+        if context_paths:
+            # Use the provided context_paths list directly (already normalized)
+            orchestrator_config["context_paths"] = context_paths
+        elif context_path:
+            # Backward compatibility: single context_path with write permission
             orchestrator_config["context_paths"] = [
                 {"path": context_path, "permission": "write"},
             ]
