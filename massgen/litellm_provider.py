@@ -137,6 +137,7 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
                 - model: Single model name for all agents
                 - num_agents: Number of agents when using single model
                 - use_docker: Enable Docker execution mode
+                - enable_filesystem: Enable filesystem/MCP tools (default: True)
                 - context_paths: List of paths with permissions. Each entry can be:
                     - str: Path with default "write" permission
                     - dict: {"path": "/path", "permission": "read" or "write"}
@@ -194,6 +195,8 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
 
             if "use_docker" in opts:
                 run_kwargs["use_docker"] = opts["use_docker"]
+            if "enable_filesystem" in opts:
+                run_kwargs["enable_filesystem"] = opts["enable_filesystem"]
             if "context_paths" in opts:
                 run_kwargs["context_paths"] = opts["context_paths"]
         else:
@@ -241,6 +244,7 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
                 - model: Single model name for all agents
                 - num_agents: Number of agents when using single model
                 - use_docker: Enable Docker execution mode
+                - enable_filesystem: Enable filesystem/MCP tools (default: True)
                 - context_paths: List of paths with permissions. Each entry can be:
                     - str: Path with default "write" permission
                     - dict: {"path": "/path", "permission": "read" or "write"}
@@ -298,6 +302,8 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
 
             if "use_docker" in opts:
                 run_kwargs["use_docker"] = opts["use_docker"]
+            if "enable_filesystem" in opts:
+                run_kwargs["enable_filesystem"] = opts["enable_filesystem"]
             if "context_paths" in opts:
                 run_kwargs["context_paths"] = opts["context_paths"]
         else:

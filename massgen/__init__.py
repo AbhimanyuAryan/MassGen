@@ -253,6 +253,7 @@ async def run(
     models: list = None,
     num_agents: int = None,
     use_docker: bool = False,
+    enable_filesystem: bool = True,
     enable_logging: bool = False,
     output_file: str = None,
     verbose: bool = False,
@@ -272,6 +273,8 @@ async def run(
         models: List of models for multi-agent mode (e.g., ['gpt-4o', 'claude-sonnet-4-20250514'])
         num_agents: Number of agents when using single model (default: 2)
         use_docker: Enable Docker execution when building config (default: False)
+        enable_filesystem: Enable filesystem/MCP tools (default: True).
+            Set to False for lightweight agents without file operations.
         enable_logging: If True, enable logging and return log_directory (default: False)
         output_file: If provided, write final answer to this file path
         verbose: If True, show progress output to stdout (default: False for quiet mode)
@@ -280,7 +283,6 @@ async def run(
         **kwargs: Additional configuration options:
             - system_message: Custom system prompt for agents
             - base_url: Custom API endpoint
-            - context_path: Single path for file operations (deprecated, use context_paths)
             - context_paths: List of paths with permissions. Each entry can be:
                 - str: Path with default "write" permission
                 - dict: {"path": "/path", "permission": "read" or "write"}
@@ -372,8 +374,8 @@ async def run(
         )
         config_path_used = f"multi-agent:{','.join(models)}"
 
-    elif model and ((num_agents and num_agents > 1) or kwargs.get("context_paths")):
-        # 3. Single model with multiple agents OR with context_paths (needs full config)
+    elif model and enable_filesystem:
+        # 3. Model with filesystem support (default) - use full config
         final_config_dict = build_config(
             num_agents=num_agents or 1,
             model=model,
@@ -391,7 +393,7 @@ async def run(
         config_path_used = str(resolved_path)
 
     elif model:
-        # 5. Quick single-agent mode (no filesystem support)
+        # 5. Lightweight mode (enable_filesystem=False) - no MCP/filesystem
         backend_type = get_backend_type_from_model(model)
         headless_ui_config = {
             "display_type": "simple",
@@ -404,7 +406,7 @@ async def run(
             base_url=kwargs.get("base_url"),
             ui_config=headless_ui_config,
         )
-        config_path_used = f"single-agent:{model}"
+        config_path_used = f"single-agent-light:{model}"
 
     else:
         # 6. Try default config
