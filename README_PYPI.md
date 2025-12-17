@@ -407,9 +407,9 @@ MassGen automatically loads API keys from `.env` in your current directory.
 The system currently supports multiple model providers with advanced capabilities:
 
 **API-based Models:**
-- **OpenAI**: GPT-5.1, GPT-5-codex, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+- **OpenAI**: GPT-5.1-Codex series (gpt-5.1-codex-max, gpt-5.1-codex, gpt-5.1-codex-mini), GPT-5.2, GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
 - **Azure OpenAI**: Any Azure-deployed models (GPT-4, GPT-4o, GPT-35-turbo, etc.)
-- **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.5, Claude Opus 4.1, Claude Sonnet 4
+- **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.1, Claude Sonnet 4
   - Advanced tooling: web search, code execution, Files API, programmatic tool calling, tool search with deferred loading
 - **Claude Code**: Native Claude Code SDK with server-side session persistence and built-in dev tools
 - **Gemini**: Gemini 3 Pro, Gemini 2.5 Flash, Gemini 2.5 Pro with code execution and grounding
