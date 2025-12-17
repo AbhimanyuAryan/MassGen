@@ -51,8 +51,6 @@ export function HeaderControls({
 
   // Wizard state
   const openWizard = useWizardStore((s) => s.openWizard);
-  const setupStatus = useWizardStore((s) => s.setupStatus);
-  const fetchSetupStatus = useWizardStore((s) => s.fetchSetupStatus);
 
   const cycleTheme = () => {
     const modes: ThemeMode[] = ['light', 'dark', 'system'];
@@ -63,12 +61,8 @@ export function HeaderControls({
 
   const ThemeIcon = themeMode === 'light' ? Sun : themeMode === 'dark' ? Moon : Monitor;
 
-  // Check if setup is needed on first load
-  useEffect(() => {
-    fetchSetupStatus();
-  }, [fetchSetupStatus]);
-
-  // Auto-open wizard when no config is selected (either first-time or no selection)
+  // Auto-open wizard when no config is selected
+  // Note: First-time setup redirect is handled by main.tsx Router
   useEffect(() => {
     // Only auto-open after initial loading is complete
     if (loading) return;
@@ -77,15 +71,14 @@ export function HeaderControls({
     const urlConfigParam = new URLSearchParams(window.location.search).get('config');
     if (urlConfigParam) return;
 
-    // Open wizard if:
-    // 1. First-time setup is needed (no user config exists), OR
-    // 2. No config is currently selected AND no default exists
-    const shouldOpenWizard = setupStatus?.needs_setup || (!selectedConfig && !defaultConfig);
+    // Open wizard if no config is currently selected AND no default exists
+    // (First-time setup is now handled by Router redirecting to /setup)
+    const shouldOpenWizard = !selectedConfig && !defaultConfig;
 
     if (shouldOpenWizard) {
       openWizard();
     }
-  }, [setupStatus?.needs_setup, loading, openWizard, selectedConfig, defaultConfig]);
+  }, [loading, openWizard, selectedConfig, defaultConfig]);
 
   // Fetch available configs
   const fetchConfigs = useCallback(async () => {

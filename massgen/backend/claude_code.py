@@ -478,6 +478,92 @@ class ClaudeCodeBackend(LLMBackend):
 
         return tools
 
+    # Known tools for well-known MCP servers (used for tool filtering)
+    # NOTE: Claude Code SDK does NOT support filtering MCP tools via allowed_tools/disallowed_tools.
+    # These only work for built-in tools (Read, Write, Bash, etc.), not MCP tools.
+    # See: https://github.com/anthropics/claude-code/issues/7328
+    # Workaround options:
+    # 1. Use mcp-remote with --ignore-tool to proxy and filter tools
+    # 2. Don't add MCP servers with unwanted tools
+    # 3. Accept that tools are visible but use disallowed_tools to block execution
+    KNOWN_SERVER_TOOLS = {
+        "filesystem": [
+            "read_file",
+            "read_text_file",
+            "read_multiple_files",
+            "write_file",
+            "edit_file",
+            "create_directory",
+            "list_directory",
+            "directory_tree",
+            "move_file",
+            "copy_file",
+            "delete_file",
+            "search_files",
+            "get_file_info",
+            "list_allowed_directories",
+        ],
+        "workspace_tools": [
+            "read_file_content",
+            "save_file_content",
+            "append_file_content",
+            "list_directory",
+            "create_directory",
+            "copy_file",
+            "move_file",
+            "delete_file",
+            "compare_files",
+            "text_to_image_generation",
+            "text_to_audio_generation",
+        ],
+        "command_line": [
+            "execute_command",
+        ],
+    }
+
+    def _get_all_tools_for_server(self, server_name: str) -> List[str]:
+        """Get all known tools for a server, prefixed with mcp__{server}__.
+
+        Used when we need to explicitly list all tools (fallback when wildcards not supported).
+        Handles both exact server names and pattern-based names (e.g., planning_agent_a).
+
+        Args:
+            server_name: Name of the MCP server
+
+        Returns:
+            List of prefixed tool names, or empty list if server is unknown
+        """
+        # Check for exact match first
+        tools = self.KNOWN_SERVER_TOOLS.get(server_name)
+        if tools:
+            return [f"mcp__{server_name}__{tool}" for tool in tools]
+
+        # Check for pattern-based servers (e.g., planning_agent_a -> planning)
+        # These are dynamically named servers with predictable tool sets
+        DYNAMIC_SERVER_PATTERNS = {
+            "planning_": [
+                "create_task_plan",
+                "update_task_status",
+                "get_task_status",
+                "get_all_tasks",
+                "add_task",
+                "remove_task",
+                "clear_completed",
+            ],
+            "memory_": [
+                "save_memory",
+                "load_memory",
+                "list_memories",
+                "delete_memory",
+            ],
+        }
+
+        for prefix, pattern_tools in DYNAMIC_SERVER_PATTERNS.items():
+            if server_name.startswith(prefix):
+                return [f"mcp__{server_name}__{tool}" for tool in pattern_tools]
+
+        return []
+
     def get_current_session_id(self) -> Optional[str]:
         """Get current session ID from server-side session management.
 
@@ -1325,6 +1411,61 @@ class ClaudeCodeBackend(LLMBackend):
             enable_mcp_command_line = all_params.get("enable_mcp_command_line", False)
             if enable_mcp_command_line:
                 logger.info("[ClaudeCodeBackend] MCP command_line enabled, using execute_command for all commands")
+
+            # Convert allowed_tools from MCP server configs to agent-level allowed_tools
+            # Claude Agent SDK expects tool filtering at agent level, not server config level
+            # Using allowed_tools (allowlist) hides tools entirely so Claude won't try to use them
+            mcp_servers = all_params.get("mcp_servers", [])
+            if isinstance(mcp_servers, list):
+                # Check if any server has allowed_tools specified
+                has_allowed_tools = any(isinstance(s, dict) and s.get("allowed_tools") for s in mcp_servers)
+
+                if has_allowed_tools:
+                    # Build complete allowed_tools list
+                    # Start with current allowed_tools (builtin tools like Task)
+                    current_allowed = all_params.get("allowed_tools", self.get_supported_builtin_tools(enable_web_search))
+                    if isinstance(current_allowed, list):
+                        merged_allowed = list(current_allowed)
+                    else:
+                        merged_allowed = [current_allowed] if current_allowed else []
+
+                    # Add MCP tools from servers
+                    for server in mcp_servers:
+                        if not isinstance(server, dict):
+                            continue
+
+                        server_name = server.get("name")
+                        if not server_name:
+                            continue
+
+                        server_allowed = server.get("allowed_tools")
+                        if server_allowed:
+                            # Server has explicit allowed_tools - add only those
+                            for tool in server_allowed:
+                                merged_allowed.append(f"mcp__{server_name}__{tool}")
+                            logger.info(
+                                f"[ClaudeCodeBackend] Server '{server_name}': allowing specific tools -> {server_allowed}",
+                            )
+                        else:
+                            # Server has no allowed_tools - allow all its tools
+                            # Use explicit tool list for known servers, wildcard for unknown
+                            all_tools = self._get_all_tools_for_server(server_name)
+                            if all_tools:
+                                merged_allowed.extend(all_tools)
+                                logger.info(
+                                    f"[ClaudeCodeBackend] Server '{server_name}': allowing all {len(all_tools)} known tools",
+                                )
+                            else:
+                                # Unknown server - use wildcard and hope it works
+                                merged_allowed.append(f"mcp__{server_name}__*")
+                                logger.warning(
+                                    f"[ClaudeCodeBackend] Server '{server_name}': unknown server, using wildcard pattern",
+                                )
+
+                    all_params["allowed_tools"] = merged_allowed
+                    logger.info(
+                        f"[ClaudeCodeBackend] Set allowed_tools with {len(merged_allowed)} entries to hide filtered tools",
+                    )
 
             # Windows-specific handling: detect long prompts that exceed CreateProcess limit
             # Windows CreateProcess has ~8,191 char limit for entire command line
