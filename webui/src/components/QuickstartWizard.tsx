@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, ChevronLeft, ChevronRight, Loader2, Wand2 } from 'lucide-react';
 import { useWizardStore, WizardStep } from '../stores/wizardStore';
 import {
+  ContextPathsStep,
   DockerStep,
   ApiKeyStep,
   AgentCountStep,
@@ -19,13 +20,14 @@ import {
 } from './wizard';
 
 const stepConfig: Record<WizardStep, { title: string; subtitle: string }> = {
-  docker: { title: 'Execution Mode', subtitle: 'Step 1 of 7' },
-  apiKeys: { title: 'API Keys', subtitle: 'Step 2 of 7' },
-  agentCount: { title: 'Number of Agents', subtitle: 'Step 3 of 7' },
-  setupMode: { title: 'Setup Mode', subtitle: 'Step 4 of 7' },
-  agentConfig: { title: 'Agent Configuration', subtitle: 'Step 5 of 7' },
-  coordination: { title: 'Coordination Settings', subtitle: 'Step 6 of 7' },
-  preview: { title: 'Review & Save', subtitle: 'Step 7 of 7' },
+  docker: { title: 'Execution Mode', subtitle: 'Step 1 of 8' },
+  apiKeys: { title: 'API Keys', subtitle: 'Step 2 of 8' },
+  agentCount: { title: 'Number of Agents', subtitle: 'Step 3 of 8' },
+  setupMode: { title: 'Setup Mode', subtitle: 'Step 4 of 8' },
+  agentConfig: { title: 'Agent Configuration', subtitle: 'Step 5 of 8' },
+  coordination: { title: 'Coordination Settings', subtitle: 'Step 6 of 8' },
+  context: { title: 'Context Paths', subtitle: 'Step 7 of 8' },
+  preview: { title: 'Review & Save', subtitle: 'Step 8 of 8' },
 };
 
 interface QuickstartWizardProps {
@@ -68,6 +70,8 @@ export function QuickstartWizard({ onConfigSaved }: QuickstartWizardProps) {
   // Check if we can proceed to next step
   const canProceed = useCallback(() => {
     switch (currentStep) {
+      case 'context':
+        return true; // Context paths are optional
       case 'docker':
         return true; // Always can proceed from docker step
       case 'apiKeys':
@@ -92,6 +96,8 @@ export function QuickstartWizard({ onConfigSaved }: QuickstartWizardProps) {
   // Render current step content
   const renderStep = () => {
     switch (currentStep) {
+      case 'context':
+        return <ContextPathsStep />;
       case 'docker':
         return <DockerStep />;
       case 'apiKeys':
@@ -158,8 +164,8 @@ export function QuickstartWizard({ onConfigSaved }: QuickstartWizardProps) {
             {/* Progress Bar */}
             <div className="px-6 py-2 bg-gray-50 dark:bg-gray-800/50">
               <div className="flex items-center gap-2">
-                {['docker', 'apiKeys', 'agentCount', 'setupMode', 'agentConfig', 'coordination', 'preview'].map((step, index) => {
-                  const allSteps = ['docker', 'apiKeys', 'agentCount', 'setupMode', 'agentConfig', 'coordination', 'preview'];
+                {['docker', 'apiKeys', 'agentCount', 'setupMode', 'agentConfig', 'coordination', 'context', 'preview'].map((step, index) => {
+                  const allSteps = ['docker', 'apiKeys', 'agentCount', 'setupMode', 'agentConfig', 'coordination', 'context', 'preview'];
                   const stepIndex = allSteps.indexOf(currentStep);
                   const isActive = index === stepIndex;
                   const isComplete = index < stepIndex;

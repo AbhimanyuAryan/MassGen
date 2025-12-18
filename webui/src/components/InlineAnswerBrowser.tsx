@@ -112,7 +112,7 @@ function buildFileTree(files: FileInfo[]): FileTreeNode[] {
 }
 
 function FileNode({ node, depth }: { node: FileTreeNode; depth: number }) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   return (
     <div>
@@ -313,6 +313,7 @@ export function InlineAnswerBrowser() {
     }
   }, [activeTab, fetchWorkspaces, fetchAnswerWorkspaces]);
 
+
   // Fetch files when workspace is selected
   useEffect(() => {
     if (activeWorkspace) {
@@ -484,7 +485,10 @@ export function InlineAnswerBrowser() {
                         key={agentId}
                         onClick={() => {
                           setSelectedAgentWorkspace(agentId);
-                          setSelectedHistoricalWorkspace(null); // Reset to current workspace
+                          setSelectedHistoricalWorkspace(null);
+                          setSelectedAnswerLabel('current');
+                          fetchWorkspaces();
+                          fetchAnswerWorkspaces();
                         }}
                         disabled={!hasCurrent && !hasHistorical}
                         className={`px-2 py-0.5 text-xs rounded transition-colors ${
@@ -513,6 +517,8 @@ export function InlineAnswerBrowser() {
                       const label = e.target.value;
                       setSelectedAnswerLabel(label);
                       setSelectedHistoricalWorkspace(null);
+                      fetchWorkspaces();
+                      fetchAnswerWorkspaces();
 
                       if (label === 'current') {
                         // Use current workspace for this agent
@@ -557,11 +563,15 @@ export function InlineAnswerBrowser() {
               )}
 
               <button
-                onClick={() => { fetchWorkspaces(); fetchAnswerWorkspaces(); }}
-                disabled={isLoadingWorkspaces}
+                onClick={() => {
+                  fetchWorkspaces();
+                  fetchAnswerWorkspaces();
+                  if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
+                }}
+                disabled={isLoadingWorkspaces || isLoadingFiles}
                 className={`${!activeWorkspace ? 'ml-auto' : ''} p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors text-gray-500`}
               >
-                <RefreshCw className={`w-3 h-3 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3 h-3 ${isLoadingWorkspaces || isLoadingFiles ? 'animate-spin' : ''}`} />
               </button>
             </div>
 

@@ -817,7 +817,13 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         agents_config = request_data.get("agents", [])
         use_docker = request_data.get("use_docker", True)
         context_path = request_data.get("context_path")
+        context_paths_raw = request_data.get("context_paths", [])
         coordination = request_data.get("coordination", {})
+
+        # Transform frontend context_paths format to backend format
+        # Frontend: {path, type: 'read'|'write'}
+        # Backend: {path, permission: 'read'|'write'}
+        context_paths = [{"path": cp.get("path", ""), "permission": cp.get("type", "read")} for cp in context_paths_raw if cp.get("path")] if context_paths_raw else None
 
         if not agents_config:
             return JSONResponse(
@@ -855,6 +861,7 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         config = builder._generate_quickstart_config(
             formatted_agents,
             context_path=context_path,
+            context_paths=context_paths,
             use_docker=use_docker,
             agent_tools=agent_tools,
             agent_system_messages=agent_system_messages,
@@ -1354,8 +1361,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
     async def get_answer_workspaces(session_id: str):
         """Get workspaces linked to specific answer versions.
 
-        Uses snapshot_mappings.json from log directory if available,
-        otherwise scans the log directory structure.
+        Uses multiple sources for workspace info:
+        1. Display's timeline events (live data during execution)
+        2. snapshot_mappings.json from log directory
+        3. Directory structure fallback
         """
         import json
 
@@ -1365,75 +1374,103 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         agent_ids = display.agent_ids if display else []
 
         workspaces = []
-        log_session_dir = get_log_session_dir()
+        cwd = Path.cwd()
 
-        if not log_session_dir or not log_session_dir.exists():
-            return {"workspaces": [], "current": []}
+        # First, try to get live data from display's timeline events
+        if display and hasattr(display, "_timeline_events"):
+            timeline_events = getattr(display, "_timeline_events", [])
+            for event in timeline_events:
+                if event.get("type") != "answer":
+                    continue
 
-        # Try to use snapshot_mappings.json for accurate workspace info
-        snapshot_mappings_file = log_session_dir / "snapshot_mappings.json"
-        if snapshot_mappings_file.exists():
-            try:
-                with open(snapshot_mappings_file) as f:
-                    snapshot_mappings = json.load(f)
+                agent_id = event.get("agent_id", "")
+                label = event.get("label", "")
+                round_num = event.get("round", 1)
 
-                for label, mapping in snapshot_mappings.items():
-                    # Only include answers (not votes or final)
-                    if mapping.get("type") != "answer":
-                        continue
-
-                    agent_id = mapping.get("agent_id", "")
-                    timestamp = mapping.get("timestamp", "")
-
-                    # Build workspace path from mapping
-                    workspace_path = log_session_dir / agent_id / timestamp / "workspace"
+                # Map agent_id to workspace number
+                if agent_id in agent_ids:
+                    ws_num = agent_ids.index(agent_id) + 1
+                    workspace_path = cwd / f"workspace{ws_num}"
                     if workspace_path.exists():
                         workspaces.append(
                             {
-                                "answerId": f"{agent_id}-{timestamp}",
+                                "answerId": f"{agent_id}-{label}",
                                 "agentId": agent_id,
-                                "answerNumber": mapping.get("round", 1),
-                                "answerLabel": label,  # Use the canonical label from mappings
-                                "timestamp": timestamp,
+                                "answerNumber": round_num,
+                                "answerLabel": label,
+                                "timestamp": "",
                                 "workspacePath": str(workspace_path),
                             },
                         )
-            except Exception as e:
-                print(f"[WARNING] Failed to load snapshot_mappings.json: {e}")
-                # Fall through to directory scanning
 
-        # Fallback: Scan log directory structure if no mappings found
-        if not workspaces:
-            for entry in log_session_dir.iterdir():
-                if not entry.is_dir():
-                    continue
+        # Also check snapshot_mappings.json for persisted workspace snapshots
+        log_session_dir = get_log_session_dir()
+        if log_session_dir and log_session_dir.exists():
+            snapshot_mappings_file = log_session_dir / "snapshot_mappings.json"
+            if snapshot_mappings_file.exists():
+                try:
+                    with open(snapshot_mappings_file) as f:
+                        snapshot_mappings = json.load(f)
 
-                # Check for turn directories (turn_1, turn_2, etc.)
-                if entry.name.startswith("turn_"):
-                    for agent_dir in entry.iterdir():
-                        if not agent_dir.is_dir():
+                    for label, mapping in snapshot_mappings.items():
+                        # Only include answers (not votes or final)
+                        if mapping.get("type") != "answer":
                             continue
-                        agent_id = agent_dir.name
-                        agent_index = (agent_ids.index(agent_id) + 1) if agent_id in agent_ids else 0
 
-                        # Find timestamp directories with workspaces
-                        answer_count = 0
-                        for ts_dir in sorted(agent_dir.iterdir(), key=lambda x: x.name):
-                            if ts_dir.is_dir() and (ts_dir / "workspace").exists():
-                                answer_count += 1
-                                workspaces.append(
-                                    {
-                                        "answerId": f"{agent_id}-{ts_dir.name}",
-                                        "agentId": agent_id,
-                                        "answerNumber": answer_count,
-                                        "answerLabel": f"agent{agent_index}.{answer_count}",
-                                        "timestamp": ts_dir.name,
-                                        "workspacePath": str(ts_dir / "workspace"),
-                                    },
-                                )
+                        # Skip if we already have this label from timeline
+                        if any(w["answerLabel"] == label for w in workspaces):
+                            continue
+
+                        agent_id = mapping.get("agent_id", "")
+                        timestamp = mapping.get("timestamp", "")
+
+                        # Build workspace path from mapping
+                        workspace_path = log_session_dir / agent_id / timestamp / "workspace"
+                        if workspace_path.exists():
+                            workspaces.append(
+                                {
+                                    "answerId": f"{agent_id}-{timestamp}",
+                                    "agentId": agent_id,
+                                    "answerNumber": mapping.get("round", 1),
+                                    "answerLabel": label,
+                                    "timestamp": timestamp,
+                                    "workspacePath": str(workspace_path),
+                                },
+                            )
+                except Exception as e:
+                    print(f"[WARNING] Failed to load snapshot_mappings.json: {e}")
+
+            # Fallback: Scan log directory structure if no mappings found
+            if not workspaces:
+                for entry in log_session_dir.iterdir():
+                    if not entry.is_dir():
+                        continue
+
+                    # Check for turn directories (turn_1, turn_2, etc.)
+                    if entry.name.startswith("turn_"):
+                        for agent_dir in entry.iterdir():
+                            if not agent_dir.is_dir():
+                                continue
+                            agent_id = agent_dir.name
+                            agent_index = (agent_ids.index(agent_id) + 1) if agent_id in agent_ids else 0
+
+                            # Find timestamp directories with workspaces
+                            answer_count = 0
+                            for ts_dir in sorted(agent_dir.iterdir(), key=lambda x: x.name):
+                                if ts_dir.is_dir() and (ts_dir / "workspace").exists():
+                                    answer_count += 1
+                                    workspaces.append(
+                                        {
+                                            "answerId": f"{agent_id}-{ts_dir.name}",
+                                            "agentId": agent_id,
+                                            "answerNumber": answer_count,
+                                            "answerLabel": f"agent{agent_index}.{answer_count}",
+                                            "timestamp": ts_dir.name,
+                                            "workspacePath": str(ts_dir / "workspace"),
+                                        },
+                                    )
 
         # Also include current workspaces from cwd
-        cwd = Path.cwd()
         current = []
         for path in cwd.iterdir():
             if path.is_dir() and path.name.startswith("workspace"):
@@ -1662,6 +1699,171 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         except Exception as e:
             return JSONResponse(
                 {"error": f"Failed to open workspace: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.post("/api/browse/files")
+    async def browse_files(request: Request):
+        """Open a native file picker dialog and return selected paths.
+
+        Request body:
+        {
+            "mode": "files" | "directory",  # What to select
+            "multiple": bool,  # Allow multiple selection (files only)
+            "title": str  # Optional dialog title
+        }
+
+        Returns:
+            { "paths": [str, ...] }  # List of selected absolute paths
+        """
+        import platform
+        import subprocess
+
+        try:
+            data = await request.json()
+            mode = data.get("mode", "files")
+            multiple = data.get("multiple", True)
+            title = data.get("title", "Select Files" if mode == "files" else "Select Directory")
+
+            system = platform.system()
+            paths = []
+
+            if system == "Darwin":
+                # macOS - use AppleScript
+                if mode == "directory":
+                    script = f"""
+                    tell application "System Events"
+                        activate
+                    end tell
+                    set chosenFolder to choose folder with prompt "{title}"
+                    return POSIX path of chosenFolder
+                    """
+                else:
+                    if multiple:
+                        script = f"""
+                        tell application "System Events"
+                            activate
+                        end tell
+                        set chosenFiles to choose file with prompt "{title}" with multiple selections allowed
+                        set posixPaths to {{}}
+                        repeat with aFile in chosenFiles
+                            set end of posixPaths to POSIX path of aFile
+                        end repeat
+                        set AppleScript's text item delimiters to linefeed
+                        return posixPaths as text
+                        """
+                    else:
+                        script = f"""
+                        tell application "System Events"
+                            activate
+                        end tell
+                        set chosenFile to choose file with prompt "{title}"
+                        return POSIX path of chosenFile
+                        """
+
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    # Parse the output - may be multiple paths separated by newlines
+                    paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+
+            elif system == "Linux":
+                # Linux - try zenity first, then kdialog
+                try:
+                    if mode == "directory":
+                        result = subprocess.run(
+                            ["zenity", "--file-selection", "--directory", "--title", title],
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                        )
+                    else:
+                        cmd = ["zenity", "--file-selection", "--title", title]
+                        if multiple:
+                            cmd.append("--multiple")
+                            cmd.extend(["--separator", "\n"])
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+                    if result.returncode == 0 and result.stdout.strip():
+                        paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+                except FileNotFoundError:
+                    # Try kdialog as fallback
+                    try:
+                        if mode == "directory":
+                            result = subprocess.run(
+                                ["kdialog", "--getexistingdirectory", ".", "--title", title],
+                                capture_output=True,
+                                text=True,
+                                timeout=300,
+                            )
+                        else:
+                            cmd = ["kdialog", "--getopenfilename", ".", "--title", title]
+                            if multiple:
+                                cmd = ["kdialog", "--getopenfilename", ".", "--multiple", "--title", title]
+                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+                        if result.returncode == 0 and result.stdout.strip():
+                            paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+                    except FileNotFoundError:
+                        return JSONResponse(
+                            {"error": "No file dialog available. Please install zenity or kdialog."},
+                            status_code=500,
+                        )
+
+            elif system == "Windows":
+                # Windows - use PowerShell
+                if mode == "directory":
+                    ps_script = """
+                    Add-Type -AssemblyName System.Windows.Forms
+                    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+                    $dialog.Description = "{}"
+                    if ($dialog.ShowDialog() -eq 'OK') {{ $dialog.SelectedPath }}
+                    """.format(
+                        title,
+                    )
+                else:
+                    ps_script = """
+                    Add-Type -AssemblyName System.Windows.Forms
+                    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+                    $dialog.Title = "{}"
+                    $dialog.Multiselect = ${}
+                    if ($dialog.ShowDialog() -eq 'OK') {{ $dialog.FileNames -join "`n" }}
+                    """.format(
+                        title,
+                        "true" if multiple else "false",
+                    )
+
+                result = subprocess.run(
+                    ["powershell", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+
+            else:
+                return JSONResponse(
+                    {"error": f"Unsupported platform: {system}"},
+                    status_code=500,
+                )
+
+            return {"paths": paths}
+
+        except subprocess.TimeoutExpired:
+            return JSONResponse(
+                {"error": "Dialog timed out"},
+                status_code=408,
+            )
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to open file dialog: {str(e)}"},
                 status_code=500,
             )
 

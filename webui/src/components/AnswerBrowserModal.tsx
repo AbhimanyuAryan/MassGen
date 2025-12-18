@@ -134,7 +134,7 @@ function formatFileSize(bytes: number): string {
 }
 
 function FileNode({ node, depth, onFileClick }: FileNodeProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const handleClick = () => {
     if (node.isDirectory) {
@@ -408,6 +408,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       fetchAnswerWorkspaces();
     }
   }, [isOpen, activeTab, fetchWorkspaces, fetchAnswerWorkspaces]);
+
 
   // Fetch files when workspace is selected
   useEffect(() => {
@@ -856,6 +857,9 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                             onClick={() => {
                               setSelectedAgentWorkspace(agentId);
                               setSelectedHistoricalWorkspace(null);
+                              setSelectedAnswerLabel('current');
+                              fetchWorkspaces();
+                              fetchAnswerWorkspaces();
                             }}
                             className={`px-3 py-1 text-sm rounded transition-colors ${
                               selectedAgentWorkspace === agentId
@@ -882,6 +886,8 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                             const label = e.target.value;
                             setSelectedAnswerLabel(label);
                             setSelectedHistoricalWorkspace(null);
+                            fetchWorkspaces();
+                            fetchAnswerWorkspaces();
 
                             if (label === 'current') {
                               // Use current workspace for this agent
@@ -915,7 +921,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </div>
                   )}
 
-                  {/* Open in Finder Button */}
+                  {/* Open Folder Button */}
                   {activeWorkspace && (
                     <button
                       onClick={() => openWorkspaceInFinder(activeWorkspace.path)}
@@ -923,18 +929,22 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                       title="Open workspace in file browser"
                     >
                       <ExternalLink className="w-4 h-4" />
-                      <span>Open in Finder</span>
+                      <span>Open Folder</span>
                     </button>
                   )}
 
                   {/* Refresh Button */}
                   <button
-                    onClick={() => { fetchWorkspaces(); fetchAnswerWorkspaces(); }}
-                    disabled={isLoadingWorkspaces}
+                    onClick={() => {
+                      fetchWorkspaces();
+                      fetchAnswerWorkspaces();
+                      if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
+                    }}
+                    disabled={isLoadingWorkspaces || isLoadingFiles}
                     className={`${!activeWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-gray-200`}
                     title="Refresh workspaces"
                   >
-                    <RefreshCw className={`w-4 h-4 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 ${isLoadingWorkspaces || isLoadingFiles ? 'animate-spin' : ''}`} />
                   </button>
                 </div>
 

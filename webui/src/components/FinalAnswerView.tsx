@@ -118,7 +118,7 @@ interface FileNodeProps {
 }
 
 function FileNode({ node, depth, onFileClick }: FileNodeProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const handleClick = () => {
     if (node.isDirectory) {
@@ -509,7 +509,7 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                   </div>
                 </div>
 
-                {/* Open in Finder button */}
+                {/* Open Folder button */}
                 {winnerWorkspace && (
                   <button
                     onClick={() => openWorkspaceInFinder(winnerWorkspace.path)}
@@ -518,7 +518,7 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                     title="Open workspace in file browser"
                   >
                     <ExternalLink className="w-4 h-4" />
-                    <span>Open in Finder</span>
+                    <span>Open Folder</span>
                   </button>
                 )}
 
