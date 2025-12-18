@@ -2321,6 +2321,16 @@ class CustomToolAndMCPBackend(LLMBackend):
                                 f"[{self.get_provider_name()}] Context length exceeded during streaming, " f"attempting compression recovery...",
                             )
                             try:
+                                agent_id = kwargs.get("agent_id")
+
+                                # Notify user that compression is starting
+                                yield StreamChunk(
+                                    type="compression_status",
+                                    status="compressing",
+                                    content=f"\n📦 [Compression] Context limit exceeded - summarizing {len(messages)} messages...",
+                                    source=agent_id,
+                                )
+
                                 # Get streaming buffer content if available (subclass may track this)
                                 buffer_content = getattr(self, "_streaming_buffer", None) or None
 
@@ -2328,6 +2338,14 @@ class CustomToolAndMCPBackend(LLMBackend):
                                 compressed_messages = await self._compress_messages_for_context_recovery(
                                     messages,
                                     buffer_content=buffer_content,
+                                )
+
+                                # Notify user that compression succeeded
+                                yield StreamChunk(
+                                    type="compression_status",
+                                    status="compression_complete",
+                                    content=f"✅ [Compression] Recovered with {len(compressed_messages)} messages - continuing...",
+                                    source=agent_id,
                                 )
 
                                 # Retry with compressed messages (with flag to prevent infinite loops)

@@ -197,7 +197,7 @@ the provider returns a context length error.
 
 1. MassGen sends the conversation to the LLM
 2. If the context is too long, the provider returns an error
-3. MassGen catches the error and summarizes older messages using ``AgentDrivenCompressor``
+3. MassGen catches the error and generates a summary of the work done so far
 4. The summarized conversation is retried automatically (single retry to prevent loops)
 
 **After compression**, the message structure looks like:
@@ -208,11 +208,30 @@ the provider returns a context length error.
    [system] → [user 1] → [assistant 1] → ... → [user 20] → [assistant 20] ← ERROR
 
    After Compression:
-   [system] → [summary of msgs 1-16] → [user 17] → ... → [user 20]
-   ↑                                    ↑
-   System preserved                     Recent messages preserved (based on target_ratio)
+   [system] → [user request] → [summary as assistant message]
+   ↑           ↑                ↑
+   System      User's original  Summary of ALL work done so far
+   preserved   request          (most recent context - model continues from here)
 
-   Old messages (1-16) → Summarized, key points preserved in summary message
+**Key Design: User → Summary Ordering**
+
+The summary is placed *after* the user message as an assistant message. This ordering
+is critical for preventing redundant work:
+
+- The model sees its own summary as the most recent context
+- It naturally continues from the summary rather than starting fresh
+- File reads, analysis, and other completed work are preserved in the summary
+
+**What Gets Summarized**
+
+The compression system captures everything in the streaming buffer, including:
+
+- Tool calls and their results (file reads, directory listings, etc.)
+- Reasoning and analysis performed
+- Partial answers and work in progress
+- Any content that was streaming when the context limit was hit
+
+This ensures the model doesn't re-read files or redo analysis after compression.
 
 **Configuration**
 
@@ -1379,18 +1398,20 @@ Planned Features
 
 **Benefit**: Capture tool usage patterns without overwhelming mem0's extraction LLM with 50KB directory trees
 
-**4. Memory Summarization on Compression**
+**4. Memory Summarization on Compression** *(Implemented)*
 
-**Current**: Just remove old messages
-
-**Planned**: Generate summary of compressed context
+Compression now generates a comprehensive summary of all work done:
 
 .. code-block:: text
 
-   Compression:
-   - Remove messages 1-10
-   - Generate summary: "User analyzed MassGen codebase, identified 3 key components..."
-   - Inject summary as context for future turns
+   Compression Flow:
+   1. Context limit error detected
+   2. Generate summary of buffer content (tool calls, results, analysis)
+   3. Rebuild context: [system] → [user request] → [summary]
+   4. Summary placed LAST so model continues from it (not restart)
+
+The user→summary ordering prevents models from re-reading files or redoing analysis
+that was already completed before compression.
 
 Known Limitations
 ~~~~~~~~~~~~~~~~~

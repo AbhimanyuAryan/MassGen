@@ -8,15 +8,12 @@
 # - Debug logging shows compression input/output in compression_debug/
 #
 # Run with:
-#   massgen --debug --config massgen/configs/tools/filesystem/test_reactive_compression.yaml "Read all Python files in massgen/backend/ and summarize what each one does"
+#   uv run massgen --debug --save-llm-calls --config massgen/configs/tools/filesystem/test_reactive_compression.yaml "Read all Python files in massgen/backend/ and summarize what each one does"
+#
+# The --save-llm-calls flag saves all API calls to llm_calls/ directory for debugging
 
 agents:
   - id: "reader"
-    system_message: |
-      You are a code reader assistant. Your job is to read files and provide detailed summaries.
-      Read files thoroughly and describe their purpose, key classes, and main functions.
-      Read as many files as needed to complete the task.
-
     backend:
       type: "openai"
       model: "gpt-5-mini"  # Smaller context window to trigger compression faster

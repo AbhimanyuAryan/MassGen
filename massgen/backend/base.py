@@ -34,7 +34,7 @@ class StreamChunk:
 
     type: str  # "content", "tool_calls", "complete_message", "complete_response", "done",
     # "error", "agent_status", "reasoning", "reasoning_done", "reasoning_summary",
-    # "reasoning_summary_done", "backend_status"
+    # "reasoning_summary_done", "backend_status", "compression_status"
     content: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None  # User-defined function tools (need execution)
     complete_message: Optional[Dict[str, Any]] = None  # Complete assistant message

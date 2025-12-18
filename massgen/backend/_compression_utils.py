@@ -15,54 +15,32 @@ from ..logger_config import get_log_session_dir, logger
 if TYPE_CHECKING:
     from .base import BackendBase
 
-# Conversation summarization prompt adapted from Claude Code's compaction system
-# Source: https://github.com/Piebald-AI/claude-code-system-prompts
-# File: system-prompts/agent-prompt-conversation-summarization.md
+# Conversation summarization prompts
 #
-# Key adaptations for MassGen:
-# - Removed <analysis> tags to minimize output tokens (we're token-constrained)
-# - Kept structured sections for comprehensive context preservation
-# - Added tool execution focus (MassGen is heavily tool-based)
-SUMMARIZER_SYSTEM_PROMPT = """Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
-This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.
+# Uses a 3-message structure to clearly separate the conversation being summarized
+# from the summarization instructions:
+# 1. System: Brief instructions for summarization format
+# 2. User: The conversation content (provided as a separate message)
+# 3. User: Request to summarize it
+#
+# This prevents the model from confusing instructions in the conversation content
+# with the summarization task itself.
+SUMMARIZER_SYSTEM_PROMPT = """You summarize conversations. Include:
+1. User Request: What was asked for
+2. Work Done: Files read, tools used, code written
+3. Key Details: File paths, code snippets, technical findings
+4. Current State: Where things stand
+5. Pending: Remaining work
 
-Your summary should include the following sections:
+Be thorough but concise. This summary replaces the original messages."""
 
-1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail.
+# Conversation content - provided as separate message
+SUMMARIZER_CONVERSATION_PROMPT = """Here is the conversation to summarize:
 
-2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks discussed.
+{conversation}"""
 
-3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created.
-   Include full code snippets where applicable and include a summary of why each file read or edit is important.
-
-4. Tool Execution Results: Summarize key outputs from tool calls (file reads, command executions, API responses). Include specific data that would be lost without the original context.
-
-5. Errors and Fixes: List all errors encountered and how they were fixed. Pay special attention to specific user feedback received.
-
-6. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.
-
-7. Pending Tasks: Outline any pending tasks that have explicitly been requested.
-
-8. Current Work: Describe in detail precisely what was being worked on immediately before this summary,
-   paying special attention to the most recent messages. Include file names and code snippets where applicable.
-
-9. Optional Next Step: List the next step to take that is related to the most recent work.
-   IMPORTANT: ensure this step is DIRECTLY in line with the user's most recent explicit requests.
-   If the last task was concluded, only list next steps if they are explicitly in line with the user's request.
-
-Be thorough but concise. This summary will replace the original messages, so include everything essential for continuing the work seamlessly."""
-
-SUMMARIZER_USER_PROMPT = """Please provide a detailed summary of the conversation below, following the structure specified in your instructions.
-
-<conversation>
-{conversation}
-</conversation>
-
-Create your summary now, ensuring precision and thoroughness. Focus especially on preserving:
-- Exact file paths and code changes
-- Specific tool outputs and their implications
-- User feedback and course corrections
-- The precise state of work when this summary was created"""
+# Final request - triggers the summary
+SUMMARIZER_REQUEST_PROMPT = """Summarize the conversation above."""
 
 
 async def compress_messages_for_recovery(
@@ -155,23 +133,26 @@ async def compress_messages_for_recovery(
         logger.error(f"[CompressionUtils] Summarization failed: {e}. Using simple truncation.")
         summary = "[Previous conversation content was truncated due to context limits]"
 
-    # Build result: system (if exists) + summary + recent messages
+    # Build result: system → user message → summary → any additional recent messages
+    # Order matters! Putting summary AFTER user message means the model sees it as
+    # the latest context and will build on it rather than re-doing the work.
     result = []
 
     # Preserve system message if present (never compressed)
     if system_message:
         result.append(system_message)
 
-    # Add summary as assistant message
+    # Add recent messages (typically contains the user request)
+    result.extend(recent_messages)
+
+    # Add summary as assistant message LAST - this is the most recent context
+    # the model sees, so it should continue from here rather than start fresh
     result.append(
         {
             "role": "assistant",
             "content": f"[Previous conversation summary]\n{summary}",
         },
     )
-
-    # Add recent messages
-    result.extend(recent_messages)
 
     logger.info(
         f"[CompressionUtils] Compressed {len(messages)} messages to {len(result)} messages",
@@ -300,17 +281,20 @@ async def _generate_summary(backend: "BackendBase", conversation_text: str) -> s
     # Calculate token budget for conversation content
     calc = _get_token_calculator()
     system_tokens = calc.estimate_tokens(SUMMARIZER_SYSTEM_PROMPT)
-    prompt_template_tokens = calc.estimate_tokens(SUMMARIZER_USER_PROMPT)
+    conversation_prompt_tokens = calc.estimate_tokens(SUMMARIZER_CONVERSATION_PROMPT)
+    request_tokens = calc.estimate_tokens(SUMMARIZER_REQUEST_PROMPT)
 
-    # Max tokens for conversation: context - system - prompt_template - output - safety_margin
-    max_conversation_tokens = context_window - system_tokens - prompt_template_tokens - SUMMARY_OUTPUT_TOKENS - 500
+    # Max tokens for conversation: context - system - prompts - output - safety_margin
+    max_conversation_tokens = context_window - system_tokens - conversation_prompt_tokens - request_tokens - SUMMARY_OUTPUT_TOKENS - 500
 
     # Truncate conversation_text to fit within budget
     conversation_text = _truncate_to_token_budget(conversation_text, max_conversation_tokens)
 
+    # Use 3-message structure to clearly separate conversation from summarization request
     summarizer_messages = [
         {"role": "system", "content": SUMMARIZER_SYSTEM_PROMPT},
-        {"role": "user", "content": SUMMARIZER_USER_PROMPT.format(conversation=conversation_text)},
+        {"role": "user", "content": SUMMARIZER_CONVERSATION_PROMPT.format(conversation=conversation_text)},
+        {"role": "user", "content": SUMMARIZER_REQUEST_PROMPT},
     ]
 
     # Use the backend's stream_with_tools() - works uniformly for all backends
@@ -398,11 +382,12 @@ def _save_compression_debug(
             data["summary_context"] = summary_context
 
         if compressed_result is not None:
-            data["compressed_result"] = compressed_result
+            # Only save message count, not the full messages (input file has the originals)
             data["compressed_message_count"] = len(compressed_result)
 
         if summary is not None:
             data["summary"] = summary
+            data["summary_length_chars"] = len(summary)
 
         with open(filepath, "w") as f:
             json.dump(data, f, indent=2, default=str)

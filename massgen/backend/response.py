@@ -183,6 +183,14 @@ class ResponseBackend(CustomToolAndMCPBackend):
                     f"[{self.get_provider_name()}] Context length exceeded, " f"attempting compression recovery...",
                 )
 
+                # Notify user that compression is starting
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compressing",
+                    content=f"\n📦 [Compression] Context limit exceeded - summarizing {len(processed_messages)} messages...",
+                    source=agent_id,
+                )
+
                 # Compress messages and retry
                 # Include accumulated buffer content if available (may have content from prior calls)
                 buffer_for_compression = self._streaming_buffer if self._streaming_buffer else None
@@ -200,6 +208,14 @@ class ResponseBackend(CustomToolAndMCPBackend):
 
                 # Retry with compressed messages
                 stream = await client.responses.create(**api_params)
+
+                # Notify user that compression succeeded
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compression_complete",
+                    content=f"✅ [Compression] Recovered with {len(compressed_messages)} messages - continuing...",
+                    source=agent_id,
+                )
 
                 logger.info(
                     f"[{self.get_provider_name()}] Compression recovery successful, " f"continuing with {len(compressed_messages)} messages",
@@ -408,6 +424,14 @@ class ResponseBackend(CustomToolAndMCPBackend):
                     f"[{self.get_provider_name()}] Context length exceeded in MCP mode, " f"attempting compression recovery...",
                 )
 
+                # Notify user that compression is starting
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compressing",
+                    content=f"\n📦 [Compression] Context limit exceeded - summarizing {len(current_messages)} messages...",
+                    source=agent_id,
+                )
+
                 # Compress messages and retry
                 # Include accumulated buffer content if available (not first API call)
                 buffer_for_compression = self._streaming_buffer if self._streaming_buffer else None
@@ -428,6 +452,14 @@ class ResponseBackend(CustomToolAndMCPBackend):
 
                 # Update current_messages for subsequent recursions
                 current_messages = compressed_messages
+
+                # Notify user that compression succeeded
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compression_complete",
+                    content=f"✅ [Compression] Recovered with {len(compressed_messages)} messages - continuing...",
+                    source=agent_id,
+                )
 
                 logger.info(
                     f"[{self.get_provider_name()}] Compression recovery successful, " f"continuing with {len(compressed_messages)} messages",
