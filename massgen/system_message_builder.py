@@ -122,10 +122,12 @@ class SystemMessageBuilder:
         # PRIORITY 1 (CRITICAL): MassGen Coordination - vote/new_answer primitives
         voting_sensitivity = self.message_templates._voting_sensitivity
         answer_novelty_requirement = self.message_templates._answer_novelty_requirement
+        min_answers_before_voting = self.message_templates._min_answers_before_voting
         builder.add_section(
             EvaluationSection(
                 voting_sensitivity=voting_sensitivity,
                 answer_novelty_requirement=answer_novelty_requirement,
+                min_answers_before_voting=min_answers_before_voting,
             ),
         )
 

@@ -656,6 +656,16 @@ class ConfigValidator:
                     f"Use one of: {valid_values}",
                 )
 
+        # Validate min_answers_before_voting if present
+        if "min_answers_before_voting" in orchestrator_config:
+            min_answers = orchestrator_config["min_answers_before_voting"]
+            if not isinstance(min_answers, int) or min_answers < 0:
+                result.add_error(
+                    f"'min_answers_before_voting' must be a non-negative integer, got {min_answers}",
+                    f"{location}.min_answers_before_voting",
+                    "Use a value like 0, 1, or 2",
+                )
+
         # Validate timeout if present
         if "timeout" in orchestrator_config:
             timeout = orchestrator_config["timeout"]

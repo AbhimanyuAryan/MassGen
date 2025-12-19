@@ -1402,12 +1402,14 @@ class EvaluationSection(SystemPromptSection):
     Args:
         voting_sensitivity: Controls evaluation strictness ('lenient', 'balanced', 'strict')
         answer_novelty_requirement: Controls novelty requirements ('lenient', 'balanced', 'strict')
+        min_answers_before_voting: Minimum answers each agent must provide before voting (0 = no minimum)
     """
 
     def __init__(
         self,
         voting_sensitivity: str = "lenient",
         answer_novelty_requirement: str = "lenient",
+        min_answers_before_voting: int = 0,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -1416,6 +1418,7 @@ class EvaluationSection(SystemPromptSection):
         )
         self.voting_sensitivity = voting_sensitivity
         self.answer_novelty_requirement = answer_novelty_requirement
+        self.min_answers_before_voting = min_answers_before_voting
 
     def build_content(self) -> str:
         import time
@@ -1459,11 +1462,19 @@ CRITICAL: New answers must be SUBSTANTIALLY different from existing answers.
 - Provide significantly more depth or novel perspectives
 - If you cannot provide a truly novel solution, vote instead"""
 
+        # Add minimum answers requirement if set
+        min_answers_section = ""
+        if self.min_answers_before_voting > 0:
+            min_answers_section = f"""
+
+IMPORTANT: You must provide at least {self.min_answers_before_voting} answer(s) before you can vote.
+All agents must meet this minimum before voting is allowed. Focus on providing your best answer first."""
+
         return f"""You are evaluating answers from multiple agents for final response to a message.
 Different agents may have different builtin tools and capabilities.
 {evaluation_section}
 Otherwise, digest existing answers, combine their strengths, and do additional work to address their weaknesses,
-then use the `new_answer` tool to record a better answer to the ORIGINAL MESSAGE.{novelty_section}
+then use the `new_answer` tool to record a better answer to the ORIGINAL MESSAGE.{novelty_section}{min_answers_section}
 Make sure you actually call `vote` or `new_answer` (in tool call format).
 
 *Note*: The CURRENT TIME is **{time.strftime("%Y-%m-%d %H:%M:%S")}**."""

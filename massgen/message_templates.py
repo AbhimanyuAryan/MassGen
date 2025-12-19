@@ -10,7 +10,13 @@ from typing import Any, Dict, List, Optional
 class MessageTemplates:
     """Message templates implementing the proven MassGen approach."""
 
-    def __init__(self, voting_sensitivity: str = "lenient", answer_novelty_requirement: str = "lenient", **template_overrides):
+    def __init__(
+        self,
+        voting_sensitivity: str = "lenient",
+        answer_novelty_requirement: str = "lenient",
+        min_answers_before_voting: int = 0,
+        **template_overrides,
+    ):
         """Initialize with optional template overrides.
 
         Args:
@@ -22,10 +28,12 @@ class MessageTemplates:
                 - "lenient": No additional checks (default)
                 - "balanced": Require meaningful differences
                 - "strict": Require substantially different solutions
+            min_answers_before_voting: Minimum answers each agent must provide before voting (0 = no minimum)
             **template_overrides: Custom template strings to override defaults
         """
         self._voting_sensitivity = voting_sensitivity
         self._answer_novelty_requirement = answer_novelty_requirement
+        self._min_answers_before_voting = min_answers_before_voting
         self._template_overrides = template_overrides
 
     # =============================================================================
