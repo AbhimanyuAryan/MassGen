@@ -7,7 +7,12 @@
 import { create } from 'zustand';
 
 // Types for wizard state
-export type WizardStep = 'docker' | 'apiKeys' | 'agentCount' | 'setupMode' | 'agentConfig' | 'coordination' | 'preview';
+export type WizardStep = 'context' | 'docker' | 'apiKeys' | 'agentCount' | 'setupMode' | 'agentConfig' | 'coordination' | 'preview';
+
+export interface ContextPath {
+  path: string;
+  type: 'read' | 'write';
+}
 
 export interface ProviderInfo {
   id: string;
@@ -77,6 +82,7 @@ interface WizardState {
   loadingCapabilities: Record<string, boolean>;
 
   // User selections
+  contextPaths: ContextPath[];
   useDocker: boolean;
   agentCount: number;
   setupMode: 'same' | 'different';
@@ -101,6 +107,9 @@ interface WizardState {
   setStep: (step: WizardStep) => void;
   nextStep: () => void;
   prevStep: () => void;
+  addContextPath: (path: string, type: 'read' | 'write') => void;
+  removeContextPath: (index: number) => void;
+  updateContextPath: (index: number, path: string, type: 'read' | 'write') => void;
   setUseDocker: (useDocker: boolean) => void;
   setAgentCount: (count: number) => void;
   setSetupMode: (mode: 'same' | 'different') => void;
@@ -123,7 +132,7 @@ interface WizardState {
   reset: () => void;
 }
 
-const stepOrder: WizardStep[] = ['docker', 'apiKeys', 'agentCount', 'setupMode', 'agentConfig', 'coordination', 'preview'];
+const stepOrder: WizardStep[] = ['docker', 'apiKeys', 'agentCount', 'setupMode', 'agentConfig', 'coordination', 'context', 'preview'];
 
 const defaultCoordinationSettings: CoordinationSettings = {
   voting_sensitivity: 'lenient',
@@ -141,6 +150,7 @@ const initialState = {
   loadingModels: {} as Record<string, boolean>,
   providerCapabilities: {} as Record<string, ProviderCapabilities>,
   loadingCapabilities: {} as Record<string, boolean>,
+  contextPaths: [] as ContextPath[],
   useDocker: true,
   agentCount: 3,
   setupMode: 'same' as const,
@@ -164,6 +174,25 @@ export const useWizardStore = create<WizardState>()((set, get) => ({
 
   closeWizard: () => {
     set({ isOpen: false });
+  },
+
+  addContextPath: (path: string, type: 'read' | 'write') => {
+    const { contextPaths } = get();
+    set({ contextPaths: [...contextPaths, { path, type }] });
+  },
+
+  removeContextPath: (index: number) => {
+    const { contextPaths } = get();
+    set({ contextPaths: contextPaths.filter((_, i) => i !== index) });
+  },
+
+  updateContextPath: (index: number, path: string, type: 'read' | 'write') => {
+    const { contextPaths } = get();
+    const newPaths = [...contextPaths];
+    if (newPaths[index]) {
+      newPaths[index] = { path, type };
+      set({ contextPaths: newPaths });
+    }
   },
 
   setStep: (step: WizardStep) => {
@@ -208,7 +237,7 @@ export const useWizardStore = create<WizardState>()((set, get) => ({
     }
 
     // When moving to preview, generate the config
-    if (currentStep === 'coordination') {
+    if (currentStep === 'context') {
       get().generateConfig();
     }
 
@@ -422,7 +451,7 @@ export const useWizardStore = create<WizardState>()((set, get) => ({
   },
 
   generateConfig: async () => {
-    const { agents, useDocker, coordinationSettings } = get();
+    const { agents, useDocker, coordinationSettings, contextPaths } = get();
     set({ isLoading: true, error: null });
 
     try {
@@ -433,6 +462,7 @@ export const useWizardStore = create<WizardState>()((set, get) => ({
           agents,
           use_docker: useDocker,
           coordination: coordinationSettings,
+          context_paths: contextPaths,
         }),
       });
 
@@ -507,6 +537,7 @@ export const selectIsLoading = (state: WizardState) => state.isLoading;
 export const selectError = (state: WizardState) => state.error;
 export const selectSetupStatus = (state: WizardState) => state.setupStatus;
 export const selectProviders = (state: WizardState) => state.providers;
+export const selectContextPaths = (state: WizardState) => state.contextPaths;
 export const selectUseDocker = (state: WizardState) => state.useDocker;
 export const selectAgentCount = (state: WizardState) => state.agentCount;
 export const selectSetupMode = (state: WizardState) => state.setupMode;

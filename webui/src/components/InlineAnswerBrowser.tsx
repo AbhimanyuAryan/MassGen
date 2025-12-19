@@ -7,7 +7,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History } from 'lucide-react';
+import { FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, ExternalLink } from 'lucide-react';
 import { useAgentStore, selectAnswers, selectAgentOrder, selectSelectedAgent } from '../stores/agentStore';
 import type { Answer, AnswerWorkspace } from '../types';
 
@@ -112,7 +112,7 @@ function buildFileTree(files: FileInfo[]): FileTreeNode[] {
 }
 
 function FileNode({ node, depth }: { node: FileTreeNode; depth: number }) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   return (
     <div>
@@ -288,6 +288,23 @@ export function InlineAnswerBrowser() {
     }
   }, []);
 
+  // Open workspace in native file browser
+  const openWorkspaceInFinder = useCallback(async (workspacePath: string) => {
+    try {
+      const response = await fetch('/api/workspace/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: workspacePath }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        setWorkspaceError(data.error || 'Failed to open workspace');
+      }
+    } catch (err) {
+      setWorkspaceError(err instanceof Error ? err.message : 'Failed to open workspace');
+    }
+  }, []);
+
   // Fetch workspaces when tab switches to workspace
   useEffect(() => {
     if (activeTab === 'workspace') {
@@ -295,6 +312,7 @@ export function InlineAnswerBrowser() {
       fetchAnswerWorkspaces();
     }
   }, [activeTab, fetchWorkspaces, fetchAnswerWorkspaces]);
+
 
   // Fetch files when workspace is selected
   useEffect(() => {
@@ -467,7 +485,10 @@ export function InlineAnswerBrowser() {
                         key={agentId}
                         onClick={() => {
                           setSelectedAgentWorkspace(agentId);
-                          setSelectedHistoricalWorkspace(null); // Reset to current workspace
+                          setSelectedHistoricalWorkspace(null);
+                          setSelectedAnswerLabel('current');
+                          fetchWorkspaces();
+                          fetchAnswerWorkspaces();
                         }}
                         disabled={!hasCurrent && !hasHistorical}
                         className={`px-2 py-0.5 text-xs rounded transition-colors ${
@@ -496,6 +517,8 @@ export function InlineAnswerBrowser() {
                       const label = e.target.value;
                       setSelectedAnswerLabel(label);
                       setSelectedHistoricalWorkspace(null);
+                      fetchWorkspaces();
+                      fetchAnswerWorkspaces();
 
                       if (label === 'current') {
                         // Use current workspace for this agent
@@ -527,12 +550,28 @@ export function InlineAnswerBrowser() {
                 </div>
               )}
 
+              {/* Open in Finder button */}
+              {activeWorkspace && (
+                <button
+                  onClick={() => openWorkspaceInFinder(activeWorkspace.path)}
+                  className="ml-auto flex items-center gap-1 px-2 py-0.5 bg-blue-600 hover:bg-blue-500 rounded text-white text-xs"
+                  title="Open workspace in file browser"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  <span>Open</span>
+                </button>
+              )}
+
               <button
-                onClick={() => { fetchWorkspaces(); fetchAnswerWorkspaces(); }}
-                disabled={isLoadingWorkspaces}
-                className="ml-auto p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors text-gray-500"
+                onClick={() => {
+                  fetchWorkspaces();
+                  fetchAnswerWorkspaces();
+                  if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
+                }}
+                disabled={isLoadingWorkspaces || isLoadingFiles}
+                className={`${!activeWorkspace ? 'ml-auto' : ''} p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors text-gray-500`}
               >
-                <RefreshCw className={`w-3 h-3 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3 h-3 ${isLoadingWorkspaces || isLoadingFiles ? 'animate-spin' : ''}`} />
               </button>
             </div>
 

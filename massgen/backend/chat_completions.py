@@ -203,8 +203,16 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                 api_params["tools"] = []
             api_params["tools"].extend(provider_tools)
 
+        # Start API call timing
+        model = api_params.get("model", "unknown")
+        self.start_api_call_timing(model)
+
         # Start streaming
-        stream = await client.chat.completions.create(**api_params)
+        try:
+            stream = await client.chat.completions.create(**api_params)
+        except Exception as e:
+            self.end_api_call_timing(success=False, error=str(e))
+            raise
 
         # Track function calls in this iteration
         captured_function_calls = []
@@ -231,6 +239,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
                         # Plain text content
                         if getattr(delta, "content", None):
+                            self.record_first_token()  # Record TTFT on first content
                             content_chunk = delta.content
                             content += content_chunk
                             yield StreamChunk(type="content", content=content_chunk)
@@ -319,9 +328,11 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                     )
                     # Now we can safely exit or continue based on finish reason
                     if finish_reason_received in ["stop", "length"]:
+                        self.end_api_call_timing(success=True)
                         yield StreamChunk(type="done")
                         return
                     elif finish_reason_received == "tool_calls":
+                        self.end_api_call_timing(success=True)
                         break  # Exit to execute functions
 
             except Exception as chunk_error:
@@ -339,6 +350,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                     content,
                     all_params.get("model", "unknown"),
                 )
+            self.end_api_call_timing(success=True)
             yield StreamChunk(type="done")
             return
 
@@ -616,6 +628,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
                         # Plain text content
                         if getattr(delta, "content", None):
+                            self.record_first_token()  # Record TTFT on first content
                             # handle reasoning first
                             reasoning_chunk = self._handle_reasoning_transition(log_prefix, agent_id)
                             if reasoning_chunk:
@@ -783,6 +796,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
                     # After receiving usage, yield done and exit
                     # (this is the final chunk that comes after finish_reason)
+                    self.end_api_call_timing(success=True)
                     log_stream_chunk(log_prefix, "done", None, agent_id)
                     yield StreamChunk(type="done")
                     return  # Exit completely after usage is captured
@@ -805,6 +819,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
             )
 
         # Fallback in case stream ends without finish_reason
+        self.end_api_call_timing(success=True)
         log_stream_chunk(log_prefix, "done", None, agent_id)
         yield StreamChunk(type="done")
 

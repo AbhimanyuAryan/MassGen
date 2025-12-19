@@ -2400,26 +2400,34 @@ class CustomToolAndMCPBackend(LLMBackend):
                 non_mcp_tools.append(tool)
             api_params["tools"] = non_mcp_tools
 
-        if "openai" in self.get_provider_name().lower():
-            stream = await client.responses.create(**api_params)
-        elif "claude" in self.get_provider_name().lower():
-            if "betas" in api_params:
-                stream = await client.beta.messages.create(**api_params)
+        # Start API call timing
+        model = api_params.get("model", "unknown")
+        self.start_api_call_timing(model)
+
+        try:
+            if "openai" in self.get_provider_name().lower():
+                stream = await client.responses.create(**api_params)
+            elif "claude" in self.get_provider_name().lower():
+                if "betas" in api_params:
+                    stream = await client.beta.messages.create(**api_params)
+                else:
+                    stream = await client.messages.create(**api_params)
             else:
-                stream = await client.messages.create(**api_params)
-        else:
-            # Enable usage tracking in streaming responses (required for token counting)
-            # Chat Completions API (used by Grok, Groq, Together, Fireworks, etc.)
-            if api_params.get("stream"):
-                api_params["stream_options"] = {"include_usage": True}
+                # Enable usage tracking in streaming responses (required for token counting)
+                # Chat Completions API (used by Grok, Groq, Together, Fireworks, etc.)
+                if api_params.get("stream"):
+                    api_params["stream_options"] = {"include_usage": True}
 
-            # Track messages for interrupted stream estimation (multi-agent restart handling)
-            if hasattr(self, "_interrupted_stream_messages"):
-                self._interrupted_stream_messages = processed_messages.copy()
-                self._interrupted_stream_model = all_params.get("model", "gpt-4o")
-                self._stream_usage_received = False
+                # Track messages for interrupted stream estimation (multi-agent restart handling)
+                if hasattr(self, "_interrupted_stream_messages"):
+                    self._interrupted_stream_messages = processed_messages.copy()
+                    self._interrupted_stream_model = all_params.get("model", "gpt-4o")
+                    self._stream_usage_received = False
 
-            stream = await client.chat.completions.create(**api_params)
+                stream = await client.chat.completions.create(**api_params)
+        except Exception as e:
+            self.end_api_call_timing(success=False, error=str(e))
+            raise
 
         async for chunk in self._process_stream(stream, all_params, agent_id):
             yield chunk

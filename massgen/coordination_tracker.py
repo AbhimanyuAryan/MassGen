@@ -212,6 +212,37 @@ class CoordinationTracker:
             return self.answers_by_agent[agent_id][-1].label
         return None
 
+    def get_voted_for_label(self, voter_id: str, voted_for_agent_id: str) -> Optional[str]:
+        """Get the answer label that a voter was shown for a specific agent.
+
+        This looks up what label the voter saw in their context when they were
+        shown answers, avoiding race conditions in parallel execution where
+        agents may submit new answers while others are voting.
+
+        Args:
+            voter_id: The agent ID who is voting
+            voted_for_agent_id: The agent ID being voted for
+
+        Returns:
+            The answer label (e.g., "agent1.1") that the voter saw for the
+            voted-for agent, or None if not found.
+        """
+        # Get what this voter was shown
+        voter_context = self.agent_context_labels.get(voter_id, [])
+
+        # Get the agent number for the voted-for agent (e.g., "agent_a" -> 1)
+        agent_num = self._get_agent_number(voted_for_agent_id)
+        if agent_num is None:
+            return None
+
+        # Look for a label matching the voted-for agent in the voter's context
+        # Labels are like "agent1.1", "agent2.1", etc.
+        prefix = f"agent{agent_num}."
+        for label in voter_context:
+            if label.startswith(prefix):
+                return label
+        return None
+
     def get_agent_round(self, agent_id: str) -> int:
         """Get the current round for a specific agent."""
         return self.agent_rounds.get(agent_id, 0)
@@ -310,6 +341,31 @@ class CoordinationTracker:
             f"Received context with {len(answers)} answers",
             context,
         )
+
+    def update_agent_context_with_new_answers(self, agent_id: str, new_answer_agent_ids: List[str]):
+        """Update an agent's context labels when they receive injected updates.
+
+        This is called when an agent receives new answers via update injection
+        (preempt-not-restart), ensuring their context_labels accurately reflects
+        what they've seen for vote label resolution.
+
+        Args:
+            agent_id: The agent receiving the update
+            new_answer_agent_ids: List of agent IDs whose answers are being injected
+        """
+        # Get current context labels for this agent
+        current_labels = self.agent_context_labels.get(agent_id, [])
+
+        # Add labels for the new answers
+        for answering_agent_id in new_answer_agent_ids:
+            if answering_agent_id in self.answers_by_agent and self.answers_by_agent[answering_agent_id]:
+                # Get the most recent answer's label
+                latest_answer = self.answers_by_agent[answering_agent_id][-1]
+                if latest_answer.label not in current_labels:
+                    current_labels.append(latest_answer.label)
+
+        # Update the agent's context labels
+        self.agent_context_labels[agent_id] = current_labels
 
     def track_restart_signal(self, triggering_agent: str, agents_restarted: List[str]):
         """Record when a restart is triggered - but don't increment rounds yet."""
@@ -419,15 +475,24 @@ class CoordinationTracker:
         voter_anon_id = self.get_anonymous_id(agent_id)
 
         # Find the voted-for answer label (agent1.1, agent2.1, etc.)
+        # Use the voter's context to find what label they actually saw
         voted_for_label = "unknown"
         if voted_for not in self.agent_ids:
             logger.warning(f"Vote from {agent_id} for unknown agent {voted_for}")
 
         if voted_for in self.agent_ids:
-            # Find the latest answer from the voted-for agent at vote time
-            voted_agent_answers = self.answers_by_agent.get(voted_for, [])
-            if voted_agent_answers:
-                voted_for_label = voted_agent_answers[-1].label
+            # Find the label from the voter's context (what they were shown)
+            context_label = self.get_voted_for_label(agent_id, voted_for)
+            if context_label:
+                voted_for_label = context_label
+            else:
+                # Fallback to latest if not in context (shouldn't happen normally)
+                voted_agent_answers = self.answers_by_agent.get(voted_for, [])
+                if voted_agent_answers:
+                    voted_for_label = voted_agent_answers[-1].label
+                    logger.warning(
+                        f"Vote from {agent_id} for {voted_for}: label not in voter context, " f"using latest {voted_for_label}",
+                    )
 
         # Store the vote
         vote = AgentVote(

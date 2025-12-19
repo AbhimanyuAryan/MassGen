@@ -316,6 +316,26 @@ After execution completes, an interactive Agent Selector menu appears, allowing 
 * Browse workspace files created during execution
 * Press ``q`` to exit
 
+Analyzing and Sharing Sessions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After running a session, use these commands to analyze and share your results:
+
+.. code-block:: bash
+
+   # View summary of the most recent run
+   massgen logs
+
+   # List recent runs with costs and questions
+   massgen logs list
+
+   # Share a session (creates shareable URL)
+   massgen export
+
+The ``massgen export`` command uploads your session to GitHub Gist and returns a shareable URL that anyone can view without login. This is useful for collaboration, debugging, or showcasing results.
+
+See :doc:`../user_guide/logging` for the complete logging and sharing guide.
+
 Next Steps
 ----------
 

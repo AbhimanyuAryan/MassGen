@@ -680,8 +680,12 @@ class GeminiBackend(CustomToolAndMCPBackend):
             last_response_with_candidates = None
 
             cfg = self.backoff_config
+            first_token_recorded = False
             for stream_attempt in range(1, cfg.max_attempts + 1):
                 try:
+                    # Start API call timing
+                    self.start_api_call_timing(model_name)
+
                     # Use async streaming call with sessions/tools (with rate limiting)
                     async with self._get_rate_limiter_context():
                         stream = await client.aio.models.generate_content_stream(
@@ -722,6 +726,11 @@ class GeminiBackend(CustomToolAndMCPBackend):
 
                         # Process text content
                         if hasattr(chunk, "text") and chunk.text:
+                            # Record TTFT on first content
+                            if not first_token_recorded:
+                                self.record_first_token()
+                                first_token_recorded = True
+
                             chunk_text = chunk.text
                             full_content_text += chunk_text
                             log_backend_agent_message(
@@ -737,9 +746,14 @@ class GeminiBackend(CustomToolAndMCPBackend):
                         if hasattr(chunk, "candidates") and chunk.candidates:
                             last_response_with_candidates = chunk
 
+                    # End API call timing on successful completion
+                    self.end_api_call_timing(success=True)
                     break
 
                 except Exception as stream_exc:
+                    # End API call timing with failure
+                    self.end_api_call_timing(success=False, error=str(stream_exc))
+
                     is_retryable, status_code, error_msg = _is_retryable_gemini_error(stream_exc, cfg.retry_statuses)
 
                     if not is_retryable or stream_attempt >= cfg.max_attempts:
@@ -761,6 +775,7 @@ class GeminiBackend(CustomToolAndMCPBackend):
                     captured_function_calls = []
                     full_content_text = ""
                     last_response_with_candidates = None
+                    first_token_recorded = False  # Reset for retry
 
                     retry_after = _extract_retry_after(stream_exc)
                     if retry_after is not None:
@@ -1218,10 +1233,14 @@ class GeminiBackend(CustomToolAndMCPBackend):
                 while True:
                     new_function_calls = []
                     continuation_text = ""
+                    cont_first_token_recorded = False
 
                     # Retry for continuation with backoff
                     for cont_attempt in range(1, cfg.max_attempts + 1):
                         try:
+                            # Start API call timing for continuation
+                            self.start_api_call_timing(model_name)
+
                             # Use same config as before
                             async with self._get_rate_limiter_context():
                                 continuation_stream = await client.aio.models.generate_content_stream(
@@ -1255,6 +1274,11 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                                         new_function_calls.append(call_record)
 
                                 if hasattr(chunk, "text") and chunk.text:
+                                    # Record TTFT on first content
+                                    if not cont_first_token_recorded:
+                                        self.record_first_token()
+                                        cont_first_token_recorded = True
+
                                     chunk_text = chunk.text
                                     continuation_text += chunk_text
                                     log_backend_agent_message(
@@ -1266,10 +1290,13 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                     log_stream_chunk("backend.gemini", "content", chunk_text, agent_id)
                                     yield StreamChunk(type="content", content=chunk_text)
 
-                            # Stream completed successfully
+                            # End API call timing on successful completion
+                            self.end_api_call_timing(success=True)
                             break
 
                         except Exception as cont_exc:
+                            # End API call timing with failure
+                            self.end_api_call_timing(success=False, error=str(cont_exc))
                             is_retryable, status_code, _ = _is_retryable_gemini_error(cont_exc, cfg.retry_statuses)
 
                             if not is_retryable or cont_attempt >= cfg.max_attempts:
@@ -1294,6 +1321,7 @@ class GeminiBackend(CustomToolAndMCPBackend):
                             new_function_calls = []
                             continuation_text = ""
                             last_continuation_chunk = None
+                            cont_first_token_recorded = False  # Reset for retry
 
                             retry_after = _extract_retry_after(cont_exc)
                             if retry_after is not None:

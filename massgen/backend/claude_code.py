@@ -116,6 +116,13 @@ class ClaudeCodeBackend(LLMBackend):
             subscription authentication is available, errors will surface when
             attempting to use the backend.
         """
+        # Claude Code SDK doesn't support allowed_tools/disallowed_tools for MCP tools
+        # See: https://github.com/anthropics/claude-code/issues/7328
+        # Use mcpwrapped to filter tools at protocol level when exclude_file_operation_mcps is True
+        if kwargs.get("exclude_file_operation_mcps", False):
+            kwargs["use_mcpwrapped_for_tool_filtering"] = True
+            logger.info("[ClaudeCodeBackend] Enabling mcpwrapped for MCP tool filtering (exclude_file_operation_mcps=True)")
+
         super().__init__(api_key, **kwargs)
 
         self.api_key = api_key or os.getenv("CLAUDE_CODE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
@@ -1236,6 +1243,7 @@ class ClaudeCodeBackend(LLMBackend):
             # MassGen-specific config options (not ClaudeAgentOptions parameters)
             "enable_web_search",  # Handled above - controls WebSearch/WebFetch tool availability
             "use_default_prompt",  # Handled in stream_with_tools - controls system prompt mode
+            "use_mcpwrapped_for_tool_filtering",  # MassGen internal - used by FilesystemManager
             # Note: system_prompt is NOT excluded - it's needed for internal workflow prompt injection
             # Validation prevents it from being set in YAML backend config
         }

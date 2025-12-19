@@ -7,7 +7,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus, ExternalLink, Share2, X } from 'lucide-react';
 import { useAgentStore, selectSelectedAgent, selectAgents, selectResolvedFinalAnswer, selectAgentOrder } from '../stores/agentStore';
 import type { AnswerWorkspace } from '../types';
 import { FileViewerModal } from './FileViewerModal';
@@ -118,7 +118,7 @@ interface FileNodeProps {
 }
 
 function FileNode({ node, depth, onFileClick }: FileNodeProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const handleClick = () => {
     if (node.isDirectory) {
@@ -198,6 +198,13 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
   const [copied, setCopied] = useState(false);
   const [followUpQuestion, setFollowUpQuestion] = useState('');
 
+  // Share modal state
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareResult, setShareResult] = useState<{ url: string; message: string } | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [shareLinkCopied, setShareLinkCopied] = useState(false);
+
   const finalAnswer = useAgentStore(selectResolvedFinalAnswer);
   const selectedAgent = useAgentStore(selectSelectedAgent);
   const agents = useAgentStore(selectAgents);
@@ -275,6 +282,23 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
     }
   }, []);
 
+  // Open workspace in native file browser
+  const openWorkspaceInFinder = useCallback(async (workspacePath: string) => {
+    try {
+      const response = await fetch('/api/workspace/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: workspacePath }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        setWorkspaceError(data.error || 'Failed to open workspace');
+      }
+    } catch (err) {
+      setWorkspaceError(err instanceof Error ? err.message : 'Failed to open workspace');
+    }
+  }, []);
+
   // Map workspaces to winner agent
   const winnerWorkspace = useMemo(() => {
     if (!selectedAgent) return null;
@@ -320,6 +344,38 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
       setFollowUpQuestion('');
     }
   }, [followUpQuestion, onFollowUp]);
+
+  // Share - create gist and show result
+  const handleShare = useCallback(async () => {
+    const sessionId = useAgentStore.getState().sessionId;
+    if (!sessionId) return;
+    setIsSharing(true);
+    setShareError(null);
+    setShareResult(null);
+    setShowShareModal(true);
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/share`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) {
+        setShareError(data.error || 'Failed to share session');
+        return;
+      }
+      setShareResult({ url: data.viewer_url, message: data.message });
+    } catch (err) {
+      console.error('Share failed:', err);
+      setShareError('Failed to share session. Check console for details.');
+    } finally {
+      setIsSharing(false);
+    }
+  }, []);
+
+  // Copy share link to clipboard
+  const handleCopyShareLink = useCallback(async () => {
+    if (!shareResult?.url) return;
+    await navigator.clipboard.writeText(shareResult.url);
+    setShareLinkCopied(true);
+    setTimeout(() => setShareLinkCopied(false), 2000);
+  }, [shareResult]);
 
   return (
     <motion.div
@@ -370,6 +426,15 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                 Copy
               </>
             )}
+          </button>
+          <button
+            onClick={handleShare}
+            className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500
+                       rounded-lg transition-colors text-white"
+            title="Share session via GitHub Gist"
+          >
+            <Share2 className="w-4 h-4" />
+            Share
           </button>
           {onNewSession && (
             <button
@@ -492,12 +557,25 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                   </div>
                 </div>
 
+                {/* Open Folder button */}
+                {winnerWorkspace && (
+                  <button
+                    onClick={() => openWorkspaceInFinder(winnerWorkspace.path)}
+                    className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500
+                               rounded-lg transition-colors text-white text-sm"
+                    title="Open workspace in file browser"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span>Open Folder</span>
+                  </button>
+                )}
+
                 {/* Refresh button */}
                 <button
                   onClick={() => { fetchWorkspaces(); fetchAnswerWorkspaces(); }}
                   disabled={isLoadingWorkspaces}
-                  className="ml-auto p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors
-                             text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  className={`${!winnerWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors
+                             text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200`}
                   title="Refresh workspaces"
                 >
                   <RefreshCw className={`w-4 h-4 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />
@@ -585,6 +663,95 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
         filePath={selectedFilePath}
         workspacePath={winnerWorkspace?.path || ''}
       />
+
+      {/* Share Modal */}
+      <AnimatePresence>
+        {showShareModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={() => setShowShareModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Share Session</h2>
+                <button
+                  onClick={() => setShowShareModal(false)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              {isSharing && (
+                <div className="flex flex-col items-center py-8">
+                  <Loader2 className="w-8 h-8 animate-spin text-cyan-500 mb-4" />
+                  <p className="text-gray-500 dark:text-gray-400">Uploading to GitHub Gist...</p>
+                </div>
+              )}
+
+              {shareError && !isSharing && (
+                <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg p-4">
+                  <p className="text-red-600 dark:text-red-300 text-sm">{shareError}</p>
+                  <p className="text-red-500 dark:text-red-400 text-xs mt-2">
+                    Make sure GitHub CLI (gh) is installed and authenticated.
+                  </p>
+                </div>
+              )}
+
+              {shareResult && !isSharing && (
+                <div className="space-y-4">
+                  <div className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-700 rounded-lg p-4">
+                    <p className="text-green-600 dark:text-green-300 text-sm font-medium mb-2">
+                      {shareResult.message}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={shareResult.url}
+                        readOnly
+                        className="flex-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
+                      />
+                      <button
+                        onClick={handleCopyShareLink}
+                        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg transition-colors text-white text-sm flex items-center gap-2"
+                      >
+                        {shareLinkCopied ? (
+                          <>
+                            <Check className="w-4 h-4" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-4 h-4" />
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <a
+                    href={shareResult.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block w-full text-center px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors text-gray-700 dark:text-gray-200 text-sm"
+                  >
+                    Open in New Tab →
+                  </a>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

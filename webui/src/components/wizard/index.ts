@@ -2,6 +2,7 @@
  * Wizard Components Index
  */
 
+export { ContextPathsStep } from './ContextPathsStep';
 export { DockerStep } from './DockerStep';
 export { ApiKeyStep } from './ApiKeyStep';
 export { AgentCountStep } from './AgentCountStep';

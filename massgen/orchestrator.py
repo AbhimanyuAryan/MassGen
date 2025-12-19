@@ -1496,6 +1496,55 @@ class Orchestrator(ChatAgent):
                     total_output_tokens += tu.get("output_tokens", 0)
                     total_reasoning_tokens += tu.get("reasoning_tokens", 0)
 
+            # Aggregate API call timing metrics
+            api_timing = {
+                "total_calls": 0,
+                "total_time_ms": 0.0,
+                "avg_time_ms": 0.0,
+                "avg_ttft_ms": 0.0,
+                "by_round": {},
+                "by_backend": {},
+            }
+            total_ttft_ms = 0.0
+
+            for agent_id, agent in self.agents.items():
+                if hasattr(agent, "backend") and agent.backend:
+                    backend = agent.backend
+                    if hasattr(backend, "get_api_call_history"):
+                        for metric in backend.get_api_call_history():
+                            api_timing["total_calls"] += 1
+                            api_timing["total_time_ms"] += metric.duration_ms
+                            total_ttft_ms += metric.time_to_first_token_ms
+
+                            # By round
+                            round_key = f"round_{metric.round_number}"
+                            if round_key not in api_timing["by_round"]:
+                                api_timing["by_round"][round_key] = {"calls": 0, "time_ms": 0.0, "ttft_ms": 0.0}
+                            api_timing["by_round"][round_key]["calls"] += 1
+                            api_timing["by_round"][round_key]["time_ms"] += metric.duration_ms
+                            api_timing["by_round"][round_key]["ttft_ms"] += metric.time_to_first_token_ms
+
+                            # By backend
+                            if metric.backend_name not in api_timing["by_backend"]:
+                                api_timing["by_backend"][metric.backend_name] = {"calls": 0, "time_ms": 0.0, "ttft_ms": 0.0}
+                            api_timing["by_backend"][metric.backend_name]["calls"] += 1
+                            api_timing["by_backend"][metric.backend_name]["time_ms"] += metric.duration_ms
+                            api_timing["by_backend"][metric.backend_name]["ttft_ms"] += metric.time_to_first_token_ms
+
+            # Calculate averages
+            if api_timing["total_calls"] > 0:
+                api_timing["avg_time_ms"] = round(api_timing["total_time_ms"] / api_timing["total_calls"], 2)
+                api_timing["avg_ttft_ms"] = round(total_ttft_ms / api_timing["total_calls"], 2)
+
+            # Round timing values
+            api_timing["total_time_ms"] = round(api_timing["total_time_ms"], 2)
+            for round_data in api_timing["by_round"].values():
+                round_data["time_ms"] = round(round_data["time_ms"], 2)
+                round_data["ttft_ms"] = round(round_data["ttft_ms"], 2)
+            for backend_data in api_timing["by_backend"].values():
+                backend_data["time_ms"] = round(backend_data["time_ms"], 2)
+                backend_data["ttft_ms"] = round(backend_data["ttft_ms"], 2)
+
             # Save summary file
             summary_file = log_dir / "metrics_summary.json"
             summary_data = {
@@ -1514,6 +1563,7 @@ class Orchestrator(ChatAgent):
                 },
                 "tools": tools_summary,
                 "rounds": rounds_summary,
+                "api_timing": api_timing,
                 "agents": agent_metrics,
             }
             with open(summary_file, "w", encoding="utf-8") as f:
@@ -2333,6 +2383,8 @@ Your answer:"""
                             agent.backend.end_round_tracking("error")
                         # Error ends the agent's current stream
                         completed_agent_ids.add(agent_id)
+                        # Mark agent as killed to prevent respawning in the while loop
+                        self.agent_states[agent_id].is_killed = True
                         log_stream_chunk("orchestrator", "error", chunk_data, agent_id)
                         yield StreamChunk(type="content", content=f"❌ {chunk_data}", source=agent_id)
                         log_stream_chunk("orchestrator", "agent_status", "completed", agent_id)
@@ -2378,6 +2430,8 @@ Your answer:"""
                     if agent and hasattr(agent.backend, "end_round_tracking"):
                         agent.backend.end_round_tracking("error")
                     completed_agent_ids.add(agent_id)
+                    # Mark agent as killed to prevent respawning in the while loop
+                    self.agent_states[agent_id].is_killed = True
                     log_stream_chunk("orchestrator", "error", f"❌ Stream error - {e}", agent_id)
                     yield StreamChunk(
                         type="content",
@@ -2558,10 +2612,36 @@ Your answer:"""
                     # Get current state for context
                     current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
 
-                    # Create anonymous agent mapping
+                    # Create anonymous agent mapping (agent1, agent2, etc.)
                     agent_mapping = {}
                     for i, real_id in enumerate(sorted(self.agents.keys()), 1):
                         agent_mapping[f"agent{i}"] = real_id
+
+                    # Get answer labels from coordination tracker (e.g., "agent1.2", "agent2.1")
+                    # Use the voter's context labels (what they were shown) to avoid race conditions
+                    # in parallel execution where new answers may arrive while voting
+                    available_answer_labels = []
+                    answer_label_to_agent = {}  # Maps "agent1.2" -> "agent_a"
+                    voted_for_label = None
+                    voted_for_agent = vote_data.get("agent_id", "unknown")
+
+                    if self.coordination_tracker:
+                        # Get labels from voter's context (what they actually saw)
+                        voter_context = self.coordination_tracker.get_agent_context_labels(agent_id)
+                        for label in voter_context:
+                            available_answer_labels.append(label)
+                            # Extract agent number from label (e.g., "agent1.2" -> 1)
+                            # and map back to agent ID
+                            for aid in current_answers.keys():
+                                aid_label = self.coordination_tracker.get_voted_for_label(agent_id, aid)
+                                if aid_label == label:
+                                    answer_label_to_agent[label] = aid
+
+                        # Get the specific label for the voted-for agent
+                        voted_for_label = self.coordination_tracker.get_voted_for_label(
+                            agent_id,
+                            voted_for_agent,
+                        )
 
                     # Build comprehensive vote data
                     comprehensive_vote_data = {
@@ -2570,9 +2650,10 @@ Your answer:"""
                             (anon for anon, real in agent_mapping.items() if real == agent_id),
                             agent_id,
                         ),
-                        "voted_for": vote_data.get("agent_id", "unknown"),
+                        "voted_for": voted_for_agent,
+                        "voted_for_label": voted_for_label,  # e.g., "agent1.2"
                         "voted_for_anon": next(
-                            (anon for anon, real in agent_mapping.items() if real == vote_data.get("agent_id")),
+                            (anon for anon, real in agent_mapping.items() if real == voted_for_agent),
                             "unknown",
                         ),
                         "reason": vote_data.get("reason", ""),
@@ -2580,7 +2661,9 @@ Your answer:"""
                         "unix_timestamp": time.time(),
                         "iteration": self.coordination_tracker.current_iteration if self.coordination_tracker else None,
                         "coordination_round": self.coordination_tracker.max_round if self.coordination_tracker else None,
-                        "available_options": list(current_answers.keys()),
+                        "available_options": list(current_answers.keys()),  # agent IDs for backwards compatibility
+                        "available_options_labels": available_answer_labels,  # e.g., ["agent1.2", "agent2.1"]
+                        "answer_label_to_agent": answer_label_to_agent,  # Maps label -> agent_id
                         "available_options_anon": [
                             next(
                                 (anon for anon, real in agent_mapping.items() if real == aid),
@@ -2841,6 +2924,13 @@ Your answer:"""
             agent_id,
             ActionType.UPDATE_INJECTED,
             f"Received update with {len(new_answers)} NEW answer(s) from: {answer_providers}",
+        )
+
+        # Update the agent's context labels to include the new answers
+        # This ensures vote label resolution uses the correct labels
+        self.coordination_tracker.update_agent_context_with_new_answers(
+            agent_id,
+            list(new_answers.keys()),
         )
 
         # Clear the coordination tracker's pending restart flag (injection satisfies the need for update)

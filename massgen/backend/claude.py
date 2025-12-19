@@ -569,11 +569,19 @@ class ClaudeBackend(CustomToolAndMCPBackend):
             else:
                 api_params.pop("tools", None)
 
+        # Start API call timing
+        model = api_params.get("model", "unknown")
+        self.start_api_call_timing(model)
+
         # Create stream (handle betas)
-        if "betas" in api_params:
-            stream = await client.beta.messages.create(**api_params)
-        else:
-            stream = await client.messages.create(**api_params)
+        try:
+            if "betas" in api_params:
+                stream = await client.beta.messages.create(**api_params)
+            else:
+                stream = await client.messages.create(**api_params)
+        except Exception as e:
+            self.end_api_call_timing(success=False, error=str(e))
+            raise
 
         # Process stream chunks
         async for chunk in self._process_stream(stream, all_params, agent_id):
@@ -773,11 +781,19 @@ class ClaudeBackend(CustomToolAndMCPBackend):
             )
             kwargs["_strict_tool_use_logged"] = True
 
+        # Start API call timing
+        model = api_params.get("model", "unknown")
+        self.start_api_call_timing(model)
+
         # Create stream (handle code execution beta)
-        if "betas" in api_params:
-            stream = await client.beta.messages.create(**api_params)
-        else:
-            stream = await client.messages.create(**api_params)
+        try:
+            if "betas" in api_params:
+                stream = await client.beta.messages.create(**api_params)
+            else:
+                stream = await client.messages.create(**api_params)
+        except Exception as e:
+            self.end_api_call_timing(success=False, error=str(e))
+            raise
 
         content = ""
         current_tool_uses: Dict[str, Dict[str, Any]] = {}
@@ -872,6 +888,7 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                 elif event.type == "content_block_delta":
                     if hasattr(event, "delta"):
                         if event.delta.type == "text_delta":
+                            self.record_first_token()  # Record TTFT on first content
                             text_chunk = event.delta.text
                             content += text_chunk
                             log_backend_agent_message(
@@ -1029,6 +1046,7 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                     if non_mcp_non_custom_tool_calls:
                         log_stream_chunk("backend.claude", "tool_calls", non_mcp_non_custom_tool_calls, agent_id)
                         yield StreamChunk(type="tool_calls", tool_calls=non_mcp_non_custom_tool_calls)
+                    self.end_api_call_timing(success=True)
                     response_completed = True
                     break
             except Exception as event_error:
@@ -1347,6 +1365,7 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                 elif chunk.type == "content_block_delta":
                     if hasattr(chunk, "delta"):
                         if chunk.delta.type == "text_delta":
+                            self.record_first_token()  # Record TTFT on first content
                             text_chunk = chunk.delta.text
                             content_local += text_chunk
                             log_backend_agent_message(
@@ -1497,6 +1516,7 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                     if all_params.get("enable_code_execution", False):
                         self.code_session_hours += 0.083
 
+                    self.end_api_call_timing(success=True)
                     log_stream_chunk("backend.claude", "done", None, agent_id)
                     yield StreamChunk(type="done")
                     return

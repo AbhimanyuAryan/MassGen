@@ -2804,8 +2804,7 @@ def get_docker_diagnostics():
 def setup_docker() -> None:
     """Pull MassGen Docker executor images from GitHub Container Registry.
 
-    Allows interactive selection of which images to install.
-    Sudo image is recommended and selected by default.
+    Shows full diagnostics checklist and only offers to pull missing images.
     """
     import subprocess
 
@@ -2818,13 +2817,26 @@ def setup_docker() -> None:
     print(f"{BRIGHT_CYAN}  🐳  MassGen Docker Setup{RESET}")
     print(f"{BRIGHT_CYAN}{'=' * 60}{RESET}\n")
 
-    # Run comprehensive diagnostics (skip image check since we're setting up)
-    print(f"{BRIGHT_CYAN}Checking Docker...{RESET}", end=" ", flush=True)
-    diagnostics = diagnose_docker(check_images=False)
+    # Run comprehensive diagnostics INCLUDING image check
+    print(f"{BRIGHT_CYAN}Checking Docker status...{RESET}\n")
+    diagnostics = diagnose_docker(check_images=True)
 
-    # Check binary
-    if not diagnostics.binary_installed:
-        print(f"{BRIGHT_RED}✗{RESET}")
+    # Display full diagnostics checklist
+    version_info = f" ({diagnostics.docker_version})" if diagnostics.docker_version else ""
+    binary_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.binary_installed else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {binary_status} Docker binary installed{version_info}")
+
+    pip_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.pip_library_installed else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {pip_status} Docker Python library")
+
+    daemon_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.daemon_running else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {daemon_status} Docker daemon running")
+
+    perm_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.has_permissions else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {perm_status} Permissions OK")
+
+    # If not available, show error and resolution steps
+    if not diagnostics.is_available:
         print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
         print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
         for i, step in enumerate(diagnostics.resolution_steps, 1):
@@ -2834,52 +2846,8 @@ def setup_docker() -> None:
                 print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
         print()
         return
-
-    # Check pip library
-    if not diagnostics.pip_library_installed:
-        print(f"{BRIGHT_RED}✗{RESET}")
-        print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
-        print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
-        for i, step in enumerate(diagnostics.resolution_steps, 1):
-            if step.startswith("  "):
-                print(f"{BRIGHT_YELLOW}{step}{RESET}")
-            else:
-                print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
-        print()
-        return
-
-    # Check permissions
-    if not diagnostics.has_permissions:
-        print(f"{BRIGHT_RED}✗{RESET}")
-        print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
-        print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
-        for i, step in enumerate(diagnostics.resolution_steps, 1):
-            if step.startswith("  "):
-                print(f"{BRIGHT_YELLOW}{step}{RESET}")
-            else:
-                print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
-        print()
-        return
-
-    # Check daemon
-    if not diagnostics.daemon_running:
-        print(f"{BRIGHT_RED}✗{RESET}")
-        print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
-        print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
-        for i, step in enumerate(diagnostics.resolution_steps, 1):
-            if step.startswith("  "):
-                print(f"{BRIGHT_YELLOW}{step}{RESET}")
-            else:
-                print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
-        print()
-        return
-
-    print(f"{BRIGHT_GREEN}✓{RESET}")
-    if diagnostics.docker_version:
-        print(f"{BRIGHT_CYAN}  Docker version: {diagnostics.docker_version}{RESET}")
 
     # Define available images with metadata
-    # Future: Add more images here as needed
     AVAILABLE_IMAGES = [
         {
             "name": "ghcr.io/massgen/mcp-runtime-sudo:latest",
@@ -2892,6 +2860,24 @@ def setup_docker() -> None:
             "default": False,
         },
     ]
+
+    # Show installed images status
+    print(f"\n{BRIGHT_CYAN}Installed Images:{RESET}")
+    installed_images = []
+    missing_images = []
+    for img in AVAILABLE_IMAGES:
+        img_name = img["name"]
+        if diagnostics.images_available.get(img_name, False):
+            print(f"  {BRIGHT_GREEN}✓{RESET} {img_name}")
+            installed_images.append(img_name)
+        else:
+            print(f"  {BRIGHT_RED}✗{RESET} {img_name}")
+            missing_images.append(img)
+
+    # If all images are installed, we're done
+    if not missing_images:
+        print(f"\n{BRIGHT_GREEN}✅ All Docker images are already installed!{RESET}\n")
+        return
 
     # Create questionary style matching the rest of the CLI
     custom_style = Style(
@@ -2907,18 +2893,19 @@ def setup_docker() -> None:
         ],
     )
 
-    # Let user select which images to install
-    print(f"{BRIGHT_CYAN}Select Docker images to install:{RESET}")
+    # Only offer to pull MISSING images
+    print(f"\n{BRIGHT_CYAN}Pull missing images?{RESET}")
     print(f"{BRIGHT_YELLOW}(Use Space to select/deselect, Enter to confirm){RESET}\n")
 
     try:
+        # Only show missing images in the selection
         choices = [
             questionary.Choice(
                 title=f"{img['description']}",
                 value=img["name"],
                 checked=img["default"],
             )
-            for img in AVAILABLE_IMAGES
+            for img in missing_images
         ]
 
         selected_images = questionary.checkbox(
@@ -4765,6 +4752,89 @@ async def main(args):
 
 def cli_main():
     """Synchronous wrapper for CLI entry point."""
+    # Handle 'logs' subcommand specially before main argument parsing
+    # This avoids conflict with the positional 'question' argument
+    if len(sys.argv) >= 2 and sys.argv[1] == "logs":
+        from .logs_analyzer import logs_command
+
+        # Create a separate parser just for logs subcommand
+        logs_parser = argparse.ArgumentParser(
+            prog="massgen logs",
+            description="Analyze and display MassGen run logs",
+        )
+        logs_subparsers = logs_parser.add_subparsers(dest="logs_command", help="Log analysis commands")
+
+        # logs summary (default)
+        summary_parser = logs_subparsers.add_parser("summary", help="Display run summary (default)")
+        summary_parser.add_argument("--log-dir", type=str, help="Path to specific log directory")
+        summary_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+        # logs tools
+        tools_parser = logs_subparsers.add_parser("tools", help="Display tool breakdown")
+        tools_parser.add_argument("--sort", choices=["time", "calls"], default="time", help="Sort by time or calls")
+        tools_parser.add_argument("--log-dir", type=str, help="Path to specific log directory")
+        tools_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+        # logs list
+        list_parser = logs_subparsers.add_parser("list", help="List recent runs")
+        list_parser.add_argument("--limit", type=int, default=10, help="Number of runs to show")
+        list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+        # logs open
+        open_parser = logs_subparsers.add_parser("open", help="Open log directory in file manager")
+        open_parser.add_argument("--log-dir", type=str, help="Path to specific log directory")
+
+        # Parse logs arguments (skip 'massgen logs')
+        logs_args = logs_parser.parse_args(sys.argv[2:])
+        sys.exit(logs_command(logs_args))
+
+    # Handle 'export' subcommand specially before main argument parsing
+    if len(sys.argv) >= 2 and sys.argv[1] == "export":
+        from .session_exporter import export_command
+
+        export_parser = argparse.ArgumentParser(
+            prog="massgen export",
+            description="Share MassGen session via GitHub Gist (requires gh CLI)",
+        )
+        export_parser.add_argument(
+            "log_dir",
+            nargs="?",
+            help="Log directory to export (default: latest). Can be full path or log name.",
+        )
+
+        export_args = export_parser.parse_args(sys.argv[2:])
+        sys.exit(export_command(export_args))
+
+    # Handle 'shares' subcommand for managing shared sessions
+    if len(sys.argv) >= 2 and sys.argv[1] == "shares":
+        from rich.console import Console
+
+        from .share import delete_share, list_shares
+
+        shares_parser = argparse.ArgumentParser(
+            prog="massgen shares",
+            description="Manage shared MassGen sessions",
+        )
+        shares_subparsers = shares_parser.add_subparsers(dest="shares_command")
+
+        # massgen shares list
+        shares_subparsers.add_parser("list", help="List your shared sessions")
+
+        # massgen shares delete <gist_id>
+        delete_parser = shares_subparsers.add_parser("delete", help="Delete a shared session")
+        delete_parser.add_argument("gist_id", help="Gist ID to delete")
+
+        shares_args = shares_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        if shares_args.shares_command == "list":
+            sys.exit(list_shares(console))
+        elif shares_args.shares_command == "delete":
+            sys.exit(delete_share(shares_args.gist_id, console))
+        else:
+            shares_parser.print_help()
+            sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="MassGen - Multi-Agent Coordination CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -5108,6 +5178,8 @@ Environment Variables:
             print(f"📄 Using config from session: {session_config_path}")
 
     # Handle special commands first (before logging setup to avoid creating log dirs)
+    # Note: 'logs' subcommand is handled at the very start of cli_main()
+
     if args.list_sessions:
         from massgen.session import SessionRegistry, format_session_list
 
@@ -5179,12 +5251,14 @@ Environment Variables:
         except (KeyboardInterrupt, EOFError):
             print()
 
-        # Offer to install skills
+        # Show skills summary and offer to install more
         try:
-            skills_choice = input(f"{BRIGHT_CYAN}Would you like to install skills (openskills, Anthropic collection)? [Y/n]: {RESET}").strip().lower()
-            if skills_choice in ["y", "yes", ""]:
-                from .utils.skills_installer import install_skills
+            from .utils.skills_installer import display_skills_summary, install_skills
 
+            display_skills_summary()
+
+            skills_choice = input(f"{BRIGHT_CYAN}Would you like to install additional skills (openskills, Anthropic collection)? [Y/n]: {RESET}").strip().lower()
+            if skills_choice in ["y", "yes", ""]:
                 install_skills()
         except (KeyboardInterrupt, EOFError):
             print()
