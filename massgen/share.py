@@ -5,6 +5,7 @@ This module provides functionality to upload MassGen session logs to GitHub Gist
 for easy sharing. Viewers can access shared sessions without authentication.
 """
 
+import fnmatch
 import json
 import subprocess
 import tempfile
@@ -32,13 +33,8 @@ PRIORITY_FILES = [
     "execution_metadata.yaml",
 ]
 
-# Files to exclude from agent_outputs (redundant)
-EXCLUDE_FILES = {
-    "final_presentation_agent_a_latest.txt",
-    "final_presentation_agent_b_latest.txt",
-    "final_presentation_agent_c_latest.txt",
-    "final_presentation_agent_d_latest.txt",
-}
+# Pattern to match redundant final presentation files in agent_outputs
+EXCLUDE_FILE_PATTERN = "final_presentation_*_latest.txt"
 
 # Viewer URL base (hosted on MassGen org GitHub Pages)
 VIEWER_URL_BASE = "https://massgen.github.io/MassGen-Viewer/"
@@ -58,8 +54,8 @@ def should_exclude(path: Path, rel_path: str) -> bool:
     Returns:
         True if file should be excluded
     """
-    # Check excluded files by name
-    if path.name in EXCLUDE_FILES:
+    # Check excluded files by pattern
+    if fnmatch.fnmatch(path.name, EXCLUDE_FILE_PATTERN):
         return True
 
     # Check directory patterns (but allow workspace files with allowed extensions)

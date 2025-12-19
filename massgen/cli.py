@@ -5127,9 +5127,6 @@ Environment Variables:
         help="Enable rate limiting (uses limits from rate_limits.yaml config)",
     )
 
-    # Note: 'logs' subcommand is handled separately at the start of cli_main()
-    # to avoid conflict with the positional 'question' argument
-
     args = parser.parse_args()
 
     # Handle --continue flag BEFORE setup_logging so we can reuse log directory
