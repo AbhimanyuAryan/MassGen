@@ -4794,29 +4794,12 @@ def cli_main():
 
         export_parser = argparse.ArgumentParser(
             prog="massgen export",
-            description="Export MassGen session to shareable HTML or URL",
+            description="Share MassGen session via GitHub Gist (requires gh CLI)",
         )
         export_parser.add_argument(
             "log_dir",
             nargs="?",
             help="Log directory to export (default: latest). Can be full path or log name.",
-        )
-        export_parser.add_argument(
-            "-o",
-            "--output",
-            type=str,
-            help="Output HTML file path (default: massgen_<log_name>.html)",
-        )
-        export_parser.add_argument(
-            "--open",
-            action="store_true",
-            help="Open the HTML file in browser after export",
-        )
-        export_parser.add_argument(
-            "-s",
-            "--share",
-            action="store_true",
-            help="Upload to GitHub Gist and get shareable URL (requires gh CLI)",
         )
 
         export_args = export_parser.parse_args(sys.argv[2:])

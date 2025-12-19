@@ -643,20 +643,24 @@ Sharing requires the **GitHub CLI (gh)** to be installed and authenticated:
 Sharing a Session
 ~~~~~~~~~~~~~~~~~
 
-Use the ``--share`` flag with the export command:
+Use the ``massgen export`` command to share a session:
 
 .. code-block:: bash
 
    # Share the most recent session
-   massgen export --share
+   massgen export
 
-   # Share a specific session
-   massgen export --share log_20251218_134125_867383
+   # Share a specific session by log directory name
+   massgen export log_20251218_134125_867383
+
+   # Share a specific session by full path
+   massgen export /path/to/.massgen/massgen_logs/log_20251218_134125_867383
 
 **Output:**
 
 .. code-block:: text
 
+   Sharing session from: /path/to/.massgen/massgen_logs/log_20251218_134125/turn_1/attempt_1
    Collecting files...
    Uploading 45 files (1,234,567 bytes)...
 
@@ -722,21 +726,6 @@ If the GitHub CLI is not installed:
    Install it from https://cli.github.com/
 
 **Solution:** Install the GitHub CLI for your platform.
-
-Local HTML Export
-~~~~~~~~~~~~~~~~~
-
-For offline viewing or when you don't want to upload to GitHub:
-
-.. code-block:: bash
-
-   # Export to HTML file (no upload)
-   massgen export -o session.html
-
-   # Export and open in browser
-   massgen export -o session.html --open
-
-This creates a self-contained HTML file with all session data embedded.
 
 See Also
 --------

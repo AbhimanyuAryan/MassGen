@@ -13,34 +13,14 @@ from typing import Dict, List, Optional, Tuple
 
 from rich.console import Console
 
-# Patterns to exclude (from .gitignore + large files)
-EXCLUDE_PATTERNS = {
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "node_modules",
-    ".venv",
-    ".git",
-    "workspace",  # Agent workspace directories (often huge)
-}
-
-EXCLUDE_EXTENSIONS = {
-    ".pyc",
-    ".pyo",
-    ".so",
-    ".bin",
-    ".safetensors",
-    ".log.zip",
-    ".db",
-    ".sqlite",
-    ".sqlite3",
-}
-
-# Maximum sizes
-MAX_FILE_SIZE = 10_000_000  # 10MB per file
-MAX_TOTAL_SIZE = 90_000_000  # 90MB total (leaving 10MB buffer from 100MB limit)
-MAX_FILES = 290  # Leave buffer from 300 limit
+from .filesystem_manager._constants import MAX_FILE_SIZE_FOR_SHARING as MAX_FILE_SIZE
+from .filesystem_manager._constants import MAX_FILES_FOR_SHARING as MAX_FILES
+from .filesystem_manager._constants import MAX_TOTAL_SIZE_FOR_SHARING as MAX_TOTAL_SIZE
+from .filesystem_manager._constants import SHARE_EXCLUDE_DIRS as EXCLUDE_PATTERNS
+from .filesystem_manager._constants import (
+    SHARE_EXCLUDE_EXTENSIONS as EXCLUDE_EXTENSIONS,
+)
+from .filesystem_manager._constants import WORKSPACE_INCLUDE_EXTENSIONS
 
 # Priority files to always include (most important first)
 PRIORITY_FILES = [
@@ -58,25 +38,6 @@ EXCLUDE_FILES = {
     "final_presentation_agent_b_latest.txt",
     "final_presentation_agent_c_latest.txt",
     "final_presentation_agent_d_latest.txt",
-}
-
-# Include workspace files (small ones only) from final/ directories
-WORKSPACE_INCLUDE_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".py",
-    ".js",
-    ".ts",
-    ".html",
-    ".css",
-    ".sh",
-    ".toml",
-    ".cfg",
-    ".ini",
-    ".xml",
 }
 
 # Viewer URL base (hosted on MassGen org GitHub Pages)
@@ -289,8 +250,6 @@ def share_session(log_dir: Path | str, console: Optional[Console] = None) -> str
             console.print(f"  [dim]- {path} ({size:,} bytes)[/dim]")
         if len(skipped_sorted) > 5:
             console.print(f"  [dim]... and {len(skipped_sorted) - 5} more[/dim]")
-        console.print()
-        console.print("[dim]Tip: Use 'massgen export -o file.html' for full local export.[/dim]")
         console.print()
 
     if console:

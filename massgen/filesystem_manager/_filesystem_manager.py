@@ -1634,20 +1634,50 @@ class FilesystemManager:
             workspace_name: Human-readable name for the workspace
             context: Additional context (e.g., "before execution", "after execution")
         """
+        from ._constants import MAX_LOG_DEPTH, MAX_LOG_ITEMS, SKIP_DIRS_FOR_LOGGING
+
         if not workspace_path or not workspace_path.exists():
             logger.info(f"[FilesystemManager.{workspace_name}] {context} - Workspace does not exist: {workspace_path}")
             return
 
         try:
-            files = list(workspace_path.rglob("*"))
-            file_paths = [str(f.relative_to(workspace_path)) for f in files if f.is_file()]
-            dir_paths = [str(f.relative_to(workspace_path)) for f in files if f.is_dir()]
+            # Collect paths while skipping large dependency directories
+            file_paths: list[str] = []
+            dir_paths: list[str] = []
+            skipped_dirs: list[str] = []
+
+            def collect_paths(base: Path, rel_prefix: str = "") -> None:
+                try:
+                    for item in base.iterdir():
+                        rel_path = f"{rel_prefix}/{item.name}" if rel_prefix else item.name
+                        if item.is_dir():
+                            if item.name in SKIP_DIRS_FOR_LOGGING:
+                                skipped_dirs.append(rel_path)
+                            else:
+                                dir_paths.append(rel_path)
+                                # Recurse but limit depth to avoid explosion
+                                if rel_path.count("/") < MAX_LOG_DEPTH:
+                                    collect_paths(item, rel_path)
+                        else:
+                            file_paths.append(rel_path)
+                except PermissionError:
+                    pass
+
+            collect_paths(workspace_path)
 
             logger.info(f"[FilesystemManager.{workspace_name}] {context} - Workspace: {workspace_path}")
+
+            # Truncate lists if too large
             if file_paths:
-                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Files ({len(file_paths)}): {file_paths}")
+                display_files = file_paths[:MAX_LOG_ITEMS]
+                suffix = f" ... and {len(file_paths) - MAX_LOG_ITEMS} more" if len(file_paths) > MAX_LOG_ITEMS else ""
+                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Files ({len(file_paths)}): {display_files}{suffix}")
             if dir_paths:
-                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Directories ({len(dir_paths)}): {dir_paths}")
+                display_dirs = dir_paths[:MAX_LOG_ITEMS]
+                suffix = f" ... and {len(dir_paths) - MAX_LOG_ITEMS} more" if len(dir_paths) > MAX_LOG_ITEMS else ""
+                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Directories ({len(dir_paths)}): {display_dirs}{suffix}")
+            if skipped_dirs:
+                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Skipped large dirs: {skipped_dirs}")
             if not file_paths and not dir_paths:
                 logger.info(f"[FilesystemManager.{workspace_name}] {context} - Empty workspace")
         except Exception as e:
