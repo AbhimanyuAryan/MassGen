@@ -1,6 +1,8 @@
 # Backend Model Listing Discovery (MAS-163)
 
 ## Overview
+This document clarifies current backend model discovery behavior to inform
+future UX improvements without introducing execution-time dependencies.
 
 MassGen’s runtime model handling is **string-based and provider-agnostic**.
 
@@ -19,20 +21,25 @@ As a result, automatic model listing primarily improves:
 It does **not** affect core execution or routing.
 
 ---
+## Non-Goals
+
+- Introducing runtime dependencies on provider model registries
+- Enforcing provider-specific model allowlists
+- Blocking execution based on model availability checks
 
 ## Current Model Listing Status
 
 | Provider     | Automatic Listing | Notes |
 |-------------|------------------|-------|
-| OpenRouter  | ✅ Yes | Models fetched dynamically |
-| OpenAI      | ❌ No | Manually referenced |
-| Anthropic   | ❌ No | Manually referenced |
-| Groq        | ❌ No | Manually referenced |
-| Nebius      | ❌ No | Manually referenced |
-| Together AI | ❌ No | Manually referenced |
-| Cerebras    | ❌ No | Manually referenced |
-| Qwen        | ❌ No | Manually referenced |
-| Moonshot    | ❌ No | Manually referenced |
+| OpenRouter  | ✅ Yes | Models fetched dynamically via API |
+| OpenAI      | ❌ Not implemented | Requires manual updates |
+| Anthropic   | ❌ Not implemented | Requires manual updates |
+| Groq        | ❌ Not implemented | Requires manual updates |
+| Nebius      | ❌ Not implemented | Requires manual updates |
+| Together AI | ❌ Not implemented | Requires manual updates |
+| Cerebras    | ❌ Not implemented | Requires manual updates |
+| Qwen        | ❌ Not implemented | Requires manual updates |
+| Moonshot    | ❌ Not implemented | Requires manual updates |
 
 ---
 
@@ -40,13 +47,15 @@ It does **not** affect core execution or routing.
 
 - Runtime model handling does **not** rely on provider registries
 - Provider inference occurs via model name prefixes
-- Tests confirm no hardcoded provider → model mappings
+- Tests confirm no hardcoded provider-specific model registries are enforced at runtime
 - Model names primarily appear in:
   - documentation
   - CLI examples
   - presentation artifacts
 
 ---
+These findings suggest that automatic model discovery should be treated as
+a UX concern rather than a runtime requirement.
 
 ## Recommendations
 
