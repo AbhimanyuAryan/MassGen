@@ -63,3 +63,16 @@ a UX concern rather than a runtime requirement.
 2. Mark providers requiring manual updates
 3. Explore API-based model listing only for UX-facing components
 4. Avoid introducing execution-time dependencies on model registries
+
+## Follow-Up Work
+
+This clarification enables safe exploration of automatic model listing
+for providers such as Groq, OpenAI, Anthropic, and others without introducing
+execution-time dependencies or requiring API keys at the initial stage.
+
+Potential next steps include:
+- Investigating which providers expose public or unauthenticated model listing APIs
+- Leveraging LiteLLM or third-party wrappers for consolidated model discovery
+- Implementing automatic listing exclusively in UX-facing components (e.g., CLI setup)
+- Clearly documenting providers that must remain manually updated
+
