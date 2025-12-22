@@ -45,6 +45,8 @@ class ConnectionManager:
         self.session_configs: Dict[str, str] = {}
         # Completed sessions: session_id -> metadata (persists after disconnect)
         self.completed_sessions: Dict[str, Dict[str, Any]] = {}
+        # session_id -> orchestrator instance (for cancellation)
+        self.orchestrators: Dict[str, Any] = {}
 
     def mark_session_completed(
         self,
@@ -2634,6 +2636,87 @@ def create_app(
             },
         )
 
+    @app.post("/api/sessions/{session_id}/cancel")
+    async def cancel_coordination(session_id: str):
+        """Cancel an active coordination session."""
+        task = manager.tasks.get(session_id)
+
+        if not task:
+            return JSONResponse(
+                {"error": "No active session found", "session_id": session_id},
+                status_code=404,
+            )
+
+        if task.done():
+            return JSONResponse(
+                {
+                    "status": "already_completed",
+                    "session_id": session_id,
+                    "message": "Coordination has already completed",
+                },
+            )
+
+        # Set cancellation flag on orchestrator first (for graceful stop)
+        orchestrator = manager.orchestrators.get(session_id)
+        if orchestrator:
+            if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager:
+                orchestrator.cancellation_manager._cancelled = True
+                print(f"[WebUI] Set cancellation flag for session {session_id}")
+            # Also cancel the background status update task if it exists
+            if hasattr(orchestrator, "_status_update_task") and orchestrator._status_update_task:
+                orchestrator._status_update_task.cancel()
+
+        # Also cancel the asyncio task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Update status.json to show cancelled state
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_dir = get_log_session_dir()
+            if log_dir:
+                status_file = log_dir / "status.json"
+                if status_file.exists():
+                    import json
+                    import time
+
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    status_data["coordination"] = status_data.get("coordination", {})
+                    status_data["coordination"]["phase"] = "cancelled"
+                    status_data["coordination"]["cancelled"] = True
+                    status_data["coordination"]["cancelled_at"] = time.time()
+                    with open(status_file, "w") as f:
+                        json.dump(status_data, f, indent=2)
+        except Exception as status_err:
+            print(f"[WebUI] Warning: Could not update status.json: {status_err}")
+
+        # Cleanup orchestrator reference
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+        # Notify connected clients
+        await manager.broadcast(
+            session_id,
+            {
+                "type": "coordination_cancelled",
+                "session_id": session_id,
+                "message": "Coordination cancelled by user",
+            },
+        )
+
+        return JSONResponse(
+            {
+                "status": "cancelled",
+                "session_id": session_id,
+                "message": "Coordination cancelled successfully",
+            },
+        )
+
     # =========================================================================
     # WebSocket Endpoint
     # =========================================================================
@@ -2779,6 +2862,46 @@ def create_app(
                             "is_continuation": True,
                         },
                     )
+
+                elif action == "cancel":
+                    # Cancel the running coordination task
+                    task = manager.tasks.get(session_id)
+                    if task and not task.done():
+                        # Set cancellation flag on orchestrator first (for graceful stop)
+                        orchestrator = manager.orchestrators.get(session_id)
+                        if orchestrator:
+                            if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager:
+                                orchestrator.cancellation_manager._cancelled = True
+                                print(f"[WebUI] Set cancellation flag for session {session_id}")
+                            # Also cancel the background status update task if it exists
+                            if hasattr(orchestrator, "_status_update_task") and orchestrator._status_update_task:
+                                orchestrator._status_update_task.cancel()
+
+                        # Also cancel the asyncio task
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+
+                        # Cleanup orchestrator reference
+                        if session_id in manager.orchestrators:
+                            del manager.orchestrators[session_id]
+
+                        await websocket.send_json(
+                            {
+                                "type": "coordination_cancelled",
+                                "session_id": session_id,
+                                "message": "Coordination cancelled by user",
+                            },
+                        )
+                    else:
+                        await websocket.send_json(
+                            {
+                                "type": "info",
+                                "message": "No active coordination to cancel",
+                            },
+                        )
 
         except WebSocketDisconnect:
             manager.disconnect(websocket, session_id)
@@ -3203,6 +3326,19 @@ async def run_coordination_with_history(
             winning_agents_history=winning_agents_history,
         )
 
+        # Set up cancellation manager for WebUI cancellation support
+        from massgen.cancellation import CancellationManager
+
+        cancellation_mgr = CancellationManager()
+        # Don't register signal handlers (WebUI uses API-based cancellation)
+        # Just set the basic attributes so the orchestrator can check is_cancelled
+        cancellation_mgr._orchestrator = orchestrator
+        cancellation_mgr._cancelled = False
+        orchestrator.cancellation_manager = cancellation_mgr
+
+        # Store orchestrator reference for cancellation support
+        manager.orchestrators[session_id] = orchestrator
+
         # Store the log session directory in the display
         display.log_session_dir = get_log_session_dir()
         print(
@@ -3265,11 +3401,61 @@ async def run_coordination_with_history(
             config=str(resolved_path) if resolved_path else None,
         )
 
+        # Cleanup orchestrator reference on completion
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+    except asyncio.CancelledError:
+        # Task was cancelled by user - don't broadcast completion or error
+        print(f"[WebUI] Coordination cancelled for session {session_id} (turn {turn_number})")
+
+        # Update status.json to show cancelled state
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_dir = get_log_session_dir()
+            if log_dir:
+                status_file = log_dir / "status.json"
+                if status_file.exists():
+                    import json
+
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    status_data["coordination"] = status_data.get("coordination", {})
+                    status_data["coordination"]["phase"] = "cancelled"
+                    status_data["coordination"]["cancelled"] = True
+                    status_data["coordination"]["cancelled_at"] = __import__("time").time()
+                    with open(status_file, "w") as f:
+                        json.dump(status_data, f, indent=2)
+        except Exception as status_err:
+            print(f"[WebUI] Warning: Could not update status.json: {status_err}")
+
+        # Cleanup orchestrator reference
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+        # Broadcast cancellation
+        await manager.broadcast(
+            session_id,
+            {
+                "type": "coordination_cancelled",
+                "session_id": session_id,
+                "turn": turn_number,
+                "message": "Coordination cancelled by user",
+            },
+        )
+        # Re-raise to properly terminate the task
+        raise
+
     except Exception as e:
         # Log the full traceback for debugging
         error_msg = f"{type(e).__name__}: {str(e)}"
         print(f"[WebUI Error] {error_msg}")
         traceback.print_exc()
+
+        # Cleanup orchestrator reference on error
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
 
         # Broadcast error
         await manager.broadcast(
@@ -3502,6 +3688,19 @@ async def run_coordination(
             agent_temporary_workspace=agent_temporary_workspace,
         )
 
+        # Set up cancellation manager for WebUI cancellation support
+        from massgen.cancellation import CancellationManager
+
+        cancellation_mgr = CancellationManager()
+        # Don't register signal handlers (WebUI uses API-based cancellation)
+        # Just set the basic attributes so the orchestrator can check is_cancelled
+        cancellation_mgr._orchestrator = orchestrator
+        cancellation_mgr._cancelled = False
+        orchestrator.cancellation_manager = cancellation_mgr
+
+        # Store orchestrator reference for cancellation support
+        manager.orchestrators[session_id] = orchestrator
+
         # Store the log session directory in the display BEFORE coordination
         # This ensures the API can find it when coordination_complete is sent
         from massgen.logger_config import get_log_session_dir, save_execution_metadata
@@ -3565,11 +3764,60 @@ async def run_coordination(
             config=str(resolved_path) if resolved_path else None,
         )
 
+        # Cleanup orchestrator reference on completion
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+    except asyncio.CancelledError:
+        # Task was cancelled by user - don't broadcast completion or error
+        print(f"[WebUI] Coordination cancelled for session {session_id}")
+
+        # Update status.json to show cancelled state
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_dir = get_log_session_dir()
+            if log_dir:
+                status_file = log_dir / "status.json"
+                if status_file.exists():
+                    import json
+
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    status_data["coordination"] = status_data.get("coordination", {})
+                    status_data["coordination"]["phase"] = "cancelled"
+                    status_data["coordination"]["cancelled"] = True
+                    status_data["coordination"]["cancelled_at"] = __import__("time").time()
+                    with open(status_file, "w") as f:
+                        json.dump(status_data, f, indent=2)
+        except Exception as status_err:
+            print(f"[WebUI] Warning: Could not update status.json: {status_err}")
+
+        # Cleanup orchestrator reference
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+        # Broadcast cancellation (already done by cancel endpoint, but ensure it's sent)
+        await manager.broadcast(
+            session_id,
+            {
+                "type": "coordination_cancelled",
+                "session_id": session_id,
+                "message": "Coordination cancelled by user",
+            },
+        )
+        # Re-raise to properly terminate the task
+        raise
+
     except Exception as e:
         # Log the full traceback for debugging
         error_msg = f"{type(e).__name__}: {str(e)}"
         print(f"[WebUI Error] {error_msg}")
         traceback.print_exc()
+
+        # Cleanup orchestrator reference on error
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
 
         # Broadcast error
         await manager.broadcast(

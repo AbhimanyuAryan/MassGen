@@ -1816,12 +1816,12 @@ Python scripts you'll write. Document BEFORE writing them:
 - Files this workflow produces
 - Formats and locations
 
-## Verification
-How to verify the output works (output-first approach):
-- For code: Run it, check output matches expectations
-- For websites: Screenshot and view, check layout/styling
-- For files: Open and inspect contents
-- For data: Validate format and values
+## Verification & Improvement
+How to verify and iterate on output (output-first approach):
+- For code: Run it, fix issues, rerun until working correctly
+- For websites: Screenshot and view, adjust layout/styling, re-screenshot until polished
+- For files: Open and inspect, refine content, re-check until quality meets bar
+- For data: Validate format/values, fix accuracy issues, re-validate until correct
 
 ## Learnings
 (Add after execution)
@@ -1876,55 +1876,58 @@ After execution, the actual scripts live in `scripts/` and can be reused.
 
 class OutputFirstVerificationSection(SystemPromptSection):
     """
-    Core principle: verify outcomes, not just implementations.
+    Core principle: verify outcomes and iterate improvements.
 
     HIGH priority - fundamental operating principle for quality work.
+    This is not just about checking if something works (for voting),
+    but actively improving outputs through iteration.
     Always included regardless of tools available.
     """
 
     def __init__(self):
         super().__init__(
-            title="Output-First Verification & Improvement",
+            title="Output-First Iteration",
             priority=Priority.HIGH,
-            xml_tag="output_first_verification",
+            xml_tag="output_first_iteration",
         )
 
     def build_content(self) -> str:
-        return """## Output-First Verification & Improvement
+        return """## Output-First Iteration
 
-**Core Principle: Verify your work the way a user would experience it, then iterate fixes until the user-visible outcome is solid.**
+**Core Principle: Experience your work as a user would, then iterate until the outcome is excellent.**
 
-Treat verification as a loop: run/view output → note gaps → fix → re-run → confirm fixes → repeat until outcomes meet the goal.
+This is an **improvement loop**, not just a verification step:
+1. Run/view output → 2. Identify gaps or issues → 3. Fix and enhance → 4. Re-run → 5. Confirm improvements → 6. Repeat until excellent
 
-| Artifact Type | Verify By (user view) | Then Check (implementation) |
-|--------------|-----------------------|-----------------------------|
-| Script/Code | Run it, observe output | Implementation details |
-| Website/App | View it in browser | HTML/CSS/JS code |
-| Generated files | Open and read contents | Generation logic |
-| API integration | Make test calls | Request/response code |
-| Data processing | Check output data | Pipeline code |
+| Artifact Type | Experience It (user view) | Then Improve (iterate) |
+|--------------|---------------------------|------------------------|
+| Script/Code | Run it, observe output | Fix errors, enhance behavior |
+| Website/App | View it in browser | Adjust layout, styling, UX |
+| Generated files | Open and read contents | Refine content, fix formatting |
+| API integration | Make test calls | Handle edge cases, improve responses |
+| Data processing | Check output data | Fix accuracy, optimize pipeline |
 
 **Why this matters:**
-- Code that "looks correct" but crashes has **failed**
-- A file generator that runs but produces wrong content has **failed**
-- An API call that executes but returns errors has **failed**
+- Code that "looks correct" but crashes needs **fixing**
+- A file generator that runs but produces weak content needs **improvement**
+- An API call that executes but has poor error handling needs **enhancement**
 
-**The goal is to verify OUTCOMES, not implementations, and to use findings to improve the output.**
+**The goal is to iterate on OUTCOMES until they meet or exceed the task requirements.**
 
 ### Apply at every stage:
-1. **During development** - short loops: run/view, adjust, rerun
-2. **Before answering** - final pass on the actual output
-3. **During evaluation** - judge by results, not code elegance
+1. **During development** - short loops: run/view, improve, rerun
+2. **Before answering** - final iteration pass on the actual output
+3. **During evaluation** - judge by results, improve if gaps found
 
-### Verification examples:
-- **Code**: `python script.py` → check output matches expectations
-- **Files**: Read generated file → verify contents are correct
-- **Websites**: Open in browser or screenshot → verify it renders properly
-- **APIs**: Make test request → verify response is valid
+### Iteration examples:
+- **Code**: `python script.py` → output missing edge case → add handling → rerun → confirm fixed
+- **Files**: Read generated file → content unclear → rewrite section → re-read → confirm improved
+- **Websites**: View in browser → layout broken on mobile → fix CSS → re-screenshot → confirm responsive
+- **APIs**: Test request → error handling weak → add try/catch → re-test → confirm robust
 
 ### Finalization:
-- Use `new_answer` when you produced work or iterated based on verification.
-- Use `vote` only when selecting the best existing answer without making changes."""
+- Use `new_answer` when you produced work or iterated improvements based on output review.
+- Use `vote` only when an existing answer already meets the bar without needing changes."""
 
 
 class MultimodalToolsSection(SystemPromptSection):
