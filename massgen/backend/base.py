@@ -267,6 +267,15 @@ class LLMBackend(ABC):
             "session_storage_base",
             # MCP configuration (handled by base class for MCP backends)
             "mcp_servers",
+            # Multimodal tools configuration (handled by CustomToolAndMCPBackend)
+            "enable_multimodal_tools",
+            "multimodal_config",
+            "image_generation_backend",
+            "image_generation_model",
+            "video_generation_backend",
+            "video_generation_model",
+            "audio_generation_backend",
+            "audio_generation_model",
         }
 
     @abstractmethod
