@@ -1294,6 +1294,13 @@ class ClaudeCodeBackend(LLMBackend):
             "use_mcpwrapped_for_tool_filtering",  # MassGen internal - used by FilesystemManager
             "enable_multimodal_tools",  # Handled by base class - registers read_media tool
             "multimodal_config",  # Handled by base class - per-modality backend/model overrides
+            # Individual multimodal generation parameters (built into multimodal_config by base class)
+            "image_generation_backend",
+            "image_generation_model",
+            "video_generation_backend",
+            "video_generation_model",
+            "audio_generation_backend",
+            "audio_generation_model",
             # Note: system_prompt is NOT excluded - it's needed for internal workflow prompt injection
             # Validation prevents it from being set in YAML backend config
         }
