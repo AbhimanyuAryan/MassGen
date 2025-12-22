@@ -53,6 +53,7 @@ from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
 from .persona_generator import PersonaGenerator
 from .stream_chunk import ChunkType
+from .structured_logging import log_coordination_event
 from .system_message_builder import SystemMessageBuilder
 from .tool import get_post_evaluation_tools, get_workflow_tools
 from .utils import ActionType, AgentStatus, CoordinationStage
@@ -1955,6 +1956,16 @@ Your answer:"""
 
     async def _coordinate_agents(self, conversation_context: Optional[Dict[str, Any]] = None) -> AsyncGenerator[StreamChunk, None]:
         """Execute unified MassGen coordination workflow with real-time streaming."""
+        # Log structured coordination event for observability
+        log_coordination_event(
+            "coordination_started",
+            details={
+                "num_agents": len(self.agents),
+                "agent_ids": list(self.agents.keys()),
+                "task": self.current_task[:200] if self.current_task else None,
+            },
+        )
+
         log_coordination_step(
             "Starting multi-agent coordination",
             {
@@ -2091,6 +2102,17 @@ Your answer:"""
         log_coordination_step(
             "Final agent selected",
             {"selected_agent": self._selected_agent, "votes": votes},
+        )
+
+        # Log structured event for observability
+        log_coordination_event(
+            "winner_selected",
+            agent_id=self._selected_agent,
+            details={
+                "turn": self._current_turn,
+                "vote_count": len(votes),
+                "num_answers": len(current_answers),
+            },
         )
 
         # Merge all agents' memories into winner's workspace before final presentation

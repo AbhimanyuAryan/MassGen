@@ -1641,7 +1641,15 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         super().reset_token_usage()
 
     def _create_client(self, **kwargs):
-        return anthropic.AsyncAnthropic(api_key=self.api_key)
+        client = anthropic.AsyncAnthropic(api_key=self.api_key)
+        # Instrument client for Logfire observability if enabled
+        try:
+            from massgen.structured_logging import get_tracer
+
+            get_tracer().instrument_anthropic(client)
+        except Exception:
+            pass  # Logfire not configured or not available
+        return client
 
     def get_provider_name(self) -> str:
         """Get the provider name."""

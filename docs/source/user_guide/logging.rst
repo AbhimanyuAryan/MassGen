@@ -727,6 +727,226 @@ If the GitHub CLI is not installed:
 
 **Solution:** Install the GitHub CLI for your platform.
 
+Logfire Observability
+---------------------
+
+MassGen supports `Logfire <https://logfire.pydantic.dev/docs/>`_ for advanced structured tracing and observability. When enabled, Logfire provides:
+
+* **Automatic LLM instrumentation** - Traces all OpenAI and Anthropic API calls with request/response details
+* **Tool execution tracing** - Spans for MCP tool calls with timing and success/failure metrics
+* **Coordination events** - Structured logs for agent coordination, voting, and winner selection
+* **Token usage metrics** - Detailed tracking of input/output/reasoning/cached tokens
+* **Integrated with loguru** - All existing log messages flow through Logfire when enabled
+
+Enabling Logfire
+~~~~~~~~~~~~~~~~
+
+**Via CLI flag (recommended):**
+
+.. code-block:: bash
+
+   massgen --logfire --config your_config.yaml "Your question"
+
+**Via environment variable:**
+
+.. code-block:: bash
+
+   export MASSGEN_LOGFIRE_ENABLED=true
+   massgen --config your_config.yaml "Your question"
+
+Setting Up Logfire
+~~~~~~~~~~~~~~~~~~
+
+1. **Create a Logfire account** at https://logfire.pydantic.dev/
+
+2. **Get your token:**
+
+   .. code-block:: bash
+
+      # Install logfire CLI
+      pip install logfire
+
+      # Authenticate
+      logfire auth login
+
+   This creates ``~/.logfire/credentials.json`` with your token.
+
+3. **Alternatively, set the token directly:**
+
+   .. code-block:: bash
+
+      export LOGFIRE_TOKEN=your_token_here
+
+4. **Run MassGen with Logfire enabled:**
+
+   .. code-block:: bash
+
+      massgen --logfire --config your_config.yaml "Your question"
+
+What Gets Traced
+~~~~~~~~~~~~~~~~
+
+When Logfire is enabled, MassGen automatically traces:
+
+**LLM API Calls:**
+
+* All requests to OpenAI-compatible APIs (GPT-4, etc.)
+* All requests to Anthropic Claude API
+* All requests to Google GenAI (Gemini) API
+* Request parameters, response content, and timing
+* Token usage breakdown
+
+.. note::
+   For Gemini tracing, set ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true``
+   to capture full prompts and completions. Without this, content appears as ``<elided>``.
+
+**Tool Executions:**
+
+* MCP server tool calls with full input/output
+* Custom tools (like ``read_media``, ``write_file``, etc.)
+* Agent attribution via ``massgen.agent_id`` span attribute
+* Execution time in milliseconds
+* Success/failure status
+* Error messages when tools fail
+
+**Coordination Events:**
+
+* ``coordination_started`` - When agent coordination begins
+* ``winner_selected`` - When voting completes and a winner is chosen
+* Vote counts and participating agents
+
+**Example Logfire Dashboard View:**
+
+.. code-block:: text
+
+   ┌─ coordination.session (45.2s) ──────────────────────────────┐
+   │  task: "Build a REST API for user management"              │
+   │  num_agents: 3                                              │
+   │  agent_ids: agent_a, agent_b, agent_c                      │
+   │                                                             │
+   │  ├─ llm.call [claude-3-5-sonnet] (3.1s)                   │
+   │  │   input_tokens: 1,234                                   │
+   │  │   output_tokens: 567                                    │
+   │  │                                                         │
+   │  ├─ mcp.filesystem.write_file (0.8s)                      │
+   │  │   input_chars: 245                                      │
+   │  │   output_chars: 12                                      │
+   │  │   success: true                                         │
+   │  │                                                         │
+   │  ├─ [info] Agent answer: agent1.1                         │
+   │  │   agent_id: agent_a, iteration: 1, round: 1            │
+   │  │                                                         │
+   │  ├─ llm.call [gpt-4] (3.5s)                               │
+   │  │   input_tokens: 2,456                                   │
+   │  │   output_tokens: 823                                    │
+   │  │                                                         │
+   │  ├─ [info] Agent answer: agent2.1                         │
+   │  │   agent_id: agent_b, iteration: 1, round: 1            │
+   │  │                                                         │
+   │  ├─ [info] Agent vote: agent_a -> agent2.1                │
+   │  │   reason: "More comprehensive solution"                │
+   │  │                                                         │
+   │  ├─ [info] Agent vote: agent_b -> agent2.1                │
+   │  │                                                         │
+   │  └─ [info] Winner selected: agent2.1                      │
+   │      vote_counts: {agent2.1: 2}                           │
+   └────────────────────────────────────────────────────────────┘
+
+**What Gets Logged (Meaningful Events Only):**
+
+To reduce noise, MassGen only logs meaningful coordination events:
+
+1. **Session span** (``coordination.session``) - Top-level span for the entire coordination
+2. **LLM API calls** - Automatic instrumentation of OpenAI, Anthropic, and Gemini calls
+3. **Tool executions** - MCP tool calls with input/output sizes and timing
+4. **Agent answers** - When an agent provides a new answer (with label like ``agent1.1``)
+5. **Agent votes** - When an agent casts a vote (with reason)
+6. **Winner selection** - When voting completes and winner is determined
+7. **Final answer** - When the winning agent presents the final response
+
+Note: Individual coordination iterations are tracked internally but not logged to Logfire to avoid cluttering the trace with less useful information.
+
+Span Attributes
+~~~~~~~~~~~~~~~
+
+All tool execution spans include the following attributes for filtering and grouping:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Attribute
+     - Description
+   * - ``massgen.agent_id``
+     - The ID of the agent executing the tool (e.g., ``agent_a``, ``agent_b``)
+   * - ``tool.name``
+     - The full tool name (e.g., ``mcp__filesystem__write_file``)
+   * - ``tool.type``
+     - Tool category: ``mcp`` for MCP tools, ``custom`` for built-in tools
+   * - ``tool.success``
+     - Boolean indicating whether the tool call succeeded
+   * - ``tool.execution_time_ms``
+     - Execution time in milliseconds
+
+This enables powerful filtering in the Logfire dashboard, such as:
+
+* View all tool calls for a specific agent
+* Filter by tool type (MCP vs custom)
+* Find all failed tool calls
+* Compare execution times across agents
+
+Environment Variables
+~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Variable
+     - Description
+   * - ``MASSGEN_LOGFIRE_ENABLED``
+     - Set to ``true`` to enable Logfire (alternative to ``--logfire`` flag)
+   * - ``LOGFIRE_TOKEN``
+     - Your Logfire API token (if not using ``logfire auth login``)
+   * - ``LOGFIRE_SERVICE_NAME``
+     - Override the service name (default: ``massgen``)
+   * - ``LOGFIRE_ENVIRONMENT``
+     - Set environment tag (e.g., ``production``, ``development``)
+   * - ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT``
+     - Set to ``true`` to capture Gemini prompts/completions (otherwise shows ``<elided>``)
+
+Programmatic Usage
+~~~~~~~~~~~~~~~~~~
+
+When using MassGen as a library, you can configure Logfire programmatically:
+
+.. code-block:: python
+
+   from massgen.structured_logging import configure_observability
+
+   # Enable observability with custom settings
+   configure_observability(
+       enabled=True,
+       service_name="my-app",
+       environment="production",
+   )
+
+   # Now run your orchestrator
+   from massgen.orchestrator import Orchestrator
+   orchestrator = Orchestrator(config)
+   result = await orchestrator.run("Your question")
+
+Graceful Degradation
+~~~~~~~~~~~~~~~~~~~~
+
+Logfire integration is designed to be non-intrusive:
+
+* **No Logfire installed?** - Code runs normally without any errors
+* **Logfire disabled?** - All logging falls back to standard loguru
+* **Network issues?** - Logfire handles connectivity gracefully
+
+This means you can always enable the ``--logfire`` flag without worrying about breaking your workflow - it will simply be ignored if Logfire is not configured.
+
 See Also
 --------
 

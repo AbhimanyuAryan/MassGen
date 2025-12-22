@@ -911,7 +911,15 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
         all_params = {**self.config, **kwargs}
         base_url = all_params.get("base_url", "https://api.openai.com/v1")
-        return openai.AsyncOpenAI(api_key=self.api_key, base_url=base_url)
+        client = openai.AsyncOpenAI(api_key=self.api_key, base_url=base_url)
+        # Instrument client for Logfire observability if enabled
+        try:
+            from massgen.structured_logging import get_tracer
+
+            get_tracer().instrument_openai(client)
+        except Exception:
+            pass  # Logfire not configured or not available
+        return client
 
     def _handle_reasoning_transition(self, log_prefix: str, agent_id: Optional[str]) -> Optional[StreamChunk]:
         """Handle reasoning state transition and return StreamChunk if transition occurred."""

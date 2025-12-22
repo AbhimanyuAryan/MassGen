@@ -5,7 +5,9 @@ import asyncio
 import importlib
 import importlib.util
 import inspect
+import json
 import sys
+import time
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -14,6 +16,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, Generator, List, Optiona
 from docstring_parser import parse
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from ..structured_logging import get_tracer, log_tool_execution
 from ._async_helpers import (
     wrap_as_async_generator,
     wrap_object_async,
@@ -297,6 +300,9 @@ class ToolManager:
             ExecutionResult objects (accumulated)
         """
         tool_name = tool_request.get("name")
+        agent_id = execution_context.get("agent_id", "unknown") if execution_context else "unknown"
+        start_time = time.time()
+        tracer = get_tracer()
 
         if tool_name not in self.registered_tools:
             yield ExecutionResult(
@@ -334,6 +340,13 @@ class ToolManager:
             **(tool_request.get("input", {}) or {}),
         }
 
+        # Calculate input size for observability
+        tool_input = tool_request.get("input", {})
+        try:
+            input_chars = len(json.dumps(tool_input)) if tool_input else 0
+        except (TypeError, ValueError):
+            input_chars = 0
+
         # Prepare post-processor if exists
         if tool_entry.post_processor:
             post_proc_partial = partial(
@@ -343,46 +356,93 @@ class ToolManager:
         else:
             post_proc_partial = None
 
-        try:
-            # Execute based on function type
-            if inspect.iscoroutinefunction(tool_entry.base_function):
-                try:
-                    result = await tool_entry.base_function(**exec_kwargs)
-                except asyncio.CancelledError:
-                    result = ExecutionResult(
-                        output_blocks=[
-                            TextContent(
-                                data="<system>Tool execution was interrupted</system>",
-                            ),
-                        ],
-                        is_streaming=True,
-                        is_final=True,
-                        was_interrupted=True,
-                    )
-            else:
-                result = tool_entry.base_function(**exec_kwargs)
+        success = True
+        error_message = None
+        output_chars = 0
 
-        except Exception as err:
-            result = ExecutionResult(
-                output_blocks=[
-                    TextContent(data=f"Error: {err}"),
-                ],
-            )
+        # Create tracing span for tool execution
+        span_attributes = {
+            "tool.name": tool_name,
+            "tool.type": "custom",
+            "massgen.agent_id": agent_id,
+        }
 
-        # Handle different return types
+        with tracer.span(f"tool.custom.{tool_name}", attributes=span_attributes) as span:
+            try:
+                # Execute based on function type
+                if inspect.iscoroutinefunction(tool_entry.base_function):
+                    try:
+                        result = await tool_entry.base_function(**exec_kwargs)
+                    except asyncio.CancelledError:
+                        result = ExecutionResult(
+                            output_blocks=[
+                                TextContent(
+                                    data="<system>Tool execution was interrupted</system>",
+                                ),
+                            ],
+                            is_streaming=True,
+                            is_final=True,
+                            was_interrupted=True,
+                        )
+                else:
+                    result = tool_entry.base_function(**exec_kwargs)
+
+            except Exception as err:
+                success = False
+                error_message = str(err)
+                result = ExecutionResult(
+                    output_blocks=[
+                        TextContent(data=f"Error: {err}"),
+                    ],
+                )
+
+            # Set span success attribute
+            span.set_attribute("tool.success", success)
+            if error_message:
+                span.set_attribute("tool.error", error_message)
+
+        # Handle different return types and calculate output size
+        accumulated_output = []
         if isinstance(result, AsyncGenerator):
             async for item in wrap_as_async_generator(result, post_proc_partial):
+                if hasattr(item, "output_blocks"):
+                    for block in item.output_blocks:
+                        if hasattr(block, "data"):
+                            accumulated_output.append(str(block.data))
                 yield item
         elif isinstance(result, Generator):
             async for item in wrap_sync_gen_async(result, post_proc_partial):
+                if hasattr(item, "output_blocks"):
+                    for block in item.output_blocks:
+                        if hasattr(block, "data"):
+                            accumulated_output.append(str(block.data))
                 yield item
         elif isinstance(result, ExecutionResult):
             async for item in wrap_object_async(result, post_proc_partial):
+                if hasattr(item, "output_blocks"):
+                    for block in item.output_blocks:
+                        if hasattr(block, "data"):
+                            accumulated_output.append(str(block.data))
                 yield item
         else:
             raise TypeError(
                 f"Tool must return ExecutionResult or Generator, got {type(result)}",
             )
+
+        # Calculate output size and log tool execution
+        output_chars = sum(len(s) for s in accumulated_output)
+        execution_time_ms = (time.time() - start_time) * 1000
+
+        log_tool_execution(
+            agent_id=agent_id,
+            tool_name=tool_name,
+            tool_type="custom",
+            execution_time_ms=execution_time_ms,
+            success=success,
+            input_chars=input_chars,
+            output_chars=output_chars,
+            error_message=error_message,
+        )
 
     @staticmethod
     def _validate_params_match_signature(

@@ -697,8 +697,8 @@ class MCPResourceManager:
 
         for tool_name, tool in mcp_client.tools.items():
             try:
-                # Fix closure bug by using default parameter to capture tool_name
-                def create_tool_entrypoint(captured_tool_name: str = tool_name):
+                # Fix closure bug by using default parameter to capture tool_name and agent_id
+                def create_tool_entrypoint(captured_tool_name: str = tool_name, captured_agent_id: str | None = agent_id):
                     async def tool_entrypoint(input_str: str) -> Any:
                         try:
                             arguments = json.loads(input_str)
@@ -707,14 +707,14 @@ class MCPResourceManager:
                                 backend_name,
                                 "invalid JSON arguments for tool",
                                 {"tool_name": captured_tool_name, "error": str(e)},
-                                agent_id=agent_id,
+                                agent_id=captured_agent_id,
                             )
                             raise MCPValidationError(
                                 f"Invalid JSON arguments for tool {captured_tool_name}: {e}",
                                 field="arguments",
                                 value=input_str,
                             )
-                        return await mcp_client.call_tool(captured_tool_name, arguments)
+                        return await mcp_client.call_tool(captured_tool_name, arguments, agent_id=captured_agent_id)
 
                     return tool_entrypoint
 

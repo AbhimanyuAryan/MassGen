@@ -4295,6 +4295,19 @@ async def main(args):
     # Setup logging (only for actual agent runs, not special commands)
     setup_logging(debug=args.debug)
 
+    # Configure Logfire observability if requested
+    if getattr(args, "logfire", False):
+        from .logger_config import integrate_logfire_with_loguru
+        from .structured_logging import configure_observability, get_tracer
+
+        configure_observability(enabled=True)
+        integrate_logfire_with_loguru()
+        # Instrument all LLM providers globally
+        tracer = get_tracer()
+        tracer.instrument_google_genai()  # Gemini
+        tracer.instrument_openai()  # OpenAI-compatible APIs
+        tracer.instrument_anthropic()  # Claude
+
     if args.debug:
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
@@ -4963,6 +4976,11 @@ Environment Variables:
     parser.add_argument("--no-logs", action="store_true", help="Disable logging")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode with verbose logging")
     parser.add_argument(
+        "--logfire",
+        action="store_true",
+        help="Enable Logfire observability for structured tracing of LLM calls, tool executions, and orchestration",
+    )
+    parser.add_argument(
         "--web",
         action="store_true",
         help="Launch web UI server for real-time visualization",
@@ -5249,6 +5267,19 @@ Environment Variables:
 
     # Setup logging for all other commands (actual execution, setup, init, etc.)
     setup_logging(debug=args.debug)
+
+    # Configure Logfire observability if requested
+    if args.logfire:
+        from .logger_config import integrate_logfire_with_loguru
+        from .structured_logging import configure_observability, get_tracer
+
+        configure_observability(enabled=True)
+        integrate_logfire_with_loguru()
+        # Instrument all LLM providers globally
+        tracer = get_tracer()
+        tracer.instrument_google_genai()  # Gemini
+        tracer.instrument_openai()  # OpenAI-compatible APIs
+        tracer.instrument_anthropic()  # Claude
 
     if args.debug:
         logger.info("Debug mode enabled")

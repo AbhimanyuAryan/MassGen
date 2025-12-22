@@ -4,6 +4,7 @@ MCP client implementation for connecting to MCP servers. This module provides en
 functionality to connect with MCP servers and integrate external tools into the MassGen workflow.
 """
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -16,6 +17,7 @@ from mcp.client.stdio import get_default_environment, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from ..logger_config import logger
+from ..structured_logging import get_tracer, log_tool_execution
 from .circuit_breaker import MCPCircuitBreaker
 from .config_validator import MCPConfigValidator
 from .exceptions import (
@@ -540,13 +542,14 @@ class MCPClient:
         server_client.initialized = False
         server_client.connection_state = ConnectionState.DISCONNECTED
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], agent_id: Optional[str] = None) -> Any:
         """
         Call an MCP tool with validation and timeout handling.
 
         Args:
             tool_name: Name of the tool to call (always prefixed as mcp__server__toolname)
             arguments: Tool arguments
+            agent_id: Optional agent ID for observability attribution
 
         Returns:
             Tool execution result
@@ -617,13 +620,54 @@ class MCPClient:
                 },
             )
 
+        tracer = get_tracer()
+        start_time = asyncio.get_event_loop().time()
+        effective_agent_id = agent_id or "mcp"
+
         try:
-            # Add timeout to tool calls
-            result = await asyncio.wait_for(
-                session.call_tool(original_tool_name, validated_arguments),
-                timeout=self.timeout_seconds,
-            )
+            # Add timeout to tool calls with tracing span
+            span_attributes = {
+                "tool.name": tool_name,
+                "tool.type": "mcp",
+                "mcp.server": server_name,
+                "mcp.tool": original_tool_name,
+            }
+            if agent_id:
+                span_attributes["massgen.agent_id"] = agent_id
+
+            with tracer.span(
+                f"mcp.{server_name}.{original_tool_name}",
+                attributes=span_attributes,
+            ) as span:
+                result = await asyncio.wait_for(
+                    session.call_tool(original_tool_name, validated_arguments),
+                    timeout=self.timeout_seconds,
+                )
+                execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
+                span.set_attribute("tool.success", True)
+                span.set_attribute("tool.execution_time_ms", execution_time_ms)
+
             logger.debug(f"Tool {original_tool_name} completed successfully on {server_name}")
+
+            # Calculate input/output sizes for observability
+            input_chars = len(json.dumps(validated_arguments)) if validated_arguments else 0
+            # Result is typically a CallToolResult with content list
+            output_chars = 0
+            if result and hasattr(result, "content"):
+                for content_item in result.content:
+                    if hasattr(content_item, "text"):
+                        output_chars += len(content_item.text)
+
+            # Log structured tool execution for observability
+            log_tool_execution(
+                agent_id=effective_agent_id,
+                tool_name=tool_name,
+                tool_type="mcp",
+                execution_time_ms=execution_time_ms,
+                success=True,
+                input_chars=input_chars,
+                output_chars=output_chars,
+            )
 
             # Send tool call success status if callback is available
             if self.status_callback:
@@ -639,6 +683,18 @@ class MCPClient:
             return result
 
         except asyncio.TimeoutError:
+            execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
+            input_chars = len(json.dumps(validated_arguments)) if validated_arguments else 0
+            log_tool_execution(
+                agent_id=effective_agent_id,
+                tool_name=tool_name,
+                tool_type="mcp",
+                execution_time_ms=execution_time_ms,
+                success=False,
+                input_chars=input_chars,
+                error_message=f"Timeout after {self.timeout_seconds}s",
+            )
+
             if self.status_callback:
                 await self.status_callback(
                     "tool_call_timeout",
@@ -660,6 +716,18 @@ class MCPClient:
                 context={"tool_name": original_tool_name, "server_name": server_name},
             )
         except Exception as e:
+            execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
+            input_chars = len(json.dumps(validated_arguments)) if validated_arguments else 0
+            log_tool_execution(
+                agent_id=effective_agent_id,
+                tool_name=tool_name,
+                tool_type="mcp",
+                execution_time_ms=execution_time_ms,
+                success=False,
+                input_chars=input_chars,
+                error_message=str(e),
+            )
+
             logger.error(f"Tool call failed for {original_tool_name} on {server_name}: {e}", exc_info=True)
 
             # Record failure with circuit breaker

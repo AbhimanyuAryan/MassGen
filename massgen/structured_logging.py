@@ -1,0 +1,997 @@
+# -*- coding: utf-8 -*-
+"""
+Structured logging and observability for MassGen using Logfire.
+
+This module provides centralized configuration for Logfire-based observability,
+including:
+- Automatic LLM client instrumentation (OpenAI, Anthropic)
+- Manual span creation for orchestrator operations
+- Tool call tracing with timing and input/output metrics
+- Integration with existing loguru logging
+
+Usage:
+    from massgen.structured_logging import configure_observability, get_tracer
+
+    # Configure at startup (typically in cli.py)
+    configure_observability(enabled=True, service_name="massgen")
+
+    # Get tracer for manual spans
+    tracer = get_tracer()
+
+    # Create spans
+    with tracer.span("my_operation", attributes={"key": "value"}):
+        do_work()
+
+Environment Variables:
+    LOGFIRE_TOKEN: Write token for Logfire cloud (required for production)
+    MASSGEN_LOGFIRE_ENABLED: Set to "true" to enable Logfire (default: false)
+    MASSGEN_LOGFIRE_SERVICE_NAME: Service name for tracing (default: "massgen")
+"""
+
+import os
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from functools import wraps
+from typing import Any, Callable, Dict, List, Optional, TypeVar
+
+from loguru import logger
+
+# Type variable for generic function wrapper
+F = TypeVar("F", bound=Callable[..., Any])
+
+# Global state for observability configuration
+_logfire_enabled: bool = False
+_logfire_configured: bool = False
+_instrumented_clients: Dict[str, bool] = {}
+
+
+@dataclass
+class ObservabilityConfig:
+    """Configuration for structured logging and observability."""
+
+    enabled: bool = False
+    service_name: str = "massgen"
+    service_version: Optional[str] = None
+    environment: str = "development"
+    send_to_logfire: bool = True
+    console_enabled: bool = True
+    console_min_level: str = "info"
+    scrub_sensitive_data: bool = True
+    additional_processors: List[Any] = field(default_factory=list)
+
+
+# Global config instance
+_config: Optional[ObservabilityConfig] = None
+
+
+def configure_observability(
+    enabled: Optional[bool] = None,
+    service_name: str = "massgen",
+    service_version: Optional[str] = None,
+    environment: str = "development",
+    send_to_logfire: bool = True,
+    console_enabled: bool = False,
+    console_min_level: str = "info",
+    scrub_sensitive_data: bool = True,
+) -> bool:
+    """
+    Configure Logfire observability for MassGen.
+
+    This should be called once at application startup, typically in cli.py.
+    If Logfire is not available or not configured, logging will fall back
+    to standard loguru logging with no impact on functionality.
+
+    Args:
+        enabled: Whether to enable Logfire. If None, checks MASSGEN_LOGFIRE_ENABLED env var.
+        service_name: Name of the service for tracing.
+        service_version: Version of the service (auto-detected from massgen.__version__ if not provided).
+        environment: Deployment environment (development, staging, production).
+        send_to_logfire: Whether to send data to Logfire cloud (requires LOGFIRE_TOKEN).
+        console_enabled: Whether to also log to console via Logfire.
+        console_min_level: Minimum log level for console output.
+        scrub_sensitive_data: Whether to scrub sensitive data from logs.
+
+    Returns:
+        True if Logfire was successfully configured, False otherwise.
+    """
+    global _logfire_enabled, _logfire_configured, _config
+
+    # Determine if enabled from environment or parameter
+    if enabled is None:
+        enabled = os.environ.get("MASSGEN_LOGFIRE_ENABLED", "").lower() in ("true", "1", "yes")
+
+    if not enabled:
+        logger.debug("Logfire observability is disabled")
+        _logfire_enabled = False
+        return False
+
+    # Store config
+    _config = ObservabilityConfig(
+        enabled=enabled,
+        service_name=service_name,
+        service_version=service_version,
+        environment=environment,
+        send_to_logfire=send_to_logfire,
+        console_enabled=console_enabled,
+        console_min_level=console_min_level,
+        scrub_sensitive_data=scrub_sensitive_data,
+    )
+
+    try:
+        import logfire
+
+        # Get version if not provided
+        if service_version is None:
+            try:
+                import massgen
+
+                service_version = getattr(massgen, "__version__", "0.0.0")
+            except ImportError:
+                service_version = "0.0.0"
+
+        # Configure Logfire
+        logfire.configure(
+            service_name=service_name,
+            service_version=service_version,
+            environment=environment,
+            send_to_logfire=send_to_logfire,
+            console=logfire.ConsoleOptions(
+                min_log_level=console_min_level,
+            )
+            if console_enabled
+            else False,
+            scrubbing=logfire.ScrubbingOptions(
+                extra_patterns=["api_key", "api_secret", "password", "token", "secret"],
+            )
+            if scrub_sensitive_data
+            else False,
+        )
+
+        _logfire_enabled = True
+        _logfire_configured = True
+        logger.info(f"Logfire observability configured: service={service_name}, env={environment}")
+        return True
+
+    except ImportError:
+        logger.warning("Logfire package not installed. Observability features disabled.")
+        _logfire_enabled = False
+        return False
+    except Exception as e:
+        logger.warning(f"Failed to configure Logfire: {e}. Observability features disabled.")
+        _logfire_enabled = False
+        return False
+
+
+def is_observability_enabled() -> bool:
+    """Check if Logfire observability is currently enabled."""
+    return _logfire_enabled
+
+
+def get_config() -> Optional[ObservabilityConfig]:
+    """Get the current observability configuration."""
+    return _config
+
+
+class TracerProxy:
+    """
+    Proxy object for Logfire tracing that gracefully degrades when Logfire is disabled.
+
+    This allows code to use tracing calls without checking if Logfire is enabled,
+    making the instrumentation code cleaner and more maintainable.
+    """
+
+    def __init__(self):
+        self._logfire = None
+
+    def _get_logfire(self):
+        """Lazily import logfire to avoid import errors when not installed."""
+        if self._logfire is None and _logfire_enabled:
+            try:
+                import logfire
+
+                self._logfire = logfire
+            except ImportError:
+                pass
+        return self._logfire
+
+    @contextmanager
+    def span(
+        self,
+        name: str,
+        attributes: Optional[Dict[str, Any]] = None,
+        record_exception: bool = True,
+    ):
+        """
+        Create a tracing span.
+
+        Args:
+            name: Name of the span.
+            attributes: Key-value attributes to attach to the span.
+            record_exception: Whether to record exceptions in the span.
+
+        Yields:
+            Span object if Logfire is enabled, otherwise a no-op context.
+        """
+        logfire = self._get_logfire()
+        if logfire:
+            with logfire.span(name, **attributes or {}) as span:
+                try:
+                    yield span
+                except Exception as e:
+                    if record_exception:
+                        span.record_exception(e)
+                    raise
+        else:
+            yield _NoOpSpan()
+
+    def info(self, message: str, **kwargs):
+        """Log an info message with optional attributes."""
+        logfire = self._get_logfire()
+        if logfire:
+            logfire.info(message, **kwargs)
+        else:
+            logger.info(message)
+
+    def debug(self, message: str, **kwargs):
+        """Log a debug message with optional attributes."""
+        logfire = self._get_logfire()
+        if logfire:
+            logfire.debug(message, **kwargs)
+        else:
+            logger.debug(message)
+
+    def warning(self, message: str, **kwargs):
+        """Log a warning message with optional attributes."""
+        logfire = self._get_logfire()
+        if logfire:
+            logfire.warn(message, **kwargs)
+        else:
+            logger.warning(message)
+
+    def error(self, message: str, **kwargs):
+        """Log an error message with optional attributes."""
+        logfire = self._get_logfire()
+        if logfire:
+            logfire.error(message, **kwargs)
+        else:
+            logger.error(message)
+
+    def instrument_openai(self, client=None):
+        """
+        Instrument OpenAI client for automatic tracing.
+
+        Args:
+            client: Specific OpenAI client to instrument, or None for global instrumentation.
+
+        Note:
+            When a specific client is provided, it will always be instrumented
+            regardless of whether global instrumentation was already called.
+            This is necessary because global instrumentation must happen before
+            the openai module is imported, but client-specific instrumentation
+            can happen at any time.
+        """
+        global _instrumented_clients
+
+        logfire = self._get_logfire()
+        if not logfire:
+            return
+
+        try:
+            if client:
+                # Always instrument specific clients - they may have been created
+                # after global instrumentation or the library was imported before
+                # global instrumentation could take effect
+                logfire.instrument_openai(client)
+                logger.debug("OpenAI client instance instrumented for Logfire tracing")
+            elif not _instrumented_clients.get("openai"):
+                # Global instrumentation - only do once
+                logfire.instrument_openai()
+                _instrumented_clients["openai"] = True
+                logger.debug("OpenAI globally instrumented for Logfire tracing")
+        except Exception as e:
+            logger.debug(f"Could not instrument OpenAI: {e}")
+
+    def instrument_anthropic(self, client=None):
+        """
+        Instrument Anthropic client for automatic tracing.
+
+        Args:
+            client: Specific Anthropic client to instrument, or None for global instrumentation.
+
+        Note:
+            When a specific client is provided, it will always be instrumented
+            regardless of whether global instrumentation was already called.
+            This is necessary because global instrumentation must happen before
+            the anthropic module is imported, but client-specific instrumentation
+            can happen at any time.
+        """
+        global _instrumented_clients
+
+        logfire = self._get_logfire()
+        if not logfire:
+            return
+
+        try:
+            if client:
+                # Always instrument specific clients - they may have been created
+                # after global instrumentation or the library was imported before
+                # global instrumentation could take effect
+                logfire.instrument_anthropic(client)
+                logger.debug("Anthropic client instance instrumented for Logfire tracing")
+            elif not _instrumented_clients.get("anthropic"):
+                # Global instrumentation - only do once
+                logfire.instrument_anthropic()
+                _instrumented_clients["anthropic"] = True
+                logger.debug("Anthropic globally instrumented for Logfire tracing")
+        except Exception as e:
+            logger.debug(f"Could not instrument Anthropic: {e}")
+
+    def instrument_google_genai(self):
+        """
+        Instrument Google GenAI (Gemini) for automatic tracing.
+
+        Note: Set OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+        to capture prompts and completions in spans.
+        """
+        global _instrumented_clients
+
+        logfire = self._get_logfire()
+        if logfire and not _instrumented_clients.get("google_genai"):
+            try:
+                logfire.instrument_google_genai()
+                _instrumented_clients["google_genai"] = True
+                logger.debug("Google GenAI instrumented for Logfire tracing")
+            except Exception as e:
+                logger.debug(f"Could not instrument Google GenAI: {e}")
+
+    def instrument_aiohttp(self):
+        """Instrument aiohttp for HTTP client tracing."""
+        global _instrumented_clients
+
+        logfire = self._get_logfire()
+        if logfire and not _instrumented_clients.get("aiohttp"):
+            try:
+                logfire.instrument_aiohttp_client()
+                _instrumented_clients["aiohttp"] = True
+                logger.debug("aiohttp instrumented for Logfire tracing")
+            except Exception as e:
+                logger.debug(f"Could not instrument aiohttp: {e}")
+
+
+class _NoOpSpan:
+    """No-operation span for when Logfire is disabled."""
+
+    def set_attribute(self, key: str, value: Any):
+        pass
+
+    def record_exception(self, exception: Exception):
+        pass
+
+    def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None):
+        pass
+
+
+# Global tracer instance
+_tracer: Optional[TracerProxy] = None
+
+
+def get_tracer() -> TracerProxy:
+    """
+    Get the global tracer instance.
+
+    Returns:
+        TracerProxy that can be used for creating spans and logging.
+    """
+    global _tracer
+    if _tracer is None:
+        _tracer = TracerProxy()
+    return _tracer
+
+
+def trace_llm_call(
+    backend_name: str,
+    model: str,
+    agent_id: Optional[str] = None,
+    round_number: Optional[int] = None,
+):
+    """
+    Decorator for tracing LLM API calls.
+
+    Args:
+        backend_name: Name of the LLM backend (e.g., "openai", "anthropic").
+        model: Model name being called.
+        agent_id: Optional agent ID for context.
+        round_number: Optional round number for context.
+
+    Returns:
+        Decorator function.
+    """
+
+    def decorator(func: F) -> F:
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            tracer = get_tracer()
+            attributes = {
+                "llm.backend": backend_name,
+                "llm.model": model,
+            }
+            if agent_id:
+                attributes["massgen.agent_id"] = agent_id
+            if round_number is not None:
+                attributes["massgen.round_number"] = round_number
+
+            with tracer.span(f"llm.call.{backend_name}", attributes=attributes):
+                return await func(*args, **kwargs)
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            tracer = get_tracer()
+            attributes = {
+                "llm.backend": backend_name,
+                "llm.model": model,
+            }
+            if agent_id:
+                attributes["massgen.agent_id"] = agent_id
+            if round_number is not None:
+                attributes["massgen.round_number"] = round_number
+
+            with tracer.span(f"llm.call.{backend_name}", attributes=attributes):
+                return func(*args, **kwargs)
+
+        # Return appropriate wrapper based on function type
+        import asyncio
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper  # type: ignore
+        return sync_wrapper  # type: ignore
+
+    return decorator
+
+
+def trace_tool_call(
+    tool_name: str,
+    tool_type: str = "custom",
+    agent_id: Optional[str] = None,
+):
+    """
+    Decorator for tracing tool calls.
+
+    Args:
+        tool_name: Name of the tool being called.
+        tool_type: Type of tool (custom, mcp, builtin).
+        agent_id: Optional agent ID for context.
+
+    Returns:
+        Decorator function.
+    """
+
+    def decorator(func: F) -> F:
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            tracer = get_tracer()
+            attributes = {
+                "tool.name": tool_name,
+                "tool.type": tool_type,
+            }
+            if agent_id:
+                attributes["massgen.agent_id"] = agent_id
+
+            with tracer.span(f"tool.{tool_name}", attributes=attributes) as span:
+                try:
+                    result = await func(*args, **kwargs)
+                    span.set_attribute("tool.success", True)
+                    return result
+                except Exception as e:
+                    span.set_attribute("tool.success", False)
+                    span.set_attribute("tool.error", str(e))
+                    raise
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            tracer = get_tracer()
+            attributes = {
+                "tool.name": tool_name,
+                "tool.type": tool_type,
+            }
+            if agent_id:
+                attributes["massgen.agent_id"] = agent_id
+
+            with tracer.span(f"tool.{tool_name}", attributes=attributes) as span:
+                try:
+                    result = func(*args, **kwargs)
+                    span.set_attribute("tool.success", True)
+                    return result
+                except Exception as e:
+                    span.set_attribute("tool.success", False)
+                    span.set_attribute("tool.error", str(e))
+                    raise
+
+        import asyncio
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper  # type: ignore
+        return sync_wrapper  # type: ignore
+
+    return decorator
+
+
+@contextmanager
+def trace_orchestrator_operation(
+    operation: str,
+    task: Optional[str] = None,
+    num_agents: Optional[int] = None,
+    **extra_attributes,
+):
+    """
+    Context manager for tracing orchestrator operations.
+
+    Args:
+        operation: Name of the orchestrator operation (e.g., "coordinate", "vote", "present").
+        task: The current task/question being processed.
+        num_agents: Number of agents involved.
+        **extra_attributes: Additional attributes to attach to the span.
+
+    Yields:
+        Span object for adding additional attributes.
+    """
+    tracer = get_tracer()
+    attributes = {
+        "massgen.operation": operation,
+    }
+    if task:
+        attributes["massgen.task"] = task[:500]  # Truncate long tasks
+    if num_agents is not None:
+        attributes["massgen.num_agents"] = num_agents
+
+    attributes.update(extra_attributes)
+
+    with tracer.span(f"orchestrator.{operation}", attributes=attributes) as span:
+        yield span
+
+
+@contextmanager
+def trace_agent_execution(
+    agent_id: str,
+    backend_name: str,
+    model: str,
+    round_number: int,
+    round_type: str = "coordination",
+    **extra_attributes,
+):
+    """
+    Context manager for tracing agent execution within a round.
+
+    Args:
+        agent_id: ID of the agent.
+        backend_name: Name of the backend provider.
+        model: Model being used.
+        round_number: Current round number.
+        round_type: Type of round (coordination, voting, presentation).
+        **extra_attributes: Additional attributes to attach to the span.
+
+    Yields:
+        Span object for adding additional attributes.
+    """
+    tracer = get_tracer()
+    attributes = {
+        "massgen.agent_id": agent_id,
+        "llm.backend": backend_name,
+        "llm.model": model,
+        "massgen.round_number": round_number,
+        "massgen.round_type": round_type,
+    }
+    attributes.update(extra_attributes)
+
+    with tracer.span(f"agent.{agent_id}.round_{round_number}", attributes=attributes) as span:
+        yield span
+
+
+def log_token_usage(
+    agent_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    reasoning_tokens: int = 0,
+    cached_tokens: int = 0,
+    estimated_cost: float = 0.0,
+    model: Optional[str] = None,
+):
+    """
+    Log token usage as a structured event.
+
+    Args:
+        agent_id: ID of the agent.
+        input_tokens: Number of input tokens.
+        output_tokens: Number of output tokens.
+        reasoning_tokens: Number of reasoning tokens (for models that support it).
+        cached_tokens: Number of cached input tokens.
+        estimated_cost: Estimated cost in USD.
+        model: Model name (optional).
+    """
+    tracer = get_tracer()
+    tracer.info(
+        "Token usage recorded",
+        agent_id=agent_id,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
+        cached_tokens=cached_tokens,
+        estimated_cost=round(estimated_cost, 6),
+        model=model or "unknown",
+    )
+
+
+def log_tool_execution(
+    agent_id: str,
+    tool_name: str,
+    tool_type: str,
+    execution_time_ms: float,
+    success: bool,
+    input_chars: int = 0,
+    output_chars: int = 0,
+    error_message: Optional[str] = None,
+):
+    """
+    Log tool execution as a structured event.
+
+    Args:
+        agent_id: ID of the agent.
+        tool_name: Name of the tool.
+        tool_type: Type of tool (custom, mcp, builtin).
+        execution_time_ms: Execution time in milliseconds.
+        success: Whether the execution was successful.
+        input_chars: Number of input characters.
+        output_chars: Number of output characters.
+        error_message: Error message if execution failed.
+    """
+    tracer = get_tracer()
+    log_func = tracer.info if success else tracer.warning
+
+    log_func(
+        f"Tool execution: {tool_name}",
+        agent_id=agent_id,
+        tool_name=tool_name,
+        tool_type=tool_type,
+        execution_time_ms=round(execution_time_ms, 2),
+        success=success,
+        input_chars=input_chars,
+        output_chars=output_chars,
+        error_message=error_message,
+    )
+
+
+def log_coordination_event(
+    event_type: str,
+    agent_id: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+):
+    """
+    Log a coordination event.
+
+    Args:
+        event_type: Type of coordination event (e.g., "answer_submitted", "vote_cast", "winner_selected").
+        agent_id: ID of the agent involved (if applicable).
+        details: Additional details about the event.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        f"Coordination event: {event_type}",
+        event_type=event_type,
+        agent_id=agent_id,
+        **(details or {}),
+    )
+
+
+# Coordination iteration tracking for hierarchical spans
+_current_iteration_span: Optional[Any] = None
+_current_coordination_span: Optional[Any] = None
+
+
+@contextmanager
+def trace_coordination_session(
+    task: str,
+    num_agents: int,
+    agent_ids: Optional[list] = None,
+    **extra_attributes,
+):
+    """
+    Context manager for tracing an entire coordination session.
+
+    This creates the top-level span that contains all iterations/rounds.
+    All iteration spans will be nested under this span.
+
+    Args:
+        task: The user's question/task being processed.
+        num_agents: Number of agents participating.
+        agent_ids: List of agent IDs.
+        **extra_attributes: Additional attributes to attach to the span.
+
+    Yields:
+        Span object for adding additional attributes.
+
+    Example:
+        with trace_coordination_session(task="What is AI?", num_agents=3) as session_span:
+            for i in range(max_iterations):
+                with trace_coordination_iteration(iteration=i+1):
+                    # Run agents
+                    pass
+    """
+    global _current_coordination_span
+
+    tracer = get_tracer()
+    attributes = {
+        "massgen.task": task[:500] if task else "",
+        "massgen.num_agents": num_agents,
+    }
+    if agent_ids:
+        attributes["massgen.agent_ids"] = ",".join(agent_ids)
+    attributes.update(extra_attributes)
+
+    with tracer.span("coordination.session", attributes=attributes) as span:
+        _current_coordination_span = span
+        try:
+            yield span
+        finally:
+            _current_coordination_span = None
+
+
+@contextmanager
+def trace_coordination_iteration(
+    iteration: int,
+    available_answers: Optional[list] = None,
+    **extra_attributes,
+):
+    """
+    Context manager for tracing a single coordination iteration (round).
+
+    Each iteration represents one round where agents can submit answers or vote.
+    This should be called within a trace_coordination_session context.
+
+    Args:
+        iteration: The iteration number (1-based).
+        available_answers: List of available answer labels at start of iteration.
+        **extra_attributes: Additional attributes to attach to the span.
+
+    Yields:
+        Span object for adding additional attributes.
+
+    Example:
+        with trace_coordination_iteration(iteration=1, available_answers=["agent1.1"]):
+            # Agent executions happen here
+            log_agent_answer(agent_id="agent_a", answer_label="agent1.2")
+            log_agent_vote(agent_id="agent_b", voted_for_label="agent1.2")
+    """
+    global _current_iteration_span
+
+    tracer = get_tracer()
+    attributes = {
+        "massgen.iteration": iteration,
+        "massgen.round": iteration,  # Alias for clarity
+    }
+    if available_answers:
+        attributes["massgen.available_answers"] = ",".join(available_answers)
+    attributes.update(extra_attributes)
+
+    with tracer.span(f"coordination.iteration.{iteration}", attributes=attributes) as span:
+        _current_iteration_span = span
+        try:
+            yield span
+        finally:
+            _current_iteration_span = None
+
+
+@contextmanager
+def trace_agent_round(
+    agent_id: str,
+    iteration: int,
+    round_type: str = "coordination",
+    context_labels: Optional[list] = None,
+    **extra_attributes,
+):
+    """
+    Context manager for tracing a single agent's execution within an iteration.
+
+    This creates a child span under the current iteration for agent-specific work.
+
+    Args:
+        agent_id: ID of the agent.
+        iteration: Current iteration number.
+        round_type: Type of round (coordination, voting, presentation, final).
+        context_labels: Answer labels visible to this agent.
+        **extra_attributes: Additional attributes.
+
+    Yields:
+        Span object for adding additional attributes.
+    """
+    tracer = get_tracer()
+    attributes = {
+        "massgen.agent_id": agent_id,
+        "massgen.iteration": iteration,
+        "massgen.round_type": round_type,
+    }
+    if context_labels:
+        attributes["massgen.context_labels"] = ",".join(context_labels)
+    attributes.update(extra_attributes)
+
+    with tracer.span(f"agent.{agent_id}.iteration_{iteration}", attributes=attributes) as span:
+        yield span
+
+
+def log_agent_answer(
+    agent_id: str,
+    answer_label: str,
+    iteration: int,
+    round_number: int,
+    answer_preview: Optional[str] = None,
+):
+    """
+    Log when an agent submits an answer.
+
+    Args:
+        agent_id: ID of the agent.
+        answer_label: Label of the answer (e.g., "agent1.1", "agent2.3").
+        iteration: Current iteration number.
+        round_number: Agent's round number.
+        answer_preview: First 200 chars of the answer (optional).
+    """
+    tracer = get_tracer()
+    tracer.info(
+        f"Agent answer: {answer_label}",
+        event_type="new_answer",
+        agent_id=agent_id,
+        answer_label=answer_label,
+        iteration=iteration,
+        round=round_number,
+        answer_preview=answer_preview[:200] if answer_preview else None,
+    )
+
+    # Also add as span event if we have a current iteration span
+    if _current_iteration_span and hasattr(_current_iteration_span, "add_event"):
+        _current_iteration_span.add_event(
+            f"answer.{answer_label}",
+            {"agent_id": agent_id, "label": answer_label},
+        )
+
+
+def log_agent_vote(
+    agent_id: str,
+    voted_for_label: str,
+    iteration: int,
+    round_number: int,
+    reason: Optional[str] = None,
+    available_answers: Optional[list] = None,
+):
+    """
+    Log when an agent casts a vote.
+
+    Args:
+        agent_id: ID of the voting agent.
+        voted_for_label: Label of the answer being voted for.
+        iteration: Current iteration number.
+        round_number: Agent's round number.
+        reason: Agent's reason for voting (optional).
+        available_answers: List of available answer labels when voting.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        f"Agent vote: {agent_id} -> {voted_for_label}",
+        event_type="vote_cast",
+        agent_id=agent_id,
+        voted_for_label=voted_for_label,
+        iteration=iteration,
+        round=round_number,
+        reason=reason[:200] if reason else None,
+        available_answers=",".join(available_answers) if available_answers else None,
+    )
+
+    # Also add as span event if we have a current iteration span
+    if _current_iteration_span and hasattr(_current_iteration_span, "add_event"):
+        _current_iteration_span.add_event(
+            f"vote.{agent_id}",
+            {"agent_id": agent_id, "voted_for": voted_for_label},
+        )
+
+
+def log_winner_selected(
+    winner_agent_id: str,
+    winner_label: str,
+    vote_counts: Optional[Dict[str, int]] = None,
+    total_iterations: int = 0,
+):
+    """
+    Log when a winner is selected after voting.
+
+    Args:
+        winner_agent_id: ID of the winning agent.
+        winner_label: Label of the winning answer.
+        vote_counts: Dictionary of answer labels to vote counts.
+        total_iterations: Total number of iterations completed.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        f"Winner selected: {winner_label}",
+        event_type="winner_selected",
+        winner_agent_id=winner_agent_id,
+        winner_label=winner_label,
+        vote_counts=vote_counts,
+        total_iterations=total_iterations,
+    )
+
+
+def log_final_answer(
+    agent_id: str,
+    iteration: int,
+    answer_preview: Optional[str] = None,
+):
+    """
+    Log when the winning agent provides the final answer.
+
+    Args:
+        agent_id: ID of the agent providing the final answer.
+        iteration: Final iteration number.
+        answer_preview: First 200 chars of the final answer.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        f"Final answer from {agent_id}",
+        event_type="final_answer",
+        agent_id=agent_id,
+        iteration=iteration,
+        answer_preview=answer_preview[:200] if answer_preview else None,
+    )
+
+
+def log_iteration_end(
+    iteration: int,
+    end_reason: str,
+    votes_cast: int = 0,
+    answers_provided: int = 0,
+):
+    """
+    Log when an iteration ends.
+
+    Args:
+        iteration: The iteration number that ended.
+        end_reason: Reason for ending (e.g., "all_voted", "max_rounds", "consensus").
+        votes_cast: Number of votes cast in this iteration.
+        answers_provided: Number of new answers provided in this iteration.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        f"Iteration {iteration} ended: {end_reason}",
+        event_type="iteration_end",
+        iteration=iteration,
+        end_reason=end_reason,
+        votes_cast=votes_cast,
+        answers_provided=answers_provided,
+    )
+
+
+# Export all public symbols
+__all__ = [
+    # Configuration
+    "configure_observability",
+    "is_observability_enabled",
+    "get_config",
+    "get_tracer",
+    "TracerProxy",
+    "ObservabilityConfig",
+    # Decorators
+    "trace_llm_call",
+    "trace_tool_call",
+    # Context managers for hierarchical tracing
+    "trace_orchestrator_operation",
+    "trace_agent_execution",
+    "trace_coordination_session",
+    "trace_coordination_iteration",
+    "trace_agent_round",
+    # Event loggers
+    "log_token_usage",
+    "log_tool_execution",
+    "log_coordination_event",
+    # Coordination-specific loggers
+    "log_agent_answer",
+    "log_agent_vote",
+    "log_winner_selected",
+    "log_final_answer",
+    "log_iteration_end",
+]
