@@ -227,7 +227,29 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.27 - Latest
+### v0.1.28 - Latest
+**New Features:** Unified Multimodal Tools, Web UI Artifact Previewer
+
+**Key Features:**
+- **Unified Multimodal Tools**: Consolidated `read_media` for understanding and `generate_media` for generation (images, audio, video)
+- **Web UI Artifact Previewer**: Preview PDFs, DOCX, PPTX, images, HTML, SVG, Markdown, and Mermaid diagrams
+- **OpenRouter Model Filtering**: Automatic filtering to only show tool-capable models
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Unified multimodal tools - generate and analyze images, audio, video
+massgen --config @examples/tools/custom_tools/multimodal_tools/unified_multimodal \
+  "Create an image of two AI chatting with a human and then describe it in detail"
+
+# Multi-agent collaboration
+massgen --config @examples/basic/multi/three_agents_default \
+  "Compare different approaches to building AI agents"
+```
+
+### v0.1.27
 **New Features:** Session Sharing, Log Analysis CLI, Per-LLM Call Timing, Gemini 3 Flash
 
 **Key Features:**
