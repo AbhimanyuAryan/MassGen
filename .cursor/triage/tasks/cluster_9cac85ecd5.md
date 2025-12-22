@@ -1,0 +1,31 @@
+# Cluster 9cac85ecd5
+
+- **Count**: 2
+- **Exception type**: `<unknown>`
+- **Normalized message**: `ValueError: Claude Code backend requires 'cwd' configuration for workspace management`
+
+## Minimal repro
+
+Single failing test:
+
+```bash
+/Users/admin/src/MassGen/.venv/bin/python -m pytest -q massgen/tests/test_claude_code.py::test_with_workflow_tools
+```
+
+Up to 25 tests from this cluster:
+
+```bash
+/Users/admin/src/MassGen/.venv/bin/python -m pytest -q massgen/tests/test_claude_code.py::test_with_workflow_tools massgen/tests/test_claude_code_orchestrator.py::test_claude_code_with_orchestrator
+```
+
+## Affected nodeids
+
+- `massgen/tests/test_claude_code.py::test_with_workflow_tools`
+- `massgen/tests/test_claude_code_orchestrator.py::test_claude_code_with_orchestrator`
+
+## Suggested next step (for the subagent)
+
+- Confirm if this is **unit** vs **integration/docker/expensive**.
+- If it requires external prerequisites, **add the correct marker** and rely on the default skip policy.
+- Otherwise, fix the implementation or the test; if deferred, add an **expiring entry** in `massgen/tests/xfail_registry.yml`.
+
