@@ -4689,9 +4689,9 @@ class ConfigBuilder:
         if coordination_settings.get("max_new_answers_per_agent"):
             orchestrator_config["max_new_answers_per_agent"] = coordination_settings["max_new_answers_per_agent"]
         if coordination_settings.get("enable_subagents"):
-            orchestrator_config["enable_subagents"] = True
-            orchestrator_config["subagent_default_timeout"] = 300  # 5 minutes
-            orchestrator_config["subagent_max_concurrent"] = 3
+            orchestrator_config["coordination"]["enable_subagents"] = True
+            orchestrator_config["coordination"]["subagent_default_timeout"] = 300  # 5 minutes
+            orchestrator_config["coordination"]["subagent_max_concurrent"] = 3
 
         # Build full config
         config = {

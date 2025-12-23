@@ -19,6 +19,7 @@ import asyncio
 import atexit
 import json
 import logging
+import os
 import signal
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -110,11 +111,11 @@ async def create_server() -> fastmcp.FastMCP:
         help="Path to parent agent workspace for subagent workspaces",
     )
     parser.add_argument(
-        "--agent-configs",
+        "--agent-configs-file",
         type=str,
         required=False,
-        default="[]",
-        help="JSON-encoded list of parent agent configurations to inherit",
+        default="",
+        help="Path to JSON file containing list of parent agent configurations",
     )
     parser.add_argument(
         "--max-concurrent",
@@ -149,13 +150,22 @@ async def create_server() -> fastmcp.FastMCP:
     _parent_agent_id = args.agent_id
     _orchestrator_id = args.orchestrator_id
 
-    # Parse agent configs (list of parent agent configurations)
-    try:
-        _parent_agent_configs = json.loads(args.agent_configs)
-        if not isinstance(_parent_agent_configs, list):
-            _parent_agent_configs = [_parent_agent_configs]  # Wrap single config in list
-    except json.JSONDecodeError:
-        _parent_agent_configs = []
+    # Parse agent configs from file (avoids command line / env var length limits)
+    _parent_agent_configs = []
+    if args.agent_configs_file:
+        try:
+            with open(args.agent_configs_file) as f:
+                _parent_agent_configs = json.load(f)
+            if not isinstance(_parent_agent_configs, list):
+                _parent_agent_configs = [_parent_agent_configs]
+            # Clean up the temp file after reading
+            try:
+                os.unlink(args.agent_configs_file)
+            except OSError:
+                pass  # Ignore if file already deleted
+        except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+            logger.warning(f"Failed to load agent configs from {args.agent_configs_file}: {e}")
+            _parent_agent_configs = []
 
     # Parse subagent orchestrator config
     try:

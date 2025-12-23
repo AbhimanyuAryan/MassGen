@@ -820,6 +820,7 @@ class Orchestrator(ChatAgent):
         Returns:
             MCP server configuration dictionary
         """
+        import tempfile
         from pathlib import Path as PathlibPath
 
         import massgen.mcp_tools.subagent._subagent_mcp_server as subagent_module
@@ -841,7 +842,16 @@ class Orchestrator(ChatAgent):
                 agent_cfg["backend"] = backend_cfg
             agent_configs.append(agent_cfg)
 
-        agent_configs_json = json.dumps(agent_configs)
+        # Write agent configs to temp file to avoid command line / env var length limits
+        agent_configs_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix="massgen_subagent_configs_",
+            delete=False,  # Keep file until subagent reads it
+        )
+        json.dump(agent_configs, agent_configs_file)
+        agent_configs_file.close()
+        agent_configs_path = agent_configs_file.name
 
         # Get subagent configuration from coordination config
         max_concurrent = 3
@@ -877,8 +887,8 @@ class Orchestrator(ChatAgent):
             self.orchestrator_id,
             "--workspace-path",
             workspace_path,
-            "--agent-configs",
-            agent_configs_json,
+            "--agent-configs-file",
+            agent_configs_path,
             "--max-concurrent",
             str(max_concurrent),
             "--default-timeout",

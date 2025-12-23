@@ -18,6 +18,7 @@ interface HtmlPreviewProps {
   sessionId?: string;
   agentId?: string;
   filePath?: string; // Relative path within workspace (e.g., "index.html" or "pages/about.html")
+  workspacePath?: string; // Absolute workspace path (needed for historical workspaces)
 }
 
 /**
@@ -109,6 +110,7 @@ export function HtmlPreview({
   sessionId,
   agentId,
   filePath,
+  workspacePath,
 }: HtmlPreviewProps) {
   // Determine if we should use live preview mode (with working relative links)
   const useLivePreview = Boolean(sessionId && agentId && filePath);
@@ -116,8 +118,13 @@ export function HtmlPreview({
   // Build the live preview URL
   const livePreviewUrl = useMemo(() => {
     if (!useLivePreview) return null;
-    return `/workspace-preview/${sessionId}/${agentId}/${filePath}`;
-  }, [useLivePreview, sessionId, agentId, filePath]);
+    // Include workspace query param for historical workspaces
+    const baseUrl = `/workspace-preview/${sessionId}/${agentId}/${filePath}`;
+    if (workspacePath) {
+      return `${baseUrl}?workspace=${encodeURIComponent(workspacePath)}`;
+    }
+    return baseUrl;
+  }, [useLivePreview, sessionId, agentId, filePath, workspacePath]);
 
   // Prepare the HTML content with inlined CSS/JS (only used in srcDoc mode)
   const preparedContent = useMemo(() => {

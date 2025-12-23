@@ -329,6 +329,7 @@ export function InlineArtifactPreview({
             sessionId={sessionId}
             agentId={agentId}
             filePath={filePath}
+            workspacePath={workspacePath}
           />
         );
       case 'svg':

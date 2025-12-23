@@ -135,13 +135,15 @@ class SubagentOrchestratorConfig:
                 backend (with type, model, base_url, etc.)
                 If empty/None, inherits from parent config.
         coordination: Optional coordination config subset (broadcast, planning, etc.)
-        blocking: If True, spawn_subagents blocks until completion. If False, runs in background.
     """
 
     enabled: bool = False
     agents: List[Dict[str, Any]] = field(default_factory=list)
     coordination: Dict[str, Any] = field(default_factory=dict)
-    blocking: bool = True
+    # NOTE: blocking mode removed - spawn_subagents always waits for completion.
+    # Non-blocking would require a way to inject results back into the conversation
+    # when subagents finish, which is complex. Current parallel execution within
+    # spawn_subagents provides the useful parallelism.
 
     @property
     def num_agents(self) -> int:
@@ -175,11 +177,11 @@ class SubagentOrchestratorConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SubagentOrchestratorConfig":
         """Create config from dictionary (YAML parsing)."""
+        # Note: 'blocking' key is ignored (kept for backwards compatibility)
         return cls(
             enabled=data.get("enabled", False),
             agents=data.get("agents", []),
             coordination=data.get("coordination", {}),
-            blocking=data.get("blocking", True),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -188,7 +190,6 @@ class SubagentOrchestratorConfig:
             "enabled": self.enabled,
             "agents": [a.copy() for a in self.agents] if self.agents else [],
             "coordination": self.coordination.copy() if self.coordination else {},
-            "blocking": self.blocking,
         }
 
 

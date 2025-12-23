@@ -487,27 +487,11 @@ class TestSubagentOrchestratorConfig:
         assert data["coordination"] == {}
         assert config.coordination == {}
 
-    def test_blocking_default_true(self):
-        """Test that blocking defaults to True."""
-        config = SubagentOrchestratorConfig(enabled=True)
-        assert config.blocking is True
-
-    def test_blocking_false(self):
-        """Test setting blocking to False for background mode."""
-        config = SubagentOrchestratorConfig(enabled=True, blocking=False)
-        assert config.blocking is False
-        data = config.to_dict()
-        assert data["blocking"] is False
-
-    def test_blocking_from_dict(self):
-        """Test blocking field is preserved in from_dict."""
+    def test_blocking_ignored_for_backwards_compat(self):
+        """Test that blocking key in config is ignored (backwards compatibility)."""
+        # Old configs with blocking: true/false should still parse without error
         data = {"enabled": True, "blocking": False}
         config = SubagentOrchestratorConfig.from_dict(data)
-        assert config.blocking is False
-
-    def test_blocking_roundtrip(self):
-        """Test blocking survives serialization roundtrip."""
-        original = SubagentOrchestratorConfig(enabled=True, blocking=False)
-        data = original.to_dict()
-        restored = SubagentOrchestratorConfig.from_dict(data)
-        assert restored.blocking == original.blocking
+        assert config.enabled is True
+        # blocking is no longer a field, just silently ignored
+        assert not hasattr(config, "blocking") or "blocking" not in config.to_dict()

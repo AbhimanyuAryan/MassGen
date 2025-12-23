@@ -1927,7 +1927,12 @@ def create_app(
             )
 
     @app.get("/workspace-preview/{session_id}/{agent_id}/{file_path:path}")
-    async def serve_workspace_preview(session_id: str, agent_id: str, file_path: str):
+    async def serve_workspace_preview(
+        session_id: str,
+        agent_id: str,
+        file_path: str,
+        workspace: str = None,  # Optional: direct workspace path for historical workspaces
+    ):
         """Serve workspace files directly for HTML preview with working relative links.
 
         This endpoint serves files from an agent's workspace at a stable URL path,
@@ -1935,7 +1940,7 @@ def create_app(
 
         Security:
         - Validates session_id exists
-        - Gets workspace path from status.json (trusted source)
+        - Gets workspace path from status.json (trusted source) or query param
         - Prevents directory traversal attacks
         - Only serves files within the workspace
 
@@ -1943,6 +1948,7 @@ def create_app(
             session_id: Active session ID
             agent_id: Agent ID (e.g., "agent_a")
             file_path: Relative path within workspace (e.g., "index.html" or "about/index.html")
+            workspace: Optional direct workspace path (for historical workspaces)
 
         Returns:
             FileResponse with appropriate content type
@@ -1955,34 +1961,42 @@ def create_app(
         if not file_path or file_path.endswith("/"):
             file_path = file_path.rstrip("/") + "/index.html" if file_path else "index.html"
 
-        # Get workspace path from display's log_session_dir -> status.json
+        # Get workspace path - prefer query param for historical workspaces
         workspace_path = None
 
-        try:
-            # Try to get workspace from display's status.json
-            display = manager.get_display(session_id)
-            log_session_dir = getattr(display, "log_session_dir", None) if display else None
+        # First, try the explicit workspace parameter (for historical workspaces)
+        if workspace:
+            explicit_path = Path(workspace)
+            if explicit_path.exists() and explicit_path.is_dir():
+                workspace_path = explicit_path
 
-            # Fallback to global logger
-            if not log_session_dir:
-                from massgen.logger_config import get_log_session_dir
+        # If not provided or invalid, try status.json
+        if not workspace_path:
+            try:
+                # Try to get workspace from display's status.json
+                display = manager.get_display(session_id)
+                log_session_dir = getattr(display, "log_session_dir", None) if display else None
 
-                log_session_dir = get_log_session_dir()
+                # Fallback to global logger
+                if not log_session_dir:
+                    from massgen.logger_config import get_log_session_dir
 
-            if log_session_dir:
-                status_file = log_session_dir / "status.json"
-                if status_file.exists():
-                    with open(status_file) as f:
-                        status_data = json.load(f)
+                    log_session_dir = get_log_session_dir()
 
-                    agents_data = status_data.get("agents", {})
-                    agent_data = agents_data.get(agent_id, {})
-                    workspace_paths = agent_data.get("workspace_paths", {})
-                    workspace_str = workspace_paths.get("workspace")
-                    if workspace_str:
-                        workspace_path = Path(workspace_str)
-        except Exception as e:
-            print(f"[WebUI] Warning: Could not get workspace path from status.json: {e}")
+                if log_session_dir:
+                    status_file = log_session_dir / "status.json"
+                    if status_file.exists():
+                        with open(status_file) as f:
+                            status_data = json.load(f)
+
+                        agents_data = status_data.get("agents", {})
+                        agent_data = agents_data.get(agent_id, {})
+                        workspace_paths = agent_data.get("workspace_paths", {})
+                        workspace_str = workspace_paths.get("workspace")
+                        if workspace_str:
+                            workspace_path = Path(workspace_str)
+            except Exception as e:
+                print(f"[WebUI] Warning: Could not get workspace path from status.json: {e}")
 
         # Fallback: Try common workspace patterns
         if not workspace_path or not workspace_path.exists():
