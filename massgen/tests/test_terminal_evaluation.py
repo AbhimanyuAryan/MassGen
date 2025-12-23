@@ -106,7 +106,7 @@ ui:
         assert f"Type `{command}`" in tape_content
         assert "Set Width 1200" in tape_content
         assert "Set Height 800" in tape_content
-        assert "Sleep 10s" in tape_content
+        assert "Sleep 2s" in tape_content
 
     @pytest.mark.asyncio
     async def test_tool_without_vhs(self, temp_dir, simple_config, monkeypatch):
@@ -156,10 +156,19 @@ ui:
         assert "Config file does not exist" in output_data["error"]
 
     @pytest.mark.asyncio
-    async def test_invalid_output_format(self, temp_dir, simple_config):
+    async def test_invalid_output_format(self, temp_dir, simple_config, monkeypatch):
         """Test that tool validates output format."""
         from massgen.tool._multimodal_tools.run_massgen_with_recording import (
             run_massgen_with_recording,
+        )
+
+        # Mock VHS as installed so we reach format validation
+        def mock_check_vhs():
+            return True
+
+        monkeypatch.setattr(
+            "massgen.tool._multimodal_tools.run_massgen_with_recording._check_vhs_installed",
+            mock_check_vhs,
         )
 
         result = await run_massgen_with_recording(

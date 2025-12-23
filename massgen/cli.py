@@ -800,6 +800,30 @@ def create_agents_from_config(
 
                 backend_config["context_paths"] = merged_paths
 
+            # Inherit enable_multimodal_tools from orchestrator if not set per-agent
+            if "enable_multimodal_tools" in orchestrator_config:
+                if "enable_multimodal_tools" not in backend_config:
+                    backend_config["enable_multimodal_tools"] = orchestrator_config["enable_multimodal_tools"]
+
+            # Inherit generation config from orchestrator if not set per-agent
+            # These set default backends/models for image/video/audio generation
+            generation_config_keys = [
+                "image_generation_backend",
+                "image_generation_model",
+                "video_generation_backend",
+                "video_generation_model",
+                "audio_generation_backend",
+                "audio_generation_model",
+            ]
+            for key in generation_config_keys:
+                if key in orchestrator_config and key not in backend_config:
+                    backend_config[key] = orchestrator_config[key]
+
+            # Also support nested multimodal_config from orchestrator
+            if "multimodal_config" in orchestrator_config:
+                if "multimodal_config" not in backend_config:
+                    backend_config["multimodal_config"] = orchestrator_config["multimodal_config"]
+
         # Add config path for better error messages
         if config_path:
             backend_config["_config_path"] = config_path
@@ -1065,7 +1089,8 @@ def create_agents_from_config(
         if memory_config.get("enabled", False):
             retrieval_config = memory_config.get("retrieval", {})
             agent._retrieval_limit = retrieval_config.get("limit", 5)
-            agent._retrieval_exclude_recent = retrieval_config.get("exclude_recent", True)
+            # Default to retrieving early so persistent memory is used on first turn unless explicitly disabled
+            agent._retrieval_exclude_recent = retrieval_config.get("exclude_recent", False)
 
             if retrieval_config or recording_config:  # Log if custom config provided
                 config_info = []
