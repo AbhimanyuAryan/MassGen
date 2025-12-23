@@ -28,8 +28,10 @@ def resolve_model(raw_model: str, *, default_config: Optional[str], default_mode
 
     # Generic model strings
     if default_config:
-        if default_model:
-            return ResolvedModel(raw_model=raw_model, config_path=default_config, override_model=None)
-        return ResolvedModel(raw_model=raw_model, config_path=default_config, override_model=raw_model)
+        # Config-as-Authority:
+        # If a config is loaded, we ignore the client's requested model string (e.g. "gpt-4")
+        # and use the config's defined agents.
+        # The only way to override is via explicit "massgen/model:<model>" prefix above.
+        return ResolvedModel(raw_model=raw_model, config_path=default_config, override_model=None)
 
     return ResolvedModel(raw_model=raw_model, config_path=None, override_model=raw_model or None)

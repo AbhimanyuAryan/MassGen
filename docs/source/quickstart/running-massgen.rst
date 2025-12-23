@@ -105,6 +105,12 @@ Quick Start Examples
 
       OpenAI-compatible HTTP API for integrating MassGen into existing clients and server workflows.
 
+      .. note::
+
+         When running with a config (``--config``), the server uses **Config-as-Authority**.
+         The ``model`` parameter in client requests is ignored by default, ensuring the server uses the agent team defined in your YAML.
+         To force an override, use ``model="massgen/model:<model_id>"``.
+
 CLI Usage
 ---------
 

@@ -240,6 +240,8 @@ Run MassGen as an OpenAI-compatible HTTP API (FastAPI + Uvicorn).
    curl http://localhost:4000/health
 
    # OpenAI-compatible Chat Completions (non-streaming)
+   # Note: When running with --config, the "model" parameter is ignored by default
+   # to ensure the server uses the agent team defined in your YAML.
    curl http://localhost:4000/v1/chat/completions \
      -H "Content-Type: application/json" \
      -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":false}'
@@ -248,6 +250,10 @@ Run MassGen as an OpenAI-compatible HTTP API (FastAPI + Uvicorn).
    curl -N http://localhost:4000/v1/chat/completions \
      -H "Content-Type: application/json" \
      -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":true}'
+
+**Config-as-Authority:**
+
+When ``--config`` is provided, the server operates in "Config-as-Authority" mode. The ``model`` parameter in client requests is ignored unless explicitly overridden using the ``massgen/model:<model_id>`` syntax. This ensures that your carefully tuned multi-agent configuration is respected regardless of the client's default model setting.
 
 **Environment variables (optional):**
 
