@@ -294,15 +294,15 @@ massgen --config @examples/basic/multi/three_agents_default "Your question"
 
 **Method 2: Development Installation** (for contributors):
 
-***Clone the repository***
+**Clone the repository**
 ```bash
 git clone https://github.com/Leezekun/MassGen.git
 cd MassGen
 ```
 
-***Install in editable mode with pip***
+**Install in editable mode with pip**
 
-***Option 1: Using traditional Python env***
+**Option 1: Using traditional Python env**
 
 ```bash
 pip install -e .
@@ -323,7 +323,7 @@ massgen --setup-skills
 # Or use the bash script (Unix/Linux/macOS only)
 ./scripts/init_skills.sh
 ```
-***Option 2 (recommended): Installing with uv (faster)***
+**Option 2 (recommended): Installing with uv (faster)**
 
 ```bash
 uv venv
