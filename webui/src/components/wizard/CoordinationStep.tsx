@@ -6,7 +6,7 @@
  */
 
 import { motion } from 'framer-motion';
-import { Settings, Vote, Sparkles, Info, ListOrdered } from 'lucide-react';
+import { Settings, Vote, Sparkles, Info, ListOrdered, GitBranch } from 'lucide-react';
 import { useWizardStore } from '../../stores/wizardStore';
 
 type SensitivityLevel = 'lenient' | 'balanced' | 'strict';
@@ -110,6 +110,10 @@ export function CoordinationStep() {
     setCoordinationSettings({ max_new_answers_per_agent: isNaN(num) || num <= 0 ? undefined : num });
   };
 
+  const handleSubagentsChange = (enabled: boolean) => {
+    setCoordinationSettings({ enable_subagents: enabled });
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, x: 20 }}
@@ -187,6 +191,40 @@ export function CoordinationStep() {
                        placeholder-gray-400"
           />
         </div>
+
+        {/* Enable subagents */}
+        <div className="p-5 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+              <GitBranch className="w-5 h-5 text-blue-500" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-medium text-gray-800 dark:text-gray-200">Enable Subagents</h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                    Allow agents to spawn parallel child processes for independent tasks
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={coordinationSettings.enable_subagents ?? false}
+                    onChange={(e) => handleSubagentsChange(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4
+                                  peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer
+                                  dark:bg-gray-700 peer-checked:after:translate-x-full
+                                  peer-checked:after:border-white after:content-[''] after:absolute
+                                  after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300
+                                  after:border after:rounded-full after:h-5 after:w-5 after:transition-all
+                                  dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Current settings summary */}
@@ -200,6 +238,9 @@ export function CoordinationStep() {
           <div>
             Max answers: <span className="font-medium text-blue-600 dark:text-blue-400">
               {coordinationSettings.max_new_answers_per_agent ?? 'unlimited'}
+            </span>.
+            Subagents: <span className="font-medium text-blue-600 dark:text-blue-400">
+              {coordinationSettings.enable_subagents ? 'enabled' : 'disabled'}
             </span>.
           </div>
         </div>

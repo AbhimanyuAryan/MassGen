@@ -1,8 +1,10 @@
 /**
  * HTML Preview Component
  *
- * Renders static HTML content in a sandboxed iframe using srcdoc.
- * Supports inlining CSS and JS from related files in the workspace.
+ * Renders static HTML content in a sandboxed iframe.
+ * Two modes:
+ * 1. srcDoc mode (default): Inlines CSS/JS, but relative links don't work
+ * 2. Live preview mode: Uses /workspace-preview/ endpoint, relative links work
  */
 
 import { useMemo } from 'react';
@@ -12,6 +14,10 @@ interface HtmlPreviewProps {
   content: string;
   fileName: string;
   relatedFiles?: Record<string, string>; // filename -> content mapping
+  // Optional: Enable live preview with working relative links
+  sessionId?: string;
+  agentId?: string;
+  filePath?: string; // Relative path within workspace (e.g., "index.html" or "pages/about.html")
 }
 
 /**
@@ -96,9 +102,27 @@ function inlineRelatedFiles(html: string, relatedFiles: Record<string, string>):
   return result;
 }
 
-export function HtmlPreview({ content, fileName, relatedFiles = {} }: HtmlPreviewProps) {
-  // Prepare the HTML content with inlined CSS/JS
+export function HtmlPreview({
+  content,
+  fileName,
+  relatedFiles = {},
+  sessionId,
+  agentId,
+  filePath,
+}: HtmlPreviewProps) {
+  // Determine if we should use live preview mode (with working relative links)
+  const useLivePreview = Boolean(sessionId && agentId && filePath);
+
+  // Build the live preview URL
+  const livePreviewUrl = useMemo(() => {
+    if (!useLivePreview) return null;
+    return `/workspace-preview/${sessionId}/${agentId}/${filePath}`;
+  }, [useLivePreview, sessionId, agentId, filePath]);
+
+  // Prepare the HTML content with inlined CSS/JS (only used in srcDoc mode)
   const preparedContent = useMemo(() => {
+    if (useLivePreview) return ''; // Not needed for live preview
+
     let processedContent = content;
 
     // Inline related CSS and JS files
@@ -130,7 +154,7 @@ export function HtmlPreview({ content, fileName, relatedFiles = {} }: HtmlPrevie
 ${processedContent}
 </body>
 </html>`;
-  }, [content, relatedFiles]);
+  }, [content, relatedFiles, useLivePreview]);
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -139,16 +163,29 @@ ${processedContent}
         <Globe className="w-4 h-4 text-amber-400" />
         <span className="text-sm text-amber-300">HTML Preview</span>
         <span className="text-xs text-amber-500">- {fileName}</span>
+        {useLivePreview && (
+          <span className="text-xs text-green-500 ml-auto">(Live - links work)</span>
+        )}
       </div>
 
-      {/* Preview iframe */}
-      <iframe
-        srcDoc={preparedContent}
-        sandbox="allow-scripts"
-        title={`Preview: ${fileName}`}
-        className="flex-1 w-full bg-white rounded-b-lg border-0"
-        style={{ minHeight: '400px' }}
-      />
+      {/* Preview iframe - use src for live preview, srcDoc for inline */}
+      {useLivePreview ? (
+        <iframe
+          src={livePreviewUrl!}
+          sandbox="allow-scripts allow-same-origin"
+          title={`Preview: ${fileName}`}
+          className="flex-1 w-full bg-white rounded-b-lg border-0"
+          style={{ minHeight: '400px' }}
+        />
+      ) : (
+        <iframe
+          srcDoc={preparedContent}
+          sandbox="allow-scripts"
+          title={`Preview: ${fileName}`}
+          className="flex-1 w-full bg-white rounded-b-lg border-0"
+          style={{ minHeight: '400px' }}
+        />
+      )}
     </div>
   );
 }

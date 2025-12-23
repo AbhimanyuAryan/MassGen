@@ -181,19 +181,37 @@ class SubagentManager:
                 pass
 
         # Update status
+        now = datetime.now()
+        started_at_str = existing.get("started_at", now.isoformat())
+
+        # Calculate elapsed_seconds
+        try:
+            started_at = datetime.fromisoformat(started_at_str)
+            if status in ("completed", "failed", "timeout"):
+                # Use completed_at if available, otherwise use current time
+                end_time = now
+                elapsed_seconds = (end_time - started_at).total_seconds()
+            else:
+                # For running/pending, calculate from start to now
+                elapsed_seconds = (now - started_at).total_seconds()
+        except (ValueError, TypeError):
+            # If we can't parse the timestamp, default to 0
+            elapsed_seconds = 0.0
+
         status_data = {
             "subagent_id": subagent_id,
             "status": status,
             "task": task,
-            "started_at": existing.get("started_at", datetime.now().isoformat()),
-            "updated_at": datetime.now().isoformat(),
+            "started_at": started_at_str,
+            "updated_at": now.isoformat(),
+            "elapsed_seconds": round(elapsed_seconds, 2),
             "progress": progress,
             "error": error,
             "token_usage": token_usage or existing.get("token_usage", {}),
         }
 
         if status in ("completed", "failed", "timeout"):
-            status_data["completed_at"] = datetime.now().isoformat()
+            status_data["completed_at"] = now.isoformat()
             if answer:
                 status_data["answer"] = answer
 

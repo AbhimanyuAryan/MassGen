@@ -26,6 +26,7 @@ from ..mcp_tools.client import HookType
 from . import _code_execution_server as ce_module
 from . import _workspace_tools_server as wc_module
 from ._base import Permission
+from ._constants import FRAMEWORK_MCPS
 from ._path_permission_manager import PathPermissionManager
 
 
@@ -800,8 +801,8 @@ class FilesystemManager:
     def _extract_mcp_tool_schemas(self, mcp_client) -> List[Dict[str, Any]]:
         """Extract tool schemas from MCP client, organized by server.
 
-        Only extracts user-added MCP servers. Framework MCPs (command_line, workspace_tools,
-        filesystem, planning, memory) are excluded as they're handled separately.
+        Only extracts user-added MCP servers. Framework MCPs (defined in FRAMEWORK_MCPS
+        constant) are excluded as they're handled separately.
 
         Args:
             mcp_client: MCPClient instance with connected tools
@@ -826,16 +827,6 @@ class FilesystemManager:
                 ...
             ]
         """
-        # Framework MCPs that should NOT be converted to code
-        # These are automatically available or handled by the framework
-        FRAMEWORK_MCPS = {
-            "command_line",  # Command execution (already available via bash)
-            "workspace_tools",  # Workspace operations (file ops, media generation)
-            "filesystem",  # Filesystem operations
-            "planning",  # Task planning MCP
-            "memory",  # Memory management MCP
-        }
-
         servers_with_tools = {}
 
         # Group tools by server

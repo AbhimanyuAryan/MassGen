@@ -4404,6 +4404,22 @@ class ConfigBuilder:
                     except ValueError:
                         pass  # Ignore invalid input, use unlimited
 
+                # Enable subagents (parallel child processes)
+                console.print(
+                    "\n[dim]Subagents allow agents to spawn parallel child processes for independent tasks.[/dim]",
+                )
+                enable_subagents = questionary.confirm(
+                    "Enable subagents?",
+                    default=False,
+                    style=questionary.Style([("question", "fg:cyan bold")]),
+                ).ask()
+
+                if enable_subagents is None:
+                    raise KeyboardInterrupt
+
+                if enable_subagents:
+                    coordination_settings["enable_subagents"] = True
+
             # Step 6: Generate the full config
             console.print("\n[dim]Generating configuration...[/dim]")
 
@@ -4672,6 +4688,10 @@ class ConfigBuilder:
             orchestrator_config["answer_novelty_requirement"] = coordination_settings["answer_novelty_requirement"]
         if coordination_settings.get("max_new_answers_per_agent"):
             orchestrator_config["max_new_answers_per_agent"] = coordination_settings["max_new_answers_per_agent"]
+        if coordination_settings.get("enable_subagents"):
+            orchestrator_config["enable_subagents"] = True
+            orchestrator_config["subagent_default_timeout"] = 300  # 5 minutes
+            orchestrator_config["subagent_max_concurrent"] = 3
 
         # Build full config
         config = {
