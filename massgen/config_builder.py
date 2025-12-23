@@ -4420,6 +4420,87 @@ class ConfigBuilder:
                 if enable_subagents:
                     coordination_settings["enable_subagents"] = True
 
+                    # Ask for subagent model configuration
+                    console.print(
+                        "\n[dim]Subagents can use the same model as parent agents or a different one.[/dim]",
+                    )
+                    subagent_model_choice = questionary.select(
+                        "Subagent model:",
+                        choices=[
+                            questionary.Choice("Same as parent agents", value="inherit"),
+                            questionary.Choice("Choose different model", value="custom"),
+                        ],
+                        style=questionary.Style([("question", "fg:cyan bold")]),
+                    ).ask()
+
+                    if subagent_model_choice is None:
+                        raise KeyboardInterrupt
+
+                    if subagent_model_choice == "custom":
+                        # Show provider selection (reuse same flow as main agents)
+                        console.print("\n[bold cyan]Subagent Backend[/bold cyan]")
+
+                        provider_choices = [
+                            questionary.Choice(
+                                f"{info.get('name', pid)} - {info.get('description', '')}",
+                                value=pid,
+                            )
+                            for pid, info in self.PROVIDERS.items()
+                        ]
+
+                        subagent_provider = questionary.select(
+                            "Backend for subagents:",
+                            choices=provider_choices,
+                            style=questionary.Style(
+                                [
+                                    ("selected", "fg:cyan bold"),
+                                    ("pointer", "fg:cyan bold"),
+                                    ("highlighted", "fg:cyan"),
+                                ],
+                            ),
+                            use_arrow_keys=True,
+                        ).ask()
+
+                        if subagent_provider is None:
+                            raise KeyboardInterrupt
+
+                        # Select model for subagents
+                        subagent_provider_info = self.PROVIDERS.get(subagent_provider, {})
+                        subagent_models = subagent_provider_info.get("models", ["default"])
+                        subagent_default_model = subagent_provider_info.get(
+                            "default_model",
+                            subagent_models[0] if subagent_models else None,
+                        )
+
+                        subagent_model = self.select_model_smart(
+                            subagent_provider,
+                            subagent_models,
+                            current_model=subagent_default_model,
+                            prompt="Subagent model:",
+                        )
+
+                        if subagent_model is None:
+                            raise KeyboardInterrupt
+
+                        # Store subagent orchestrator config
+                        coordination_settings["subagent_orchestrator"] = {
+                            "enabled": True,
+                            "agents": [
+                                {
+                                    "backend": {
+                                        "type": subagent_provider_info.get("type", subagent_provider),
+                                        "model": subagent_model,
+                                    },
+                                },
+                            ],
+                        }
+
+                        # Add base_url for providers that need it
+                        if subagent_provider_info.get("base_url"):
+                            coordination_settings["subagent_orchestrator"]["agents"][0]["backend"]["base_url"] = subagent_provider_info["base_url"]
+
+                        console.print(f"  ✓ Subagents will use: {subagent_model}")
+
             # Step 6: Generate the full config
             console.print("\n[dim]Generating configuration...[/dim]")
 
@@ -4692,6 +4773,10 @@ class ConfigBuilder:
             orchestrator_config["coordination"]["enable_subagents"] = True
             orchestrator_config["coordination"]["subagent_default_timeout"] = 300  # 5 minutes
             orchestrator_config["coordination"]["subagent_max_concurrent"] = 3
+
+            # Add subagent orchestrator config if custom model was selected
+            if coordination_settings.get("subagent_orchestrator"):
+                orchestrator_config["coordination"]["subagent_orchestrator"] = coordination_settings["subagent_orchestrator"]
 
         # Build full config
         config = {

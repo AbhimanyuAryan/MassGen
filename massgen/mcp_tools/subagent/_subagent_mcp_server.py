@@ -89,7 +89,7 @@ def _save_subagents_to_filesystem() -> None:
 
 async def create_server() -> fastmcp.FastMCP:
     """Factory function to create and configure the subagent MCP server."""
-    global _workspace_path, _parent_agent_id, _orchestrator_id, _parent_backend_config, _subagent_orchestrator_config, _log_directory, _max_concurrent, _default_timeout
+    global _workspace_path, _parent_agent_id, _orchestrator_id, _parent_agent_configs, _parent_backend_config, _subagent_orchestrator_config, _log_directory, _max_concurrent, _default_timeout
 
     parser = argparse.ArgumentParser(description="Subagent MCP Server")
     parser.add_argument(

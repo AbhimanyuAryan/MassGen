@@ -1461,7 +1461,14 @@ class FilesystemManager:
                         if item.is_file():
                             shutil.copy2(item, self.snapshot_storage / item.name)
                         elif item.is_dir():
-                            shutil.copytree(item, self.snapshot_storage / item.name)
+                            # Use symlinks=True to copy symlinks as symlinks, not follow them
+                            # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories (e.g., from subagent workspaces)
+                            shutil.copytree(
+                                item,
+                                self.snapshot_storage / item.name,
+                                symlinks=True,
+                                ignore_dangling_symlinks=True,
+                            )
                         items_copied += 1
 
                     logger.info(f"[FilesystemManager] Saved snapshot with {items_copied} items to {self.snapshot_storage}")
@@ -1490,7 +1497,15 @@ class FilesystemManager:
                     if item.is_file():
                         shutil.copy2(item, dest_dir / item.name)
                     elif item.is_dir():
-                        shutil.copytree(item, dest_dir / item.name, dirs_exist_ok=True)
+                        # Use symlinks=True to copy symlinks as symlinks, not follow them
+                        # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories (e.g., from subagent workspaces)
+                        shutil.copytree(
+                            item,
+                            dest_dir / item.name,
+                            dirs_exist_ok=True,
+                            symlinks=True,
+                            ignore_dangling_symlinks=True,
+                        )
                     items_copied += 1
 
                 logger.info(f"[FilesystemManager] Saved {'final' if is_final else 'regular'} " f"log snapshot with {items_copied} items to {dest_dir}")
@@ -1611,8 +1626,16 @@ class FilesystemManager:
                 dest_dir = self.agent_temporary_workspace / anon_id
 
                 # Copy snapshot content if not empty
+                # Use symlinks=True to copy symlinks as symlinks, not follow them
+                # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories
                 if any(snapshot_path.iterdir()):
-                    shutil.copytree(snapshot_path, dest_dir, dirs_exist_ok=True)
+                    shutil.copytree(
+                        snapshot_path,
+                        dest_dir,
+                        dirs_exist_ok=True,
+                        symlinks=True,
+                        ignore_dangling_symlinks=True,
+                    )
 
         return self.agent_temporary_workspace
 

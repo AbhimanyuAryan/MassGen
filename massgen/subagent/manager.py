@@ -291,7 +291,13 @@ class SubagentManager:
                 shutil.copy2(src, dst)
                 copied.append(rel_path)
             elif src.is_dir():
-                shutil.copytree(src, dst, dirs_exist_ok=True)
+                shutil.copytree(
+                    src,
+                    dst,
+                    dirs_exist_ok=True,
+                    symlinks=True,
+                    ignore_dangling_symlinks=True,
+                )
                 copied.append(rel_path)
 
         logger.info(f"[SubagentManager] Copied {len(copied)} context files for {subagent_id}")
@@ -431,8 +437,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         yaml_path = workspace / f"subagent_config_{config.id}.yaml"
         yaml_path.write_text(yaml.dump(subagent_yaml, default_flow_style=False))
 
+        num_agents = orch_config.num_agents if orch_config else 1
         logger.info(
-            f"[SubagentManager] Executing subagent {config.id} via subprocess " f"({orch_config.num_agents} agents), config: {yaml_path}",
+            f"[SubagentManager] Executing subagent {config.id} via subprocess " f"({num_agents} agents), config: {yaml_path}",
         )
 
         # Build the task with system prompt context
@@ -583,7 +590,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # Determine agent configs to use:
         # 1. If subagent_orchestrator.agents is specified, use those
         # 2. Otherwise, inherit from parent agent configs
-        if orch_config.agents:
+        if orch_config and orch_config.agents:
             # Use explicitly configured agents
             source_agents = orch_config.agents
         else:
@@ -623,6 +630,30 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 "command_line_execution_mode": fallback_backend.get("command_line_execution_mode", "local"),
             }
 
+            # Inherit Docker settings if using docker mode
+            if backend_config["command_line_execution_mode"] == "docker":
+                docker_settings = [
+                    "command_line_docker_image",
+                    "command_line_docker_network_mode",
+                    "command_line_docker_enable_sudo",
+                    "command_line_docker_credentials",
+                ]
+                for setting in docker_settings:
+                    if setting in fallback_backend:
+                        backend_config[setting] = fallback_backend[setting]
+
+            # Inherit code-based tools settings
+            code_tools_settings = [
+                "enable_code_based_tools",
+                "exclude_file_operation_mcps",
+                "shared_tools_directory",
+                "auto_discover_custom_tools",
+                "exclude_custom_tools",
+            ]
+            for setting in code_tools_settings:
+                if setting in fallback_backend:
+                    backend_config[setting] = fallback_backend[setting]
+
             # Add base_url if specified (source or fallback)
             base_url = source_backend.get("base_url") or fallback_backend.get("base_url")
             if base_url:
@@ -642,7 +673,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             agents.append(agent_config)
 
         # Build coordination config - disable subagents to prevent nesting
-        coord_settings = orch_config.coordination.copy() if orch_config.coordination else {}
+        coord_settings = orch_config.coordination.copy() if orch_config and orch_config.coordination else {}
         coord_settings["enable_subagents"] = False  # CRITICAL: prevent nesting
 
         orchestrator_config = {
@@ -701,10 +732,11 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         error: Optional[str] = None,
     ) -> None:
         """
-        Write a reference file pointing to the subprocess's log directory.
+        Write a reference file pointing to the subprocess's log directory
+        and copy the full subprocess logs to the main log directory.
 
-        Instead of maintaining our own status.json, we just point to the
-        subprocess's complete logs.
+        This ensures logs are preserved even if the agent cleans up subagent
+        workspaces during execution.
 
         Args:
             subagent_id: Subagent identifier
@@ -725,6 +757,56 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             reference_data["error"] = error
 
         reference_file.write_text(json.dumps(reference_data, indent=2))
+
+        # Copy the full subprocess logs to the main log directory
+        # This preserves logs even if the agent deletes subagents/ during cleanup
+        if subprocess_log_dir:
+            subprocess_log_path = Path(subprocess_log_dir)
+            if subprocess_log_path.exists() and subprocess_log_path.is_dir():
+                dest_logs_dir = log_dir / "full_logs"
+                try:
+                    if dest_logs_dir.exists():
+                        shutil.rmtree(dest_logs_dir)
+                    # Copy with symlinks=True to handle any symlinks gracefully
+                    shutil.copytree(
+                        subprocess_log_path,
+                        dest_logs_dir,
+                        symlinks=True,
+                        ignore_dangling_symlinks=True,
+                    )
+                    logger.info(f"[SubagentManager] Copied subprocess logs for {subagent_id} to {dest_logs_dir}")
+                except Exception as e:
+                    logger.warning(f"[SubagentManager] Failed to copy subprocess logs for {subagent_id}: {e}")
+
+        # Also copy the subagent workspace (config, generated files)
+        # This preserves the subagent's working directory including its config
+        subagent_workspace = self.subagents_base / subagent_id / "workspace"
+        if subagent_workspace.exists() and subagent_workspace.is_dir():
+            dest_workspace_dir = log_dir / "workspace"
+            try:
+                if dest_workspace_dir.exists():
+                    shutil.rmtree(dest_workspace_dir)
+                # Copy workspace, skipping symlinks at top level but preserving content
+                dest_workspace_dir.mkdir(parents=True, exist_ok=True)
+                for item in subagent_workspace.iterdir():
+                    if item.is_symlink():
+                        continue  # Skip symlinks (shared_tools, etc.)
+                    dest_item = dest_workspace_dir / item.name
+                    if item.is_file():
+                        shutil.copy2(item, dest_item)
+                    elif item.is_dir():
+                        # Skip .massgen logs (already copied above) and large dirs
+                        if item.name in (".massgen", "node_modules", ".pnpm-store", "__pycache__"):
+                            continue
+                        shutil.copytree(
+                            item,
+                            dest_item,
+                            symlinks=True,
+                            ignore_dangling_symlinks=True,
+                        )
+                logger.info(f"[SubagentManager] Copied subagent workspace for {subagent_id} to {dest_workspace_dir}")
+            except Exception as e:
+                logger.warning(f"[SubagentManager] Failed to copy subagent workspace for {subagent_id}: {e}")
 
     async def spawn_subagent(
         self,

@@ -5616,7 +5616,13 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                             if item.is_file():
                                 shutil.copy2(item, dest)
                             elif item.is_dir():
-                                shutil.copytree(item, dest, dirs_exist_ok=True)
+                                shutil.copytree(
+                                    item,
+                                    dest,
+                                    dirs_exist_ok=True,
+                                    symlinks=True,
+                                    ignore_dangling_symlinks=True,
+                                )
                         logger.info(f"[Orchestrator] Pre-populated {agent_id} workspace with writable copy of turn n-1")
 
     def _archive_agent_memories(self, agent_id: str, workspace_path: Path) -> None:
@@ -5651,7 +5657,13 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         # Copy entire memory/ directory to archive
         try:
             archive_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(memory_dir, archive_path, dirs_exist_ok=True)
+            shutil.copytree(
+                memory_dir,
+                archive_path,
+                dirs_exist_ok=True,
+                symlinks=True,
+                ignore_dangling_symlinks=True,
+            )
             logger.info(f"[Orchestrator] Archived memories for {agent_id} answer {answer_num} to {archive_path}")
         except Exception as e:
             logger.error(f"[Orchestrator] Failed to archive memories for {agent_id}: {e}")

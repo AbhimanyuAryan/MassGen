@@ -1393,7 +1393,13 @@ async def handle_session_persistence(
 
     # Copy workspace if it exists
     if workspace_path and Path(workspace_path).exists():
-        shutil.copytree(workspace_path, turn_workspace_path, dirs_exist_ok=True)
+        shutil.copytree(
+            workspace_path,
+            turn_workspace_path,
+            dirs_exist_ok=True,
+            symlinks=True,
+            ignore_dangling_symlinks=True,
+        )
 
     # Note: Session is already registered when created (before first turn runs)
     # No need to register here
@@ -1771,7 +1777,12 @@ async def run_question_with_history(
                 shutil.rmtree(turn_final_dir)
 
             # Copy attempt's final to turn root
-            shutil.copytree(attempt_final_dir, turn_final_dir)
+            shutil.copytree(
+                attempt_final_dir,
+                turn_final_dir,
+                symlinks=True,
+                ignore_dangling_symlinks=True,
+            )
             logger.info(f"Copied final results from {attempt_final_dir} to {turn_final_dir}")
     except Exception as e:
         logger.warning(f"Failed to copy final results to turn root: {e}")
@@ -2143,7 +2154,12 @@ async def run_single_question(
                     shutil.rmtree(turn_final_dir)
 
                 # Copy attempt's final to turn root
-                shutil.copytree(attempt_final_dir, turn_final_dir)
+                shutil.copytree(
+                    attempt_final_dir,
+                    turn_final_dir,
+                    symlinks=True,
+                    ignore_dangling_symlinks=True,
+                )
                 logger.info(f"Copied final results from {attempt_final_dir} to {turn_final_dir}")
         except Exception as e:
             logger.warning(f"Failed to copy final results to turn root: {e}")
