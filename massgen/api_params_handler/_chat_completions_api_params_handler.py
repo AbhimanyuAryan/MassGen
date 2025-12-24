@@ -40,7 +40,7 @@ class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
         # Check if this is Grok backend - Grok uses extra_body.search_parameters instead of function tools
         backend_provider = getattr(self.backend, "get_provider_name", lambda: "")()
         is_grok = backend_provider.lower() == "grok"
-        
+
         # Check if this is OpenRouter - OpenRouter uses plugins array instead of function tools
         base_url = all_params.get("base_url", "")
         is_openrouter = "openrouter.ai" in base_url
