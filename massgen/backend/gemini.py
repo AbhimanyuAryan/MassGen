@@ -493,6 +493,11 @@ class GeminiBackend(CustomToolAndMCPBackend):
             # This prevents it from being passed to Gemini SDK API calls
             kwargs.pop("enable_rate_limit", None)
 
+            # Extract and remove _compression_retry from kwargs (internal flag for preventing recursive compression)
+            # Must be extracted before popping, and popped before merging with config to prevent Pydantic errors
+            # Store as instance variable so it's accessible in the except block
+            self._compression_retry_flag = kwargs.pop("_compression_retry", False)
+
             # Merge constructor config with stream kwargs
             all_params = {**self.config, **kwargs}
 
@@ -1671,8 +1676,48 @@ class GeminiBackend(CustomToolAndMCPBackend):
             yield StreamChunk(type="done")
 
         except Exception as e:
-            logger.error(f"[Gemini] Error in stream_with_tools: {e}")
-            raise
+            # Check if this is a context length error that we can recover from via compression
+            from ._context_errors import is_context_length_error
+
+            # Use the flag extracted at the start of stream_with_tools (before kwargs was modified)
+            _compression_retry = getattr(self, "_compression_retry_flag", False)
+
+            if is_context_length_error(e) and not _compression_retry:
+                logger.warning(
+                    "[Gemini] Context length exceeded, attempting compression recovery...",
+                )
+
+                # Notify user that compression is starting
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compressing",
+                    content=f"\n📦 [Compression] Context limit exceeded - summarizing {len(messages)} messages...",
+                    source=agent_id,
+                )
+
+                # Compress messages using the inherited method
+                compressed_messages = await self._compress_messages_for_context_recovery(
+                    messages,
+                    buffer_content=None,
+                )
+
+                # Notify user that compression succeeded
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compression_complete",
+                    content=f"✅ [Compression] Recovered with {len(compressed_messages)} messages - continuing...",
+                    source=agent_id,
+                )
+
+                # Retry with compressed messages (with flag to prevent infinite loops)
+                retry_kwargs = {**kwargs, "_compression_retry": True}
+                async for chunk in self.stream_with_tools(compressed_messages, tools, **retry_kwargs):
+                    yield chunk
+
+                logger.info("[Gemini] Compression recovery successful")
+            else:
+                logger.error(f"[Gemini] Error in stream_with_tools: {e}")
+                raise
 
         finally:
             await self._cleanup_genai_resources(stream, client)

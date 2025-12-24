@@ -2241,6 +2241,42 @@ class CustomToolAndMCPBackend(LLMBackend):
 
             return encoded, mime_type
 
+    async def _compress_messages_for_context_recovery(
+        self,
+        messages: List[Dict[str, Any]],
+        buffer_content: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Compress messages for context error recovery.
+
+        Default implementation that subclasses inherit automatically.
+        Subclasses can override if they need custom compression logic.
+
+        Args:
+            messages: The messages that caused the context length error
+            buffer_content: Optional partial response content from streaming buffer
+
+        Returns:
+            Compressed message list ready for retry
+        """
+        from ._compression_utils import compress_messages_for_recovery
+
+        logger.info(
+            f"[{self.get_provider_name()}] Compressing {len(messages)} messages " f"with target_ratio={self._compression_target_ratio}",
+        )
+
+        result = await compress_messages_for_recovery(
+            messages=messages,
+            backend=self,
+            target_ratio=self._compression_target_ratio,
+            buffer_content=buffer_content,
+        )
+
+        logger.info(
+            f"[{self.get_provider_name()}] Compressed {len(messages)} messages " f"to {len(result)} messages",
+        )
+
+        return result
+
     async def stream_with_tools(
         self,
         messages: List[Dict[str, Any]],
@@ -2433,6 +2469,9 @@ class CustomToolAndMCPBackend(LLMBackend):
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Simple passthrough streaming without MCP processing."""
+
+        # Extract internal flags before merging kwargs (prevents API errors from unknown params)
+        kwargs.pop("_compression_retry", None)
 
         agent_id = kwargs.get("agent_id", None)
         all_params = {**self.config, **kwargs}

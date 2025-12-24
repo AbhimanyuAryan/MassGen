@@ -191,6 +191,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
         """
 
         # Build API params for this iteration
+        # Internal parameters (starting with _) are filtered by the API params handler
         all_params = {**self.config, **kwargs}
         api_params = await self.api_params_handler.build_api_params(current_messages, tools, all_params)
 
@@ -241,7 +242,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                 )
 
                 # Compress messages and retry
-                compressed_messages = await self._compress_for_recovery(
+                compressed_messages = await self._compress_messages_for_context_recovery(
                     current_messages,
                     buffer_content=None,  # No partial response yet
                 )
@@ -1027,41 +1028,3 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                 log_stream_chunk(log_prefix, "reasoning_done", "", agent_id)
                 return StreamChunk(type="reasoning_done", content="")
         return None
-
-    async def _compress_for_recovery(
-        self,
-        messages: List[Dict[str, Any]],
-        buffer_content: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Compress messages for context error recovery.
-
-        Uses compression_target_ratio from config to determine how much
-        context to preserve. Since we can only react to errors (not proactively
-        prevent them), this is effectively a lower bound on final context size.
-
-        Args:
-            messages: The messages that caused the context length error
-            buffer_content: Optional partial response content from the buffer
-
-        Returns:
-            Compressed message list ready for retry
-        """
-        from ._compression_utils import compress_messages_for_recovery
-
-        logger.info(
-            f"[{self.get_provider_name()}] Compressing {len(messages)} messages " f"with target_ratio={self._compression_target_ratio}",
-        )
-
-        # Use the shared compression utility
-        result = await compress_messages_for_recovery(
-            messages=messages,
-            backend=self,
-            target_ratio=self._compression_target_ratio,
-            buffer_content=buffer_content,
-        )
-
-        logger.info(
-            f"[{self.get_provider_name()}] Compressed {len(messages)} messages " f"to {len(result)} messages",
-        )
-
-        return result

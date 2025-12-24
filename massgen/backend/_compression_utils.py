@@ -52,7 +52,9 @@ async def compress_messages_for_recovery(
     """Compress messages for context error recovery.
 
     This function is backend-agnostic and uses the provided backend
-    to make the summarization call.
+    to make the summarization call. If compression is not sufficient
+    (e.g., initial input exceeds context), it will also truncate
+    message content to fit within the context window.
 
     Args:
         messages: The messages that caused the context length error
@@ -147,16 +149,20 @@ async def compress_messages_for_recovery(
 
     # Add summary as assistant message LAST - this is the most recent context
     # the model sees, so it should continue from here rather than start fresh
+    # Strip trailing whitespace to avoid Claude API error about trailing whitespace
     result.append(
         {
             "role": "assistant",
-            "content": f"[Previous conversation summary]\n{summary}",
+            "content": f"[Previous conversation summary]\n{summary.strip()}",
         },
     )
 
     logger.info(
         f"[CompressionUtils] Compressed {len(messages)} messages to {len(result)} messages",
     )
+
+    # Check if result still exceeds context and apply truncation if needed
+    result = _ensure_fits_context(result, backend)
 
     # Save result debug data
     _save_compression_debug(
@@ -219,6 +225,112 @@ def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
         f"[CompressionUtils] Truncated from {current_tokens} to ~{calc.estimate_tokens(truncated_text)} tokens",
     )
     return truncated_text + "\n\n[... truncated to fit context ...]"
+
+
+def _estimate_messages_tokens(messages: List[Dict[str, Any]]) -> int:
+    """Estimate total tokens in a message list."""
+    calc = _get_token_calculator()
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += calc.estimate_tokens(content)
+        elif isinstance(content, list):
+            # Handle multimodal content
+            for item in content:
+                if isinstance(item, dict) and "text" in item:
+                    total += calc.estimate_tokens(item["text"])
+    return total
+
+
+def _ensure_fits_context(
+    messages: List[Dict[str, Any]],
+    backend: "BackendBase",
+) -> List[Dict[str, Any]]:
+    """Ensure messages fit within context window by truncating if needed.
+
+    If the total message tokens exceed the context window, this function
+    finds the largest message and truncates its content to fit.
+
+    Args:
+        messages: The messages to check/truncate
+        backend: The backend (used to get context window size)
+
+    Returns:
+        Messages that fit within context window
+    """
+    context_window, context_source = _get_context_window_for_backend(backend)
+    calc = _get_token_calculator()
+
+    # Reserve space for output and safety margin
+    # Use 10% variance buffer for tokenizer differences between tiktoken and model-specific tokenizers
+    OUTPUT_RESERVE = 4096
+    TOKENIZER_VARIANCE_BUFFER = int(context_window * 0.10)
+    max_input_tokens = context_window - OUTPUT_RESERVE - TOKENIZER_VARIANCE_BUFFER
+
+    # Estimate current tokens
+    current_tokens = _estimate_messages_tokens(messages)
+
+    if current_tokens <= max_input_tokens:
+        logger.debug(
+            f"[CompressionUtils] Messages fit within context: {current_tokens:,} <= {max_input_tokens:,}",
+        )
+        return messages
+
+    # Messages exceed context - need to truncate
+    logger.warning(
+        f"[CompressionUtils] Messages still exceed context after compression: " f"{current_tokens:,} > {max_input_tokens:,} tokens. Truncating content...",
+    )
+
+    # Find the largest message (by content tokens)
+    largest_idx = -1
+    largest_tokens = 0
+    for i, msg in enumerate(messages):
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            tokens = calc.estimate_tokens(content)
+            if tokens > largest_tokens:
+                largest_tokens = tokens
+                largest_idx = i
+
+    if largest_idx == -1:
+        logger.warning("[CompressionUtils] No truncatable content found")
+        return messages
+
+    # Calculate how much to reduce
+    excess = current_tokens - max_input_tokens
+    target_tokens = largest_tokens - excess - 500  # Extra safety
+
+    if target_tokens < 1000:
+        # If we'd need to truncate too much, just keep a minimal amount
+        target_tokens = 1000
+        logger.warning(
+            f"[CompressionUtils] Truncating heavily - target only {target_tokens} tokens",
+        )
+
+    # Truncate the largest message
+    result = []
+    for i, msg in enumerate(messages):
+        if i == largest_idx:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                truncated_content = _truncate_to_token_budget(content, target_tokens)
+                result.append({**msg, "content": truncated_content})
+                logger.info(
+                    f"[CompressionUtils] Truncated message {i} from {largest_tokens:,} to ~{target_tokens:,} tokens",
+                )
+            else:
+                result.append(msg)
+        else:
+            result.append(msg)
+
+    # Verify final size
+    final_tokens = _estimate_messages_tokens(result)
+    logger.info(
+        f"[CompressionUtils] After truncation: {final_tokens:,} tokens " f"(context: {context_window:,}, source: {context_source})",
+    )
+
+    return result
 
 
 def _get_context_window_for_backend(backend: "BackendBase") -> tuple[int, str]:
@@ -285,7 +397,9 @@ async def _generate_summary(backend: "BackendBase", conversation_text: str) -> s
     request_tokens = calc.estimate_tokens(SUMMARIZER_REQUEST_PROMPT)
 
     # Max tokens for conversation: context - system - prompts - output - safety_margin
-    max_conversation_tokens = context_window - system_tokens - conversation_prompt_tokens - request_tokens - SUMMARY_OUTPUT_TOKENS - 500
+    # Use 10% safety margin for tokenizer variance between tiktoken and model-specific tokenizers
+    TOKENIZER_VARIANCE_BUFFER = int(context_window * 0.10)
+    max_conversation_tokens = context_window - system_tokens - conversation_prompt_tokens - request_tokens - SUMMARY_OUTPUT_TOKENS - TOKENIZER_VARIANCE_BUFFER
 
     # Truncate conversation_text to fit within budget
     conversation_text = _truncate_to_token_budget(conversation_text, max_conversation_tokens)
@@ -298,10 +412,11 @@ async def _generate_summary(backend: "BackendBase", conversation_text: str) -> s
     ]
 
     # Use the backend's stream_with_tools() - works uniformly for all backends
+    # Pass _compression_retry=True to prevent recursive compression attempts
     # Collect content chunks into final response
     # Filter out mcp_status chunks (connection messages, tool registration, etc.)
     content_parts = []
-    async for chunk in backend.stream_with_tools(summarizer_messages, tools=[]):
+    async for chunk in backend.stream_with_tools(summarizer_messages, tools=[], _compression_retry=True):
         if chunk.content and chunk.type != "mcp_status":
             content_parts.append(chunk.content)
 

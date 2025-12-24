@@ -486,6 +486,9 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Override to integrate Files API uploads into non-MCP streaming."""
+        # Extract internal flags before merging kwargs (prevents API errors from unknown params)
+        kwargs.pop("_compression_retry", None)
+
         agent_id = kwargs.get("agent_id", None)
         all_params = {**self.config, **kwargs}
 
