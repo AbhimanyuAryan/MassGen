@@ -7,6 +7,7 @@ Supports image input (URL and base64) and image generation via tools.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import datetime, timezone
 from io import BytesIO
@@ -295,20 +296,23 @@ class ResponseBackend(CustomToolAndMCPBackend):
             The function_call is already present from response.output to maintain
             reasoning item continuity.
         """
+        # Extract text from result - handle SimpleNamespace wrapper or string
+        result_text = getattr(result, "text", None) or str(result)
+
         # Only add function output message
         # function_call is already included from response.output (with reasoning items)
-        result_str = str(result)
+        str(result)
         function_output_msg = {
             "type": "function_call_output",
             "call_id": call.get("call_id", ""),
-            "output": result_str,
+            "output": result_text,
         }
         updated_messages.append(function_output_msg)
 
         # Track tool result in streaming buffer for compression recovery
         # This captures the actual data that makes context large
         tool_name = call.get("name", "unknown")
-        self._streaming_buffer += f"\n\n[Tool: {tool_name}]\n{result_str}"
+        self._streaming_buffer += f"\n\n[Tool: {tool_name}]\n{result_text}"
 
     def _append_tool_error_message(
         self,
@@ -409,6 +413,10 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 tools=api_params.get("tools", tools),
             )
 
+        # Start API call timing
+        model = api_params.get("model", "unknown")
+        self.start_api_call_timing(model)
+
         # Check for compression retry flag to prevent infinite loops
         _compression_retry = kwargs.get("_compression_retry", False)
 
@@ -423,6 +431,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 logger.warning(
                     f"[{self.get_provider_name()}] Context length exceeded in MCP mode, " f"attempting compression recovery...",
                 )
+                self.end_api_call_timing(success=False, error=str(e))
 
                 # Notify user that compression is starting
                 yield StreamChunk(
@@ -465,6 +474,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                     f"[{self.get_provider_name()}] Compression recovery successful, " f"continuing with {len(compressed_messages)} messages",
                 )
             else:
+                self.end_api_call_timing(success=False, error=str(e))
                 raise
 
         # Track function calls in this iteration
@@ -497,6 +507,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
 
                 # Handle regular content and other events
                 elif chunk.type == "response.output_text.delta":
+                    self.record_first_token()  # Record TTFT on first content
                     delta = getattr(chunk, "delta", "")
                     # Track content in streaming buffer for compression recovery
                     if delta:
@@ -540,6 +551,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                             logger.debug(f"Captured {len(response_output_items)} output items for reasoning continuity")
                     if captured_function_calls:
                         # Execute captured function calls and recurse
+                        self.end_api_call_timing(success=True)
                         break  # Exit chunk loop to execute functions
                     else:
                         # No function calls, we're done (base case)
@@ -551,6 +563,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                                 output_tokens=self.token_usage.output_tokens,
                                 finish_reason="stop",
                             )
+                        self.end_api_call_timing(success=True)
                         yield TextStreamChunk(type=ChunkType.DONE, source="response_api")
                         return
 
@@ -559,9 +572,11 @@ class ResponseBackend(CustomToolAndMCPBackend):
             # Categorize function calls using helper method
             mcp_calls, custom_calls, provider_calls = self._categorize_tool_calls(captured_function_calls)
 
-            # If there are provider calls (non-MCP, non-custom), let API handle them
+            # If there are provider calls (non-MCP, non-custom), emit them as tool_calls
+            # for the orchestrator to process (workflow tools like new_answer, vote)
             if provider_calls:
-                logger.info(f"Provider function calls detected: {[call['name'] for call in provider_calls]}. Ending local processing.")
+                logger.info(f"Provider function calls detected: {[call['name'] for call in provider_calls]}. Emitting for orchestrator.")
+
                 # End LLM call logging with tool_calls finish reason
                 if llm_logger and llm_call_id:
                     llm_logger.record_chunk(
@@ -575,6 +590,41 @@ class ResponseBackend(CustomToolAndMCPBackend):
                         output_tokens=self.token_usage.output_tokens,
                         finish_reason="tool_calls",
                     )
+
+                # Convert provider calls to tool_calls format for orchestrator
+                workflow_tool_calls = []
+                for call in provider_calls:
+                    tool_name = call.get("name", "")
+                    tool_args = call.get("arguments", {})
+
+                    # Parse arguments if they're a string
+                    if isinstance(tool_args, str):
+                        try:
+                            tool_args = json.loads(tool_args)
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                    # Build tool call in standard format
+                    workflow_tool_calls.append(
+                        {
+                            "id": call.get("call_id", f"call_{len(workflow_tool_calls)}"),
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": tool_args,
+                            },
+                        },
+                    )
+
+                # Emit tool_calls chunk for orchestrator to process
+                if workflow_tool_calls:
+                    log_stream_chunk("backend.response", "tool_calls", workflow_tool_calls, kwargs.get("agent_id"))
+                    yield TextStreamChunk(
+                        type=ChunkType.TOOL_CALLS,
+                        tool_calls=workflow_tool_calls,
+                        source="response_api",
+                    )
+
                 yield TextStreamChunk(type=ChunkType.DONE, source="response_api")
                 return
 
@@ -587,9 +637,19 @@ class ResponseBackend(CustomToolAndMCPBackend):
             # This is required for reasoning models like GPT-5, o3, o4-mini
             # Without reasoning items, subsequent API calls will fail with:
             # "Item 'msg_...' of type 'message' was provided without its required 'reasoning' item"
-            if response_output_items:
-                updated_messages.extend(response_output_items)
-                logger.debug(f"Added {len(response_output_items)} response output items to messages for reasoning continuity")
+            #
+            # IMPORTANT: Only add items manually if we DON'T have a response_id
+            # When previous_response_id is passed to the API, it automatically includes
+            # all items from that response, so manually adding them causes duplicates
+            if response_output_items and not response_id:
+                # Deduplicate by 'id' field to avoid "Duplicate item found with id" errors
+                existing_ids = {msg.get("id") for msg in updated_messages if msg.get("id")}
+                unique_items = [item for item in response_output_items if item.get("id") not in existing_ids]
+
+                updated_messages.extend(unique_items)
+                logger.debug(f"Added {len(unique_items)} response output items to messages for reasoning continuity (filtered {len(response_output_items) - len(unique_items)} duplicates)")
+            elif response_id:
+                logger.debug(f"Skipping manual item addition - using previous_response_id={response_id} for automatic continuity")
 
             # Configuration for custom tool execution
             CUSTOM_TOOL_CONFIG = ToolExecutionConfig(
@@ -1058,12 +1118,18 @@ class ResponseBackend(CustomToolAndMCPBackend):
         return converted_tools
 
     async def _process_stream(self, stream, all_params, agent_id=None):
+        first_content_recorded = False
         async for chunk in stream:
             processed = self._process_stream_chunk(chunk, agent_id)
+            # Record TTFT on first content
+            if not first_content_recorded and processed.type in [ChunkType.CONTENT, "content"]:
+                self.record_first_token()
+                first_content_recorded = True
             if processed.type == "complete_response":
                 # Yield the complete response first
                 yield processed
                 # Then signal completion with done chunk
+                self.end_api_call_timing(success=True)
                 log_stream_chunk("backend.response", "done", None, agent_id)
                 yield TextStreamChunk(type=ChunkType.DONE, source="response_api")
             else:

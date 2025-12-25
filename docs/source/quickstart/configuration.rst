@@ -121,14 +121,26 @@ Alternatively, use provider-specific keys:
    # OpenAI (for GPT-5, GPT-4, etc.)
    OPENAI_API_KEY=sk-...
 
-   # Anthropic Claude
+   # Anthropic Claude (for claude backend)
    ANTHROPIC_API_KEY=sk-ant-...
+
+   # Claude Code (optional - for claude_code backend only)
+   # If set, claude_code uses this instead of ANTHROPIC_API_KEY
+   # CLAUDE_CODE_API_KEY=sk-ant-...
 
    # Google Gemini
    GOOGLE_API_KEY=...
 
    # xAI Grok
    XAI_API_KEY=...
+
+.. note::
+
+   **Separate API keys for Claude Code:** The ``claude_code`` backend checks
+   ``CLAUDE_CODE_API_KEY`` first, then falls back to ``ANTHROPIC_API_KEY``.
+   This allows you to use a Claude subscription (no API key) or a separate
+   API key for Claude Code agents while using a different API key for standard
+   Claude backend agents.
 
 **Getting API Keys:**
 
@@ -559,6 +571,37 @@ Prevent irreversible actions during multi-agent coordination:
 **Use Case**: File operations, API calls, or any task with irreversible consequences.
 
 See :doc:`../user_guide/advanced/planning_mode` for complete documentation.
+
+Subagents
+~~~~~~~~~
+
+Enable agents to spawn parallel child processes for independent tasks:
+
+.. code-block:: yaml
+
+   orchestrator:
+     enable_subagents: true
+     subagent_default_timeout: 300  # 5 minutes per subagent
+     subagent_max_concurrent: 3     # Max parallel subagents
+
+**Example usage:**
+
+.. code-block:: bash
+
+   uv run massgen \
+     --config @massgen/configs/features/subagent_demo.yaml \
+     "Build a website with frontend, backend, and documentation"
+
+The agent can spawn subagents to work on each component simultaneously. Subagents:
+
+* Run in isolated workspaces
+* Inherit parent agent configurations by default
+* Execute concurrently for parallel task completion
+* Return structured results with workspace paths
+
+**Use Case**: Complex tasks with independent, parallelizable components (e.g., multi-part research, website building, documentation generation).
+
+See :doc:`../user_guide/advanced/subagents` for complete documentation.
 
 Timeout Configuration
 ~~~~~~~~~~~~~~~~~~~~~

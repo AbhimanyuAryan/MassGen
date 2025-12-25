@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.24 Features](#-latest-features-v0124)
+- [v0.1.29 Features](#-latest-features-v0129)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.24](#recent-achievements-v0124)
-  - [v0.0.3 - v0.1.23](#previous-achievements-v003---v0123)
+  - [v0.1.29](#recent-achievements-v0129)
+  - [v0.0.3 - v0.1.28](#previous-achievements-v003---v0128)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.24 Roadmap](#v0124-roadmap)
+- [v0.1.30 Roadmap](#v0130-roadmap)
 </details>
 
 <details open>
@@ -155,33 +155,34 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.24)
+## 🆕 Latest Features (v0.1.29)
 
-**🎉 Released: December 12, 2025**
+**🎉 Released: December 24, 2025**
 
-**What's New in v0.1.24:**
-- **💰 Multi-Backend Cost Tracking** - Real-time token usage and cost calculation for OpenRouter, xAI/Grok, Gemini, and Claude Code
-- **📊 Cost Inspection Command** - Use `/inspect c` to view detailed per-agent cost breakdown with token counts
-- **📈 Session Cost Aggregation** - Aggregated cost totals and tool metrics across all agents
+**What's New in v0.1.29:**
+- **🔀 Subagent System** - Spawn parallel child processes for independent tasks with isolated workspaces and automatic result aggregation
+- **📊 Tool Metrics Distribution** - Enhanced metrics with per-call averages and output distribution stats (min/max/median)
+- **⚙️ Per-Agent System Messages** - Configure different system messages for each agent via `massgen --quickstart`
 
-**Key Improvements:**
-- Per-round token history tracking via `get_round_token_history()` method
-- Cost breakdown shows input, output, reasoning, and cached tokens per agent
-- Improved cost ordering and formatting in coordination status tables
+**Bug Fixes:**
+- OpenAI Responses API duplicate item errors with `previous_response_id`
+- Function call ID preservation for reasoning item pairing
 
-**Try v0.1.24 Features:**
+**Try v0.1.29 Features:**
 ```bash
-# Install or upgrade from PyPI
+# Install or upgrade
 pip install --upgrade massgen
 
 # Or with uv (faster)
 uv pip install massgen
 
-# Run any multi-agent session to track costs
-massgen --config @examples/basic/multi/three_agents_default "Compare AI approaches"
+# Subagent system - spawn parallel child processes for independent tasks
+uv run massgen --config massgen/configs/features/test_subagent_orchestrator.yaml \
+  "Spawn a subagent to research Python async best practices"
 
-# View cost breakdown during or after coordination:
-#   /inspect c  - Show detailed cost breakdown per agent
+# Subagent with code-based tools and Docker execution
+uv run massgen --config massgen/configs/features/test_subagent_orchestrator_code_mode.yaml \
+  "Spawn a subagent to write a Python script that fetches the current weather"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -405,9 +406,9 @@ MassGen automatically loads API keys from `.env` in your current directory.
 The system currently supports multiple model providers with advanced capabilities:
 
 **API-based Models:**
-- **OpenAI**: GPT-5.1, GPT-5-codex, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+- **OpenAI**: GPT-5.1-Codex series (gpt-5.1-codex-max, gpt-5.1-codex, gpt-5.1-codex-mini), GPT-5.2, GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
 - **Azure OpenAI**: Any Azure-deployed models (GPT-4, GPT-4o, GPT-35-turbo, etc.)
-- **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.5, Claude Opus 4.1, Claude Sonnet 4
+- **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.1, Claude Sonnet 4
   - Advanced tooling: web search, code execution, Files API, programmatic tool calling, tool search with deferred loading
 - **Claude Code**: Native Claude Code SDK with server-side session persistence and built-in dev tools
 - **Gemini**: Gemini 3 Pro, Gemini 2.5 Flash, Gemini 2.5 Pro with code execution and grounding
@@ -1120,16 +1121,38 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.24)
+### Recent Achievements (v0.1.29)
 
-**🎉 Released: December 12, 2025**
+**🎉 Released: December 24, 2025**
 
-#### Enhanced Cost Tracking
-- **Multi-Backend Support**: Real-time token counting and cost calculation for OpenRouter, xAI/Grok, Gemini, and Claude Code backends
-- **Cost Inspection**: New `/inspect c` option displays detailed cost breakdown with per-agent token usage (input, output, reasoning, cached)
-- **Session Aggregation**: Aggregated cost totals and tool metrics across all agents in coordination status with improved display formatting
+#### Subagent System
+- **Parallel Child Processes**: Spawn independent MassGen subprocesses for parallelizable tasks with isolated workspaces
+- **Configurable via `enable_subagents`**, `subagent_default_timeout`, and `subagent_max_concurrent` settings
+- **Result Aggregation**: Automatic collection of workspace paths and token usage from subagents
 
-### Previous Achievements (v0.0.3 - v0.1.23)
+#### Enhancements
+- **Tool Metrics Distribution Statistics**: Enhanced `get_tool_metrics_summary()` with per-call averages and min/max/median output distribution
+- **CLI Per-Agent System Messages**: New mode for assigning different system messages per agent ("Skip", "Same for all", "Different per agent")
+
+#### Bug Fixes
+- OpenAI Responses API duplicate item errors when using `previous_response_id`
+- Function call ID preservation for proper reasoning item pairing
+
+#### New Configuration Files
+- `massgen/configs/features/test_subagent_orchestrator.yaml`
+- `massgen/configs/features/test_subagent_orchestrator_code_mode.yaml`
+
+### Previous Achievements (v0.0.3 - v0.1.28)
+
+✅ **Unified Multimodal Tools & Artifact Previews (v0.1.28)**: Consolidated `read_media` tool for image/audio/video analysis, unified `generate_media` tool for media creation (images, videos, audio), Web UI artifact previewer for PDFs/DOCX/PPTX/images/HTML/SVG/Markdown/Mermaid, OpenRouter tool-capable model filtering, Azure OpenAI fixes
+
+✅ **Session Sharing & Log Analysis (v0.1.27)**: Session sharing via GitHub Gist with `massgen export`, log analysis CLI with `massgen logs` command, per-LLM call timing metrics, Gemini 3 Flash model support, enhanced CLI config builder with per-agent web search and system messages
+
+✅ **Web UI Setup & Shadow Agent Depth (v0.1.26)**: Docker diagnostics module, Web UI setup wizard with guided first-run experience, shadow agent response depth for test-time compute scaling, GPT-5.1-Codex family models
+
+✅ **UI-TARS & Evolving Skills (v0.1.25)**: ByteDance's UI-TARS-1.5-7B for GUI automation, GPT-5.2 model support, evolving skill creator system with session persistence, enhanced Textual terminal with adaptive layouts
+
+✅ **Multi-Backend Cost Tracking (v0.1.24)**: Real-time token counting for OpenRouter, xAI/Grok, Gemini, and Claude Code backends with `/inspect c` cost breakdown showing per-agent token usage, aggregated session cost totals with improved display formatting
 
 ✅ **Turn History Inspection & Web UI Automation (v0.1.23)**: Interactive `/inspect` commands for reviewing turn details with menu navigation, `AutomationView` component for programmatic monitoring, `SessionMountManager` for Docker container persistence across turns, flag-based cancellation with terminal restoration, `run_async_safely()` for nested event loop handling
 
@@ -1321,21 +1344,19 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.25 Roadmap
+### v0.1.30 Roadmap
 
-Version 0.1.25 focuses on system reminders and improved agent broadcasting:
+Version 0.1.30 focuses on backend model auto-update and automatic context compression:
 
 #### Planned Features
-- **Add system reminders** (@ncrispino): Framework for injecting system reminders mid-run during LLM streaming
-- **Improve agent broadcasting so it only asks targeted questions and we can control the amount of detail it responds with** (@ncrispino): Enable scaling of agent broadcast responses based on configurable sensitivity levels
+- **Backend Model List Auto-Update** (@ncrispino): Automatic model listing via provider APIs, third-party wrappers, or documented manual processes
+- **Automatic Context Compression** (@ncrispino): Automatic context compression to manage long conversations efficiently
 
 Key technical approach:
-- **System Reminders**: Mid-run injection during LLM streaming, support for context awareness, human feedback, safety, and memory reminders
-- **Agent Broadcasting**: Three-tier sensitivity configuration, dynamic response complexity scaling, targeted questioning
+- **Backend Model List Auto-Update**: Native API implementation for OpenAI, Anthropic, Grok, Groq, Nebius; third-party wrappers where needed
+- **Automatic Context Compression**: Intelligent summarization with configurable thresholds and strategies
 
-**Target Release**: December 15, 2025 (Monday @ 9am PT)
-
-For detailed milestones and technical specifications, see the [full v0.1.25 roadmap](ROADMAP_v0.1.25.md).
+For detailed milestones and technical specifications, see the [full v0.1.30 roadmap](ROADMAP_v0.1.30.md).
 
 ---
 

@@ -47,7 +47,8 @@ class ResponseFormatter(FormatterBase):
         converted_messages = []
 
         for message in cleaned_messages:
-            if message.get("type") == "reasoning":
+            if message.get("type") in ("reasoning", "web_search_call"):
+                converted_messages.append(message)
                 continue
 
             if message.get("type") == "message":
@@ -89,14 +90,9 @@ class ResponseFormatter(FormatterBase):
                 converted_messages.append(cleaned_output)
             elif message.get("type") == "function_call":
                 call_id = message.get("call_id")
-                # Response API only accepts: type, call_id, name, arguments
-                # Strip id, status, content, and any other invalid fields
-                cleaned_fc = {
-                    "type": "function_call",
-                    "call_id": call_id,
-                    "name": message.get("name", ""),
-                    "arguments": message.get("arguments", "{}"),
-                }
+                # Preserve 'id' field to maintain pairing with reasoning items (required by OpenAI Responses API)
+                # See: https://github.com/langchain-ai/langchainjs/pull/9082
+                cleaned_fc = message.copy()
 
                 if call_id and call_id not in output_call_ids:
                     converted_messages.append(cleaned_fc)
