@@ -675,13 +675,16 @@ class MCPClient:
             logger.debug(f"Tool {original_tool_name} completed successfully on {server_name}")
 
             # Calculate input/output sizes for observability
-            input_chars = len(json.dumps(validated_arguments)) if validated_arguments else 0
+            args_json = json.dumps(validated_arguments) if validated_arguments else ""
+            input_chars = len(args_json)
             # Result is typically a CallToolResult with content list
             output_chars = 0
+            output_text = ""
             if result and hasattr(result, "content"):
                 for content_item in result.content:
                     if hasattr(content_item, "text"):
                         output_chars += len(content_item.text)
+                        output_text += content_item.text
 
             # Log structured tool execution for observability
             log_tool_execution(
@@ -692,6 +695,9 @@ class MCPClient:
                 success=True,
                 input_chars=input_chars,
                 output_chars=output_chars,
+                server_name=server_name,
+                arguments_preview=args_json[:200] if args_json else None,
+                output_preview=output_text[:200] if output_text else None,
             )
 
             # Send tool call success status if callback is available
@@ -709,15 +715,17 @@ class MCPClient:
 
         except asyncio.TimeoutError:
             execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
-            input_chars = len(json.dumps(validated_arguments)) if validated_arguments else 0
+            args_json = json.dumps(validated_arguments) if validated_arguments else ""
             log_tool_execution(
                 agent_id=effective_agent_id,
                 tool_name=tool_name,
                 tool_type="mcp",
                 execution_time_ms=execution_time_ms,
                 success=False,
-                input_chars=input_chars,
+                input_chars=len(args_json),
                 error_message=f"Timeout after {self.timeout_seconds}s",
+                server_name=server_name,
+                arguments_preview=args_json[:200] if args_json else None,
             )
 
             if self.status_callback:
@@ -742,15 +750,17 @@ class MCPClient:
             )
         except Exception as e:
             execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
-            input_chars = len(json.dumps(validated_arguments)) if validated_arguments else 0
+            args_json = json.dumps(validated_arguments) if validated_arguments else ""
             log_tool_execution(
                 agent_id=effective_agent_id,
                 tool_name=tool_name,
                 tool_type="mcp",
                 execution_time_ms=execution_time_ms,
                 success=False,
-                input_chars=input_chars,
+                input_chars=len(args_json),
                 error_message=str(e),
+                server_name=server_name,
+                arguments_preview=args_json[:200] if args_json else None,
             )
 
             logger.error(f"Tool call failed for {original_tool_name} on {server_name}: {e}", exc_info=True)

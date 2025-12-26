@@ -866,34 +866,135 @@ To reduce noise, MassGen only logs meaningful coordination events:
 
 Note: Individual coordination iterations are tracked internally but not logged to Logfire to avoid cluttering the trace with less useful information.
 
-Span Attributes
-~~~~~~~~~~~~~~~
+Tool Execution Attributes
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-All tool execution spans include the following attributes for filtering and grouping:
+All tool execution events include rich attributes for filtering, grouping, and debugging:
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 70
+   :widths: 25 75
+
+   * - Attribute
+     - Description
+   * - ``agent_id``
+     - The ID of the agent executing the tool (e.g., ``agent_a``, ``agent_b``)
+   * - ``tool_name``
+     - The full tool name (e.g., ``mcp__filesystem__write_file``)
+   * - ``tool_type``
+     - Tool category: ``mcp`` for MCP tools, ``custom`` for built-in tools
+   * - ``success``
+     - Boolean indicating whether the tool call succeeded
+   * - ``execution_time_ms``
+     - Execution time in milliseconds
+   * - ``input_chars``
+     - Number of characters in the tool input/arguments
+   * - ``output_chars``
+     - Number of characters in the tool output/result
+   * - ``error_message``
+     - Error message if the tool call failed (null on success)
+   * - ``server_name``
+     - MCP server name for MCP tools (e.g., ``filesystem``, ``command_line``)
+   * - ``arguments_preview``
+     - First 200 characters of tool arguments (for pattern analysis)
+   * - ``output_preview``
+     - First 200 characters of tool output (for debugging)
+   * - ``round_number``
+     - Which coordination round the tool was called in (0, 1, 2, ...)
+   * - ``round_type``
+     - Type of round: ``initial_answer``, ``voting``, ``presentation``
+
+LLM API Call Attributes
+~~~~~~~~~~~~~~~~~~~~~~~
+
+All LLM API call spans include these attributes for agent attribution:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
 
    * - Attribute
      - Description
    * - ``massgen.agent_id``
-     - The ID of the agent executing the tool (e.g., ``agent_a``, ``agent_b``)
-   * - ``tool.name``
-     - The full tool name (e.g., ``mcp__filesystem__write_file``)
-   * - ``tool.type``
-     - Tool category: ``mcp`` for MCP tools, ``custom`` for built-in tools
-   * - ``tool.success``
-     - Boolean indicating whether the tool call succeeded
-   * - ``tool.execution_time_ms``
-     - Execution time in milliseconds
+     - The ID of the agent making the call
+   * - ``llm.provider``
+     - Provider name (``anthropic``, ``openai``, ``gemini``, etc.)
+   * - ``llm.model``
+     - Model being called (``claude-3-opus``, ``gpt-4o``, etc.)
+   * - ``llm.operation``
+     - API operation type (typically ``stream``)
+   * - ``gen_ai.system``
+     - OpenTelemetry semantic convention for provider
+   * - ``gen_ai.request.model``
+     - OpenTelemetry semantic convention for model
 
-This enables powerful filtering in the Logfire dashboard, such as:
+Example Logfire Queries
+~~~~~~~~~~~~~~~~~~~~~~~
 
-* View all tool calls for a specific agent
-* Filter by tool type (MCP vs custom)
-* Find all failed tool calls
-* Compare execution times across agents
+These attributes enable powerful filtering and analysis in the Logfire dashboard:
+
+**Find slowest tool calls:**
+
+.. code-block:: sql
+
+   SELECT tool_name, execution_time_ms, agent_id
+   FROM spans
+   WHERE tool_type = 'mcp'
+   ORDER BY execution_time_ms DESC
+
+**Find failed tools with their arguments:**
+
+.. code-block:: sql
+
+   SELECT tool_name, arguments_preview, error_message, agent_id
+   FROM spans
+   WHERE success = false
+
+**Tools with large outputs (potential cost drivers):**
+
+.. code-block:: sql
+
+   SELECT server_name, tool_name, output_chars, agent_id
+   FROM spans
+   WHERE output_chars > 10000
+   ORDER BY output_chars DESC
+
+**Pattern analysis - which arguments lead to failures:**
+
+.. code-block:: sql
+
+   SELECT arguments_preview, COUNT(*) as fail_count
+   FROM spans
+   WHERE success = false
+   GROUP BY arguments_preview
+   ORDER BY fail_count DESC
+
+**Tool usage by MCP server:**
+
+.. code-block:: sql
+
+   SELECT server_name, COUNT(*) as calls, AVG(execution_time_ms) as avg_time
+   FROM spans
+   WHERE tool_type = 'mcp'
+   GROUP BY server_name
+
+**LLM calls by agent:**
+
+.. code-block:: sql
+
+   SELECT massgen.agent_id, llm.model, COUNT(*) as calls
+   FROM spans
+   WHERE span_name LIKE 'llm.%'
+   GROUP BY massgen.agent_id, llm.model
+
+**All activity for a specific agent:**
+
+.. code-block:: sql
+
+   SELECT span_name, timestamp, duration_ms
+   FROM spans
+   WHERE massgen.agent_id = 'agent_a' OR agent_id = 'agent_a'
+   ORDER BY timestamp
 
 Environment Variables
 ~~~~~~~~~~~~~~~~~~~~~

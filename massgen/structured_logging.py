@@ -680,6 +680,12 @@ def log_tool_execution(
     input_chars: int = 0,
     output_chars: int = 0,
     error_message: Optional[str] = None,
+    # New fields for richer context
+    server_name: Optional[str] = None,
+    arguments_preview: Optional[str] = None,
+    output_preview: Optional[str] = None,
+    round_number: Optional[int] = None,
+    round_type: Optional[str] = None,
 ):
     """
     Log tool execution as a structured event.
@@ -693,9 +699,22 @@ def log_tool_execution(
         input_chars: Number of input characters.
         output_chars: Number of output characters.
         error_message: Error message if execution failed.
+        server_name: MCP server name (for MCP tools).
+        arguments_preview: First 200 chars of tool arguments.
+        output_preview: First 200 chars of tool output.
+        round_number: Which round this tool was called in.
+        round_type: Type of round (initial_answer, voting, presentation).
     """
     tracer = get_tracer()
     log_func = tracer.info if success else tracer.warning
+
+    # Auto-fill round context if not provided
+    if round_number is None or round_type is None:
+        ctx_round, ctx_type = get_current_round()
+        if round_number is None:
+            round_number = ctx_round
+        if round_type is None:
+            round_type = ctx_type
 
     log_func(
         f"Tool execution: {tool_name}",
@@ -707,6 +726,11 @@ def log_tool_execution(
         input_chars=input_chars,
         output_chars=output_chars,
         error_message=error_message,
+        server_name=server_name,
+        arguments_preview=arguments_preview[:200] if arguments_preview else None,
+        output_preview=output_preview[:200] if output_preview else None,
+        round_number=round_number,
+        round_type=round_type,
     )
 
 

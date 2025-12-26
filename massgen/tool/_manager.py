@@ -343,8 +343,10 @@ class ToolManager:
         # Calculate input size for observability
         tool_input = tool_request.get("input", {})
         try:
-            input_chars = len(json.dumps(tool_input)) if tool_input else 0
+            args_json = json.dumps(tool_input) if tool_input else ""
+            input_chars = len(args_json)
         except (TypeError, ValueError):
+            args_json = ""
             input_chars = 0
 
         # Prepare post-processor if exists
@@ -430,7 +432,8 @@ class ToolManager:
             )
 
         # Calculate output size and log tool execution
-        output_chars = sum(len(s) for s in accumulated_output)
+        output_text = "".join(accumulated_output)
+        output_chars = len(output_text)
         execution_time_ms = (time.time() - start_time) * 1000
 
         log_tool_execution(
@@ -442,6 +445,8 @@ class ToolManager:
             input_chars=input_chars,
             output_chars=output_chars,
             error_message=error_message,
+            arguments_preview=args_json[:200] if args_json else None,
+            output_preview=output_text[:200] if output_text else None,
         )
 
     @staticmethod
