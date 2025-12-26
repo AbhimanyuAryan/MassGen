@@ -464,6 +464,10 @@ class LLMBackend(ABC):
         """Get the current round number."""
         return self._current_round_number
 
+    def get_current_round_type(self) -> str:
+        """Get the current round type (e.g., 'initial_answer', 'voting', 'presentation')."""
+        return self._current_round_type
+
     # ==============================================================
     # API Call Timing
     # ==============================================================

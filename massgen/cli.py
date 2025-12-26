@@ -824,7 +824,7 @@ def create_agents_from_config(
         if config_path:
             backend_config["_config_path"] = config_path
 
-        # Get agent_id for AgentConfig (but don't add to backend_config to avoid duplicate kwargs)
+        # Get agent_id for AgentConfig and backend (needed for MCP tool span correlation)
         agent_id = agent_data.get("id", f"agent{i}")
 
         # Emit progress for this agent
@@ -835,7 +835,8 @@ def create_agents_from_config(
                 f"Backend: {backend_type}",
             )
 
-        backend = create_backend(backend_type, **backend_config)
+        # Pass agent_id to backend for MCP tool span correlation
+        backend = create_backend(backend_type, agent_id=agent_id, **backend_config)
         backend_params = {k: v for k, v in backend_config.items() if k not in ("type", "_config_path")}
 
         backend_type_lower = backend_type.lower()

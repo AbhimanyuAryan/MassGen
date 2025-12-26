@@ -17,7 +17,7 @@ from mcp.client.stdio import get_default_environment, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from ..logger_config import logger
-from ..structured_logging import get_tracer, log_tool_execution
+from ..structured_logging import get_current_round, get_tracer, log_tool_execution
 from .circuit_breaker import MCPCircuitBreaker
 from .config_validator import MCPConfigValidator
 from .exceptions import (
@@ -542,7 +542,14 @@ class MCPClient:
         server_client.initialized = False
         server_client.connection_state = ConnectionState.DISCONNECTED
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], agent_id: Optional[str] = None) -> Any:
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        agent_id: Optional[str] = None,
+        round_number: Optional[int] = None,
+        round_type: Optional[str] = None,
+    ) -> Any:
         """
         Call an MCP tool with validation and timeout handling.
 
@@ -550,6 +557,8 @@ class MCPClient:
             tool_name: Name of the tool to call (always prefixed as mcp__server__toolname)
             arguments: Tool arguments
             agent_id: Optional agent ID for observability attribution
+            round_number: Optional round number for observability attribution
+            round_type: Optional round type for observability attribution
 
         Returns:
             Tool execution result
@@ -634,6 +643,22 @@ class MCPClient:
             }
             if agent_id:
                 span_attributes["massgen.agent_id"] = agent_id
+
+            # Get round context for tool call attribution
+            # First try explicit parameters, then fall back to contextvar
+            effective_round = round_number
+            effective_round_type = round_type
+            if effective_round is None or effective_round_type is None:
+                ctx_round, ctx_round_type = get_current_round()
+                if effective_round is None and ctx_round is not None:
+                    effective_round = ctx_round
+                if effective_round_type is None and ctx_round_type is not None:
+                    effective_round_type = ctx_round_type
+
+            if effective_round is not None:
+                span_attributes["massgen.round"] = effective_round
+            if effective_round_type is not None:
+                span_attributes["massgen.round_type"] = effective_round_type
 
             with tracer.span(
                 f"mcp.{server_name}.{original_tool_name}",

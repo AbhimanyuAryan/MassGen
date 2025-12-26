@@ -29,6 +29,7 @@ from ..api_params_handler import ChatCompletionsAPIParamsHandler
 from ..formatter import ChatCompletionsFormatter
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..stream_chunk import ChunkType
+from ..structured_logging import trace_llm_api_call
 
 # Local imports
 from .base import FilesystemSupport, StreamChunk
@@ -184,6 +185,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
         # Build API params for this iteration
         all_params = {**self.config, **kwargs}
+        agent_id = kwargs.get("agent_id")
         api_params = await self.api_params_handler.build_api_params(current_messages, tools, all_params)
 
         # Enable usage tracking in streaming responses (required for token counting)
@@ -208,14 +210,22 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
         # Start API call timing
         model = api_params.get("model", "unknown")
+        provider = self.get_provider_name().lower()
         self.start_api_call_timing(model)
 
-        # Start streaming
-        try:
-            stream = await client.chat.completions.create(**api_params)
-        except Exception as e:
-            self.end_api_call_timing(success=False, error=str(e))
-            raise
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider=provider,
+            model=model,
+            operation="stream",
+        ):
+            # Start streaming
+            try:
+                stream = await client.chat.completions.create(**api_params)
+            except Exception as e:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         # Track function calls in this iteration
         captured_function_calls = []

@@ -43,6 +43,7 @@ from ..nlip.schema import (
     NLIPTokenField,
     NLIPToolCall,
 )
+from ..structured_logging import trace_llm_api_call
 from ..token_manager.token_manager import ToolExecutionMetric
 from ..tool import ToolManager
 from ..utils import CoordinationStage
@@ -1853,6 +1854,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                     backend_name=self.backend_name,
                     agent_id=self.agent_id,
                     hook_manager=getattr(self, "function_hook_manager", None),
+                    backend=self,  # Pass backend for round tracking context
                 ),
             )
 
@@ -2550,32 +2552,40 @@ class CustomToolAndMCPBackend(LLMBackend):
 
         # Start API call timing
         model = api_params.get("model", "unknown")
+        provider = self.get_provider_name().lower()
         self.start_api_call_timing(model)
 
-        try:
-            if "openai" in self.get_provider_name().lower():
-                stream = await client.responses.create(**api_params)
-            elif "claude" in self.get_provider_name().lower():
-                if "betas" in api_params:
-                    stream = await client.beta.messages.create(**api_params)
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider=provider,
+            model=model,
+            operation="stream",
+        ):
+            try:
+                if "openai" in provider:
+                    stream = await client.responses.create(**api_params)
+                elif "claude" in provider:
+                    if "betas" in api_params:
+                        stream = await client.beta.messages.create(**api_params)
+                    else:
+                        stream = await client.messages.create(**api_params)
                 else:
-                    stream = await client.messages.create(**api_params)
-            else:
-                # Enable usage tracking in streaming responses (required for token counting)
-                # Chat Completions API (used by Grok, Groq, Together, Fireworks, etc.)
-                if api_params.get("stream"):
-                    api_params["stream_options"] = {"include_usage": True}
+                    # Enable usage tracking in streaming responses (required for token counting)
+                    # Chat Completions API (used by Grok, Groq, Together, Fireworks, etc.)
+                    if api_params.get("stream"):
+                        api_params["stream_options"] = {"include_usage": True}
 
-                # Track messages for interrupted stream estimation (multi-agent restart handling)
-                if hasattr(self, "_interrupted_stream_messages"):
-                    self._interrupted_stream_messages = processed_messages.copy()
-                    self._interrupted_stream_model = all_params.get("model", "gpt-4o")
-                    self._stream_usage_received = False
+                    # Track messages for interrupted stream estimation (multi-agent restart handling)
+                    if hasattr(self, "_interrupted_stream_messages"):
+                        self._interrupted_stream_messages = processed_messages.copy()
+                        self._interrupted_stream_model = all_params.get("model", "gpt-4o")
+                        self._stream_usage_received = False
 
-                stream = await client.chat.completions.create(**api_params)
-        except Exception as e:
-            self.end_api_call_timing(success=False, error=str(e))
-            raise
+                    stream = await client.chat.completions.create(**api_params)
+            except Exception as e:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         async for chunk in self._process_stream(stream, all_params, agent_id):
             yield chunk

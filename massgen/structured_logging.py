@@ -30,6 +30,7 @@ Environment Variables:
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar
@@ -43,6 +44,11 @@ F = TypeVar("F", bound=Callable[..., Any])
 _logfire_enabled: bool = False
 _logfire_configured: bool = False
 _instrumented_clients: Dict[str, bool] = {}
+
+# Context variable for tracking current agent round (for tool call attribution)
+# This allows nested tool calls to know which round they belong to
+_current_round: ContextVar[Optional[int]] = ContextVar("current_round", default=None)
+_current_round_type: ContextVar[Optional[str]] = ContextVar("current_round_type", default=None)
 
 
 @dataclass
@@ -149,6 +155,20 @@ def configure_observability(
 
         _logfire_enabled = True
         _logfire_configured = True
+
+        # Suppress noisy OpenTelemetry context detach warnings
+        # These occur in async generators when context changes between yield points
+        # and are harmless - the spans are still recorded correctly
+        import logging
+
+        class ContextDetachFilter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                # Filter out "Failed to detach context" messages
+                return "Failed to detach context" not in str(record.msg)
+
+        otel_context_logger = logging.getLogger("opentelemetry.context")
+        otel_context_logger.addFilter(ContextDetachFilter())
+
         logger.info(f"Logfire observability configured: service={service_name}, env={environment}")
         return True
 
@@ -386,6 +406,37 @@ def get_tracer() -> TracerProxy:
     if _tracer is None:
         _tracer = TracerProxy()
     return _tracer
+
+
+def set_current_round(round_number: int, round_type: str) -> None:
+    """
+    Set the current round context for tool call attribution.
+
+    This should be called when entering an agent round span so that
+    nested tool calls can be properly attributed to the round.
+
+    Args:
+        round_number: The current round number (0, 1, 2, etc.)
+        round_type: The type of round ("initial_answer", "voting", "presentation")
+    """
+    _current_round.set(round_number)
+    _current_round_type.set(round_type)
+
+
+def get_current_round() -> tuple[Optional[int], Optional[str]]:
+    """
+    Get the current round context for tool call attribution.
+
+    Returns:
+        Tuple of (round_number, round_type) or (None, None) if not in a round.
+    """
+    return _current_round.get(), _current_round_type.get()
+
+
+def clear_current_round() -> None:
+    """Clear the current round context."""
+    _current_round.set(None)
+    _current_round_type.set(None)
 
 
 def trace_llm_call(
@@ -966,6 +1017,51 @@ def log_iteration_end(
     )
 
 
+@contextmanager
+def trace_llm_api_call(
+    agent_id: str,
+    provider: str,
+    model: str,
+    operation: str = "create",
+    **extra_attributes,
+):
+    """
+    Context manager for tracing LLM API calls with agent attribution.
+
+    This creates an explicit span around LLM API calls to ensure:
+    1. Agent ID is attached to the span for debugging
+    2. The span is visible even if auto-instrumentation fails
+    3. Auto-instrumented child spans inherit the context
+
+    Args:
+        agent_id: ID of the agent making the call.
+        provider: LLM provider name (e.g., "anthropic", "openai", "gemini").
+        model: Model name being used.
+        operation: API operation (e.g., "create", "stream").
+        **extra_attributes: Additional attributes to attach to the span.
+
+    Yields:
+        Span object for adding additional attributes.
+
+    Example:
+        with trace_llm_api_call("agent_1", "anthropic", "claude-3-opus"):
+            stream = await client.messages.create(**params)
+    """
+    tracer = get_tracer()
+    attributes = {
+        "massgen.agent_id": agent_id,
+        "llm.provider": provider,
+        "llm.model": model,
+        "llm.operation": operation,
+        "gen_ai.system": provider,  # OpenTelemetry semantic convention
+        "gen_ai.request.model": model,  # OpenTelemetry semantic convention
+    }
+    attributes.update(extra_attributes)
+
+    with tracer.span(f"llm.{provider}.{operation}", attributes=attributes) as span:
+        yield span
+
+
 # Export all public symbols
 __all__ = [
     # Configuration
@@ -984,6 +1080,7 @@ __all__ = [
     "trace_coordination_session",
     "trace_coordination_iteration",
     "trace_agent_round",
+    "trace_llm_api_call",
     # Event loggers
     "log_token_usage",
     "log_tool_execution",
