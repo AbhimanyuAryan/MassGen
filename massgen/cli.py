@@ -1200,7 +1200,7 @@ def create_agents_from_config(
             agent._retrieval_limit = retrieval_config.get("limit", 5)
             agent._retrieval_exclude_recent = retrieval_config.get(
                 "exclude_recent",
-                True,
+                False,
             )
 
             if retrieval_config or recording_config:  # Log if custom config provided

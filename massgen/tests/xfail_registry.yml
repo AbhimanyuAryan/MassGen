@@ -18,23 +18,8 @@
 # --- Seeded xfails (initial triage baseline) ---
 # These are intentionally short-lived to keep the suite actionable while we delegate cluster fixes.
 
-massgen/tests/test_terminal_evaluation.py::TestTerminalEvaluation::test_vhs_installed:
-  reason: "Requires external VHS binary; classify/mark appropriately or add graceful skip when not installed"
-  link: ".cursor/triage/tasks/cluster_20d8cab08a.md"
-  expires: "2026-01-15"
-  strict: false
-
-massgen/tests/test_programmatic_api.py::TestRunFunctionIntegration::test_run_with_single_model:
-  reason: "Requires OpenAI API key / live call; should be marked integration/expensive and skipped by default"
-  link: ".cursor/triage/tasks/cluster_824e0d52b0.md"
-  expires: "2026-01-15"
-  strict: false
-
-massgen/tests/test_programmatic_api.py::TestRunFunctionIntegration::test_run_with_models_list:
-  reason: "Requires OpenAI API key / live call; should be marked integration/expensive and skipped by default"
-  link: ".cursor/triage/tasks/cluster_824e0d52b0.md"
-  expires: "2026-01-15"
-  strict: false
+# REMOVED: test_vhs_installed now uses @requires_vhs skipif decorator
+# REMOVED: test_run_with_single_model and test_run_with_models_list already use @pytest.mark.expensive
 
 massgen/tests/test_ag2_lesson_planner.py::TestAG2LessonPlannerTool::test_missing_api_key_error:
   reason: "Tool API changed: now uses @context_params('prompt') decorator instead of topic/api_key kwargs"
@@ -93,61 +78,51 @@ massgen/tests/test_langgraph_lesson_planner.py::TestLangGraphToolIntegration::te
 
 massgen/tests/test_message_context_building.py::test_turn1_context:
   reason: "MessageTemplates API drift (missing evaluation_system_message); fix template or update tests"
-  link: ".cursor/triage/tasks/cluster_9f91c21fe7.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_message_context_building.py::test_turn2_context:
   reason: "MessageTemplates API drift (missing evaluation_system_message); fix template or update tests"
-  link: ".cursor/triage/tasks/cluster_9f91c21fe7.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_message_context_building.py::test_turn3_context:
   reason: "MessageTemplates API drift (missing evaluation_system_message); fix template or update tests"
-  link: ".cursor/triage/tasks/cluster_9f91c21fe7.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_message_context_building.py::test_context_comparison:
   reason: "MessageTemplates API drift (missing evaluation_system_message); fix template or update tests"
-  link: ".cursor/triage/tasks/cluster_9f91c21fe7.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_chat_completions_refactor.py::test_openai_backend:
   reason: "Backend API drift: ChatCompletionsBackend missing base_url attribute expected by tests"
-  link: ".cursor/triage/tasks/cluster_f6383dd4cb.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_chat_completions_refactor.py::test_together_ai_backend:
   reason: "Backend API drift: ChatCompletionsBackend missing base_url attribute expected by tests"
-  link: ".cursor/triage/tasks/cluster_f6383dd4cb.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_chat_completions_refactor.py::test_cerebras_backend:
   reason: "Backend API drift: ChatCompletionsBackend missing base_url attribute expected by tests"
-  link: ".cursor/triage/tasks/cluster_f6383dd4cb.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_azure_openai_backend.py::TestAzureOpenAIBackend::test_init_with_env_vars:
   reason: "Backend API drift: AzureOpenAIBackend missing azure_endpoint attribute expected by tests"
-  link: ".cursor/triage/tasks/cluster_4bbc1204e7.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_azure_openai_backend.py::TestAzureOpenAIBackend::test_init_with_kwargs:
   reason: "Backend API drift: AzureOpenAIBackend missing azure_endpoint attribute expected by tests"
-  link: ".cursor/triage/tasks/cluster_4bbc1204e7.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_azure_openai_backend.py::TestAzureOpenAIBackend::test_base_url_normalization:
   reason: "Backend API drift: AzureOpenAIBackend missing azure_endpoint attribute expected by tests"
-  link: ".cursor/triage/tasks/cluster_4bbc1204e7.md"
   expires: "2026-01-15"
   strict: true
 
@@ -155,49 +130,41 @@ massgen/tests/test_azure_openai_backend.py::TestAzureOpenAIBackend::test_base_ur
 
 massgen/tests/test_multimodal_size_limits.py::TestVideoFrameLimits::test_video_with_large_frames:
   reason: "Multimodal limits assertions failing; investigate size limit logic or fixtures"
-  link: ".cursor/triage/tasks/cluster_72c1f34cf2.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_multimodal_size_limits.py::TestVideoFrameLimits::test_video_with_small_frames:
   reason: "Multimodal limits assertions failing; investigate size limit logic or fixtures"
-  link: ".cursor/triage/tasks/cluster_72c1f34cf2.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_multimodal_size_limits.py::TestAudioSizeLimits::test_audio_within_size_limit:
   reason: "Multimodal limits assertions failing; investigate size limit logic or fixtures"
-  link: ".cursor/triage/tasks/cluster_72c1f34cf2.md"
   expires: "2026-01-15"
   strict: true
 
 massgen/tests/test_claude_code_context_sharing.py::test_orchestrator_initialization_with_context_sharing:
   reason: "Orchestrator missing context sharing methods (_agent_id_mapping, etc.); feature likely removed or not implemented."
-  link: ".cursor/triage/clusters/cluster_3214aa51a1.md"
   expires: "2026-01-23"
   strict: true
 
 massgen/tests/test_claude_code_context_sharing.py::test_snapshot_saving:
   reason: "Orchestrator missing context sharing methods (_save_claude_code_snapshot); feature likely removed or not implemented."
-  link: ".cursor/triage/clusters/cluster_3214aa51a1.md"
   expires: "2026-01-23"
   strict: true
 
 massgen/tests/test_claude_code_context_sharing.py::test_workspace_restoration_with_anonymization:
   reason: "Orchestrator missing context sharing methods (_restore_snapshots_to_workspace); feature likely removed or not implemented."
-  link: ".cursor/triage/clusters/cluster_3214aa51a1.md"
   expires: "2026-01-23"
   strict: true
 
 massgen/tests/test_claude_code_context_sharing.py::test_save_all_snapshots:
   reason: "Orchestrator missing context sharing methods (_save_all_claude_code_snapshots); feature likely removed or not implemented."
-  link: ".cursor/triage/clusters/cluster_3214aa51a1.md"
   expires: "2026-01-23"
   strict: true
 
 massgen/tests/test_claude_code_context_sharing.py::test_non_claude_code_agents_ignored:
   reason: "Orchestrator missing context sharing mappings (_agent_id_mapping); feature likely removed or not implemented."
-  link: ".cursor/triage/clusters/cluster_3214aa51a1.md"
   expires: "2026-01-23"
   strict: true
 
