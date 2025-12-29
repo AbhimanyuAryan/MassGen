@@ -53,6 +53,13 @@ from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
 from .persona_generator import PersonaGenerator
 from .stream_chunk import ChunkType
+from .structured_logging import (
+    clear_current_round,
+    get_tracer,
+    log_agent_round_context,
+    log_coordination_event,
+    set_current_round,
+)
 from .system_message_builder import SystemMessageBuilder
 from .tool import get_post_evaluation_tools, get_workflow_tools
 from .utils import ActionType, AgentStatus, CoordinationStage
@@ -200,6 +207,7 @@ class Orchestrator(ChatAgent):
         self._coordination_messages: List[Dict[str, str]] = []
         self._selected_agent: Optional[str] = None
         self._final_presentation_content: Optional[str] = None
+        self._presentation_started: bool = False  # Guard against duplicate presentations
 
         # Track winning agents by turn for memory sharing
         # Format: [{"agent_id": "agent_b", "turn": 1}, {"agent_id": "agent_a", "turn": 2}]
@@ -2270,6 +2278,7 @@ Your answer:"""
         self.total_tokens = 0
         self.is_orchestrator_timeout = False
         self.timeout_reason = None
+        self._presentation_started = False  # Reset presentation guard for new attempt
 
         log_orchestrator_activity(
             self.orchestrator_id,
@@ -2322,6 +2331,16 @@ Your answer:"""
 
     async def _coordinate_agents(self, conversation_context: Optional[Dict[str, Any]] = None) -> AsyncGenerator[StreamChunk, None]:
         """Execute unified MassGen coordination workflow with real-time streaming."""
+        # Log structured coordination event for observability
+        log_coordination_event(
+            "coordination_started",
+            details={
+                "num_agents": len(self.agents),
+                "agent_ids": list(self.agents.keys()),
+                "task": self.current_task[:200] if self.current_task else None,
+            },
+        )
+
         log_coordination_step(
             "Starting multi-agent coordination",
             {
@@ -2458,6 +2477,17 @@ Your answer:"""
         log_coordination_step(
             "Final agent selected",
             {"selected_agent": self._selected_agent, "votes": votes},
+        )
+
+        # Log structured event for observability
+        log_coordination_event(
+            "winner_selected",
+            agent_id=self._selected_agent,
+            details={
+                "turn": self._current_turn,
+                "vote_count": len(votes),
+                "num_answers": len(current_answers),
+            },
         )
 
         # Merge all agents' memories into winner's workspace before final presentation
@@ -3826,9 +3856,52 @@ Your answer:"""
             # agent.backend.filesystem_manager.clear_workspace()  # Don't clear for now.
             agent.backend.filesystem_manager.log_current_state("before execution")
 
+        # Create agent execution span for hierarchical tracing in Logfire
+        # This groups all tool calls, LLM calls, and events under this agent's execution
+        tracer = get_tracer()
+        current_round = self.coordination_tracker.get_agent_round(agent_id)
+        context_labels = self.coordination_tracker.get_agent_context_labels(agent_id)
+        round_type = "voting" if answers else "initial_answer"
+
+        span_attributes = {
+            "massgen.agent_id": agent_id,
+            "massgen.iteration": self.coordination_tracker.current_iteration,
+            "massgen.round": current_round,
+            "massgen.round_type": round_type,
+            "massgen.backend": backend_name or "unknown",
+            "massgen.num_context_answers": len(answers) if answers else 0,
+        }
+        if context_labels:
+            span_attributes["massgen.context_labels"] = ",".join(context_labels)
+
+        _agent_span_cm = tracer.span(
+            f"agent.{agent_id}.round_{current_round}",
+            attributes=span_attributes,
+        )
+        _agent_span = _agent_span_cm.__enter__()  # Capture the yielded span for set_attribute()
+
+        # Set the round context for nested tool calls to use
+        set_current_round(current_round, round_type)
+
+        # Track outcome for span attributes (set in finally block)
+        _agent_outcome = None  # "vote", "answer", or "error"
+        _agent_voted_for = None  # Only set for votes
+        _agent_answer_label = None  # Only set for answers (e.g., "agent1.1")
+        _agent_voted_for_label = None  # Only set for votes (e.g., "agent2.1")
+        _agent_error_message = None  # Only set for errors
+
         try:
             # Normalize workspace paths in agent answers for better comparison from this agent's perspective
             normalized_answers = self._normalize_workspace_paths_in_answers(answers, agent_id) if answers else answers
+
+            # Log structured context for this agent's round (for observability/debugging)
+            log_agent_round_context(
+                agent_id=agent_id,
+                round_number=current_round,
+                round_type=round_type,
+                answers_in_context=normalized_answers,
+                answer_labels=context_labels,
+            )
 
             # Log the normalized answers this agent will see
             if normalized_answers:
@@ -3976,11 +4049,12 @@ Your answer:"""
             self.coordination_tracker.change_status(agent_id, AgentStatus.STREAMING)
 
             # Start round token tracking for this agent
+            # Note: round_type was computed earlier as "voting" if answers else "initial_answer"
             current_round = self.coordination_tracker.get_agent_round(agent_id)
             if hasattr(agent.backend, "start_round_tracking"):
                 agent.backend.start_round_tracking(
                     round_number=current_round,
-                    round_type="initial_answer",
+                    round_type=round_type,  # Use computed round_type (voting or initial_answer)
                     agent_id=agent_id,
                 )
 
@@ -4312,6 +4386,10 @@ Your answer:"""
 
                             # Send tool result - orchestrator will decide if vote is accepted
                             # Vote submitted (result will be shown by orchestrator)
+                            _agent_outcome = "vote"
+                            _agent_voted_for = voted_agent
+                            # Get the answer label that this voter was shown for voted-for agent
+                            _agent_voted_for_label = self.coordination_tracker.get_voted_for_label(agent_id, voted_agent)
                             yield (
                                 "result",
                                 ("vote", {"agent_id": voted_agent, "reason": reason}),
@@ -4419,6 +4497,11 @@ Your answer:"""
                                 role="assistant",
                             )
 
+                            _agent_outcome = "answer"
+                            # Compute the answer label that will be assigned (e.g., "agent1.1")
+                            agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                            current_answers = len(self.coordination_tracker.answers_by_agent.get(agent_id, []))
+                            _agent_answer_label = f"agent{agent_num}.{current_answers + 1}"
                             yield ("result", ("answer", content))
                             yield ("done", None)
                             return
@@ -4507,8 +4590,45 @@ Your answer:"""
                         return
 
         except Exception as e:
+            _agent_outcome = "error"
+            _agent_error_message = str(e)
             yield ("error", f"Agent execution failed: {str(e)}")
             yield ("done", None)
+        finally:
+            # Add outcome attributes to agent execution span
+            if _agent_outcome:
+                _agent_span.set_attribute("massgen.outcome", _agent_outcome)
+            if _agent_voted_for:
+                _agent_span.set_attribute("massgen.voted_for", _agent_voted_for)
+            if _agent_voted_for_label:
+                _agent_span.set_attribute("massgen.voted_for_label", _agent_voted_for_label)
+            if _agent_answer_label:
+                _agent_span.set_attribute("massgen.answer_label", _agent_answer_label)
+            if _agent_error_message:
+                _agent_span.set_attribute("massgen.error_message", _agent_error_message)
+
+            # Add token usage and cost to agent execution span before closing
+            # Note: Use "usage" instead of "tokens" to avoid logfire's security scrubbing
+            if hasattr(agent.backend, "token_usage") and agent.backend.token_usage:
+                token_usage = agent.backend.token_usage
+                _agent_span.set_attribute("massgen.usage.input", token_usage.input_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.output", token_usage.output_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.reasoning", token_usage.reasoning_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.cached_input", token_usage.cached_input_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.cost", round(token_usage.estimated_cost or 0, 6))
+
+            # Close the agent execution span for hierarchical tracing
+            # Wrap in try/except to handle OpenTelemetry context issues in async generators
+            try:
+                _agent_span_cm.__exit__(None, None, None)
+            except ValueError as e:
+                # Context detach failures are expected in async generators - safe to ignore
+                # The span is still closed, just the context token can't be detached
+                if "context" not in str(e).lower() and "detach" not in str(e).lower():
+                    logger.debug(f"Unexpected ValueError closing agent span: {e}")
+
+            # Clear the round context
+            clear_current_round()
 
     async def _get_next_chunk(self, stream: AsyncGenerator[tuple, None]) -> tuple:
         """Get the next chunk from an agent stream."""
@@ -4721,6 +4841,13 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
     async def get_final_presentation(self, selected_agent_id: str, vote_results: Dict[str, Any]) -> AsyncGenerator[StreamChunk, None]:
         """Ask the winning agent to present their final answer with voting context."""
+        # Guard against duplicate presentations (e.g., if timeout handler runs after presentation started)
+        if self._presentation_started:
+            logger.warning(f"Presentation already started, skipping duplicate call for {selected_agent_id}")
+            yield StreamChunk(type="status", content="Presentation already in progress, skipping duplicate...")
+            return
+        self._presentation_started = True
+
         # Start tracking the final round
         self.coordination_tracker.start_final_round(selected_agent_id)
 
@@ -4730,6 +4857,30 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             return
 
         agent = self.agents[selected_agent_id]
+
+        # Create presentation span for hierarchical tracing in Logfire
+        tracer = get_tracer()
+        final_round = self.coordination_tracker.get_agent_round(selected_agent_id)
+        backend_name = agent.backend.get_provider_name() if hasattr(agent.backend, "get_provider_name") else "unknown"
+
+        span_attributes = {
+            "massgen.agent_id": selected_agent_id,
+            "massgen.iteration": self.coordination_tracker.current_iteration,
+            "massgen.round": final_round,
+            "massgen.round_type": "presentation",
+            "massgen.backend": backend_name,
+            "massgen.is_winner": True,
+            "massgen.vote_count": vote_results.get("vote_counts", {}).get(selected_agent_id, 0),
+        }
+
+        _presentation_span_cm = tracer.span(
+            f"agent.{selected_agent_id}.presentation",
+            attributes=span_attributes,
+        )
+        _presentation_span = _presentation_span_cm.__enter__()  # Capture yielded span for set_attribute()
+
+        # Set the round context for nested tool calls to use
+        set_current_round(final_round, "presentation")
 
         # Enable write access for final agent on context paths. This ensures that those paths marked `write` by the user are now writable (as all previous agents were read-only).
         if agent.backend.filesystem_manager:
@@ -5079,6 +5230,27 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
             # Mark final round as completed
             self.coordination_tracker.change_status(selected_agent_id, AgentStatus.COMPLETED)
+
+            # Add token usage and cost to presentation span before closing
+            if hasattr(agent.backend, "token_usage") and agent.backend.token_usage:
+                token_usage = agent.backend.token_usage
+                _presentation_span.set_attribute("massgen.usage.input", token_usage.input_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.output", token_usage.output_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.reasoning", token_usage.reasoning_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.cached_input", token_usage.cached_input_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.cost", round(token_usage.estimated_cost or 0, 6))
+
+            # Close the presentation span for hierarchical tracing
+            # Wrap in try/except to handle OpenTelemetry context issues in async generators
+            try:
+                _presentation_span_cm.__exit__(None, None, None)
+            except ValueError as e:
+                # Context detach failures are expected in async generators - safe to ignore
+                if "context" not in str(e).lower() and "detach" not in str(e).lower():
+                    logger.debug(f"Unexpected ValueError closing presentation span: {e}")
+
+            # Clear the round context
+            clear_current_round()
 
         # Don't yield done here - let _present_final_answer handle final done after post-evaluation
 
