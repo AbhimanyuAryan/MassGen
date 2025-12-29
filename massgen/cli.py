@@ -87,6 +87,25 @@ def load_env_file():
 # Load .env file at module import
 load_env_file()
 
+
+def _setup_logfire_observability():
+    """Configure Logfire observability and instrument all LLM providers.
+
+    This sets up structured logging/tracing via Logfire and instruments
+    all supported LLM provider clients (OpenAI, Anthropic, Google GenAI).
+    """
+    from .logger_config import integrate_logfire_with_loguru
+    from .structured_logging import configure_observability, get_tracer
+
+    configure_observability(enabled=True)
+    integrate_logfire_with_loguru()
+    # Instrument all LLM providers globally
+    tracer = get_tracer()
+    tracer.instrument_google_genai()  # Gemini
+    tracer.instrument_openai()  # OpenAI-compatible APIs
+    tracer.instrument_anthropic()  # Claude
+
+
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -913,7 +932,7 @@ def create_agents_from_config(
         if config_path:
             backend_config["_config_path"] = config_path
 
-        # Get agent_id for AgentConfig (but don't add to backend_config to avoid duplicate kwargs)
+        # Get agent_id for AgentConfig and backend (needed for MCP tool span correlation)
         agent_id = agent_data.get("id", f"agent{i}")
 
         # Emit progress for this agent
@@ -924,7 +943,8 @@ def create_agents_from_config(
                 f"Backend: {backend_type}",
             )
 
-        backend = create_backend(backend_type, **backend_config)
+        # Pass agent_id to backend for MCP tool span correlation
+        backend = create_backend(backend_type, agent_id=agent_id, **backend_config)
         backend_params = {k: v for k, v in backend_config.items() if k not in ("type", "_config_path")}
 
         backend_type_lower = backend_type.lower()
@@ -4963,6 +4983,10 @@ async def main(args):
     # Setup logging (only for actual agent runs, not special commands)
     setup_logging(debug=args.debug)
 
+    # Configure Logfire observability if requested
+    if getattr(args, "logfire", False):
+        _setup_logfire_observability()
+
     if args.debug:
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
@@ -5753,6 +5777,11 @@ Environment Variables:
         help="Enable debug mode with verbose logging",
     )
     parser.add_argument(
+        "--logfire",
+        action="store_true",
+        help="Enable Logfire observability for structured tracing of LLM calls, tool executions, and orchestration",
+    )
+    parser.add_argument(
         "--web",
         action="store_true",
         help="Launch web UI server for real-time visualization",
@@ -6053,6 +6082,10 @@ Environment Variables:
 
     # Setup logging for all other commands (actual execution, setup, init, etc.)
     setup_logging(debug=args.debug)
+
+    # Configure Logfire observability if requested
+    if args.logfire:
+        _setup_logfire_observability()
 
     if args.debug:
         logger.info("Debug mode enabled")

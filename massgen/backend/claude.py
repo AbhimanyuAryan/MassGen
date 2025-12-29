@@ -36,6 +36,7 @@ from ..api_params_handler import ClaudeAPIParamsHandler
 from ..formatter import ClaudeFormatter
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..mcp_tools.backend_utils import MCPErrorHandler
+from ..structured_logging import trace_llm_api_call
 from .base import FilesystemSupport, StreamChunk
 from .base_with_custom_tool_and_mcp import (
     CustomToolAndMCPBackend,
@@ -591,15 +592,22 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         model = api_params.get("model", "unknown")
         self.start_api_call_timing(model)
 
-        # Create stream (handle betas)
-        try:
-            if "betas" in api_params:
-                stream = await client.beta.messages.create(**api_params)
-            else:
-                stream = await client.messages.create(**api_params)
-        except Exception as e:
-            self.end_api_call_timing(success=False, error=str(e))
-            raise
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider="anthropic",
+            model=model,
+            operation="stream",
+        ):
+            # Create stream (handle betas)
+            try:
+                if "betas" in api_params:
+                    stream = await client.beta.messages.create(**api_params)
+                else:
+                    stream = await client.messages.create(**api_params)
+            except Exception as e:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         # Process stream chunks
         async for chunk in self._process_stream(stream, all_params, agent_id):
@@ -806,15 +814,22 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         model = api_params.get("model", "unknown")
         self.start_api_call_timing(model)
 
-        # Create stream (handle code execution beta)
-        try:
-            if "betas" in api_params:
-                stream = await client.beta.messages.create(**api_params)
-            else:
-                stream = await client.messages.create(**api_params)
-        except Exception as e:
-            self.end_api_call_timing(success=False, error=str(e))
-            raise
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider="anthropic",
+            model=model,
+            operation="stream",
+        ):
+            # Create stream (handle code execution beta)
+            try:
+                if "betas" in api_params:
+                    stream = await client.beta.messages.create(**api_params)
+                else:
+                    stream = await client.messages.create(**api_params)
+            except Exception as e:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         content = ""
         current_tool_uses: Dict[str, Dict[str, Any]] = {}
@@ -1641,7 +1656,18 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         super().reset_token_usage()
 
     def _create_client(self, **kwargs):
-        return anthropic.AsyncAnthropic(api_key=self.api_key)
+        client = anthropic.AsyncAnthropic(api_key=self.api_key)
+        # Instrument client for Logfire observability if enabled
+        try:
+            from massgen.structured_logging import get_tracer, is_observability_enabled
+
+            if is_observability_enabled():
+                get_tracer().instrument_anthropic(client)
+        except ImportError:
+            pass  # structured_logging module not available
+        except Exception as e:
+            logger.warning(f"Failed to instrument Anthropic client for observability: {e}")
+        return client
 
     def get_provider_name(self) -> str:
         """Get the provider name."""
