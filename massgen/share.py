@@ -10,6 +10,7 @@ Enhanced to support:
 - Workspace artifact inclusion with size limits and interactive prompts
 """
 
+import base64
 import fnmatch
 import json
 import re
@@ -25,11 +26,106 @@ from rich.console import Console
 from .filesystem_manager._constants import MAX_FILE_SIZE_FOR_SHARING as MAX_FILE_SIZE
 from .filesystem_manager._constants import MAX_FILES_FOR_SHARING as MAX_FILES
 from .filesystem_manager._constants import MAX_TOTAL_SIZE_FOR_SHARING as MAX_TOTAL_SIZE
+from .filesystem_manager._constants import OFFICE_DOCUMENT_EXTENSIONS
 from .filesystem_manager._constants import SHARE_EXCLUDE_DIRS as EXCLUDE_PATTERNS
 from .filesystem_manager._constants import (
     SHARE_EXCLUDE_EXTENSIONS as EXCLUDE_EXTENSIONS,
 )
 from .filesystem_manager._constants import WORKSPACE_INCLUDE_EXTENSIONS
+
+# =============================================================================
+# Office Document PDF Conversion
+# =============================================================================
+
+# Docker image for LibreOffice conversion
+MASSGEN_DOCKER_IMAGE = "ghcr.io/massgen/mcp-runtime:latest"
+
+
+def convert_office_to_pdf(file_path: Path, console: Optional[Console] = None) -> Optional[bytes]:
+    """Convert DOCX/PPTX/XLSX to PDF using Docker + LibreOffice.
+
+    Uses the same approach as the webui /api/convert/document endpoint.
+
+    Args:
+        file_path: Path to the Office document
+        console: Optional Rich console for logging warnings
+
+    Returns:
+        PDF bytes if successful, None if conversion failed or Docker unavailable
+    """
+    try:
+        import docker
+
+        client = docker.from_env()
+        client.ping()
+    except ImportError:
+        if console:
+            console.print("[yellow]Docker Python package not installed - skipping Office document conversion[/yellow]")
+        return None
+    except Exception:
+        if console:
+            console.print("[yellow]Docker not available - skipping Office document conversion[/yellow]")
+        return None
+
+    # Check if MassGen image exists
+    try:
+        client.images.get(MASSGEN_DOCKER_IMAGE)
+    except Exception:
+        if console:
+            console.print(f"[yellow]MassGen Docker image not found. Run: docker pull {MASSGEN_DOCKER_IMAGE}[/yellow]")
+        return None
+
+    # Create temp directory for output
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+
+        # Run LibreOffice conversion in container
+        # Docker requires absolute paths for volume mounts
+        input_dir = file_path.parent.resolve()
+        input_filename = file_path.name
+        output_filename = file_path.stem + ".pdf"
+
+        try:
+            # Run soffice in container
+            client.containers.run(
+                MASSGEN_DOCKER_IMAGE,
+                command=[
+                    "/bin/sh",
+                    "-c",
+                    f"soffice --headless --convert-to pdf --outdir /output '/input/{input_filename}'",
+                ],
+                volumes={
+                    str(input_dir): {"bind": "/input", "mode": "ro"},
+                    str(temp_dir_path): {"bind": "/output", "mode": "rw"},
+                },
+                remove=True,
+                user="root",  # LibreOffice needs write access to home dir
+                stderr=True,
+                stdout=True,
+            )
+
+            # Check if PDF was created
+            output_pdf = temp_dir_path / output_filename
+            if not output_pdf.exists():
+                # Try alternate output name (sometimes LibreOffice changes case)
+                for f in temp_dir_path.iterdir():
+                    if f.suffix.lower() == ".pdf":
+                        output_pdf = f
+                        break
+
+            if not output_pdf.exists():
+                if console:
+                    console.print(f"[yellow]PDF conversion failed for {file_path.name}[/yellow]")
+                return None
+
+            # Read and return the PDF bytes
+            return output_pdf.read_bytes()
+
+        except Exception as e:
+            if console:
+                console.print(f"[yellow]PDF conversion error for {file_path.name}: {e}[/yellow]")
+            return None
+
 
 # =============================================================================
 # Data Classes for Multi-Turn Sharing
@@ -260,17 +356,23 @@ def collect_files_multi_turn(
     turns: List["TurnInfo"],
     include_workspace: bool = True,
     workspace_limit: int = 500_000,
+    console: Optional[Console] = None,
 ) -> Tuple[Dict[str, str], List[Tuple[str, int]], List[WorkspaceWarning]]:
     """Collect files from all turns in a multi-turn session.
 
     Unlike collect_files() which only collects from a single attempt directory,
     this function iterates over all turns and prefixes files with turn/attempt info.
 
+    For Office documents (.docx, .pptx, .xlsx):
+    - Includes the original file as base64 (for download)
+    - Also converts to PDF and includes that (for preview)
+
     Args:
         session_root: Path to the session root directory
         turns: List of TurnInfo objects for turns to include
         include_workspace: Whether to include workspace artifacts
         workspace_limit: Maximum workspace size per agent in bytes
+        console: Optional Rich console for logging
 
     Returns:
         Tuple of (files dict, skipped list, workspace warnings)
@@ -282,6 +384,8 @@ def collect_files_multi_turn(
     skipped: List[Tuple[str, int]] = []
     warnings: List[WorkspaceWarning] = []
     total_size = 0
+    # Track if we've already shown Docker warning (avoid duplicates)
+    _docker_warning_shown = False
 
     for turn in turns:
         turn_prefix = f"turn_{turn.turn_number}__attempt_{turn.attempt_number}__"
@@ -337,13 +441,46 @@ def collect_files_multi_turn(
                 continue
 
             try:
-                content = file_path.read_text(errors="replace")
-                if not content.strip():
-                    continue
                 # Flatten path with turn prefix
                 flat_name = turn_prefix + rel_path.replace("/", "__").replace("\\", "__")
-                files[flat_name] = content
-                total_size += size
+                suffix = file_path.suffix.lower()
+
+                # Handle Office documents specially (binary files)
+                if suffix in OFFICE_DOCUMENT_EXTENSIONS:
+                    # Read as binary and encode as base64
+                    binary_content = file_path.read_bytes()
+                    content = base64.b64encode(binary_content).decode("utf-8")
+                    files[flat_name] = content
+                    total_size += size
+
+                    # Also convert to PDF for preview
+                    pdf_bytes = convert_office_to_pdf(
+                        file_path,
+                        console if not _docker_warning_shown else None,
+                    )
+                    if pdf_bytes:
+                        pdf_content = base64.b64encode(pdf_bytes).decode("utf-8")
+                        pdf_flat_name = flat_name + ".pdf"
+                        pdf_size = len(pdf_bytes)
+                        files[pdf_flat_name] = pdf_content
+                        total_size += pdf_size
+                        if console:
+                            console.print(f"  [dim]Converted {file_path.name} → PDF for preview[/dim]")
+                    else:
+                        _docker_warning_shown = True
+                elif suffix == ".pdf":
+                    # PDF files - read as binary and encode as base64
+                    binary_content = file_path.read_bytes()
+                    content = base64.b64encode(binary_content).decode("utf-8")
+                    files[flat_name] = content
+                    total_size += size
+                else:
+                    # Text files - read as text
+                    content = file_path.read_text(errors="replace")
+                    if not content.strip():
+                        continue
+                    files[flat_name] = content
+                    total_size += size
             except (OSError, UnicodeDecodeError):
                 skipped.append((f"{turn_prefix}{rel_path}", size))
                 continue
@@ -355,6 +492,7 @@ def collect_workspace_files(
     session_root: Path,
     turns: List["TurnInfo"],
     limit_per_agent: int = 500_000,
+    console: Optional[Console] = None,
 ) -> Dict[str, Tuple[str, int]]:
     """Collect workspace files from all turns with size tracking.
 
@@ -362,15 +500,22 @@ def collect_workspace_files(
     - turn_N/attempt_N/agent_id/timestamp/workspace/*
     - turn_N/attempt_N/final/agent_id/workspace/*
 
+    For Office documents (.docx, .pptx, .xlsx):
+    - Includes the original file as base64 (for download)
+    - Also converts to PDF and includes that (for preview)
+
     Args:
         session_root: Path to the session root directory
         turns: List of TurnInfo objects
         limit_per_agent: Maximum workspace size per agent in bytes
+        console: Optional Rich console for logging
 
     Returns:
         Dict mapping flattened file paths to (content, size) tuples
     """
     workspace_files: Dict[str, Tuple[str, int]] = {}
+    # Track which Office files we've already warned about (avoid duplicate warnings)
+    _docker_warning_shown = False
 
     for turn in turns:
         attempt_dir = turn.attempt_path
@@ -417,17 +562,44 @@ def collect_workspace_files(
                     if agent_size + size > limit_per_agent:
                         continue
 
-                    content = file_path.read_text(errors="replace")
-                    if not content.strip():
-                        continue
-
                     # Create flattened path
                     rel_path = file_path.relative_to(attempt_dir)
                     turn_prefix = f"turn_{turn.turn_number}__attempt_{turn.attempt_number}__"
                     flat_name = turn_prefix + str(rel_path).replace("/", "__").replace("\\", "__")
 
-                    workspace_files[flat_name] = (content, size)
-                    agent_size += size
+                    # Handle Office documents specially (binary files)
+                    if suffix in OFFICE_DOCUMENT_EXTENSIONS:
+                        # Read as binary and encode as base64
+                        binary_content = file_path.read_bytes()
+                        content = base64.b64encode(binary_content).decode("utf-8")
+                        workspace_files[flat_name] = (content, size)
+                        agent_size += size
+
+                        # Also convert to PDF for preview
+                        pdf_bytes = convert_office_to_pdf(file_path, console if not _docker_warning_shown else None)
+                        if pdf_bytes:
+                            pdf_content = base64.b64encode(pdf_bytes).decode("utf-8")
+                            pdf_flat_name = flat_name + ".pdf"
+                            pdf_size = len(pdf_bytes)
+                            workspace_files[pdf_flat_name] = (pdf_content, pdf_size)
+                            agent_size += pdf_size
+                            if console:
+                                console.print(f"  [dim]Converted {file_path.name} → PDF for preview[/dim]")
+                        else:
+                            _docker_warning_shown = True
+                    elif suffix == ".pdf":
+                        # PDF files - read as binary and encode as base64
+                        binary_content = file_path.read_bytes()
+                        content = base64.b64encode(binary_content).decode("utf-8")
+                        workspace_files[flat_name] = (content, size)
+                        agent_size += size
+                    else:
+                        # Text files - read as text
+                        content = file_path.read_text(errors="replace")
+                        if not content.strip():
+                            continue
+                        workspace_files[flat_name] = (content, size)
+                        agent_size += size
 
                 except (OSError, UnicodeDecodeError):
                     continue
@@ -934,6 +1106,7 @@ def share_session_multi_turn(
         turns,
         include_workspace=include_workspace,
         workspace_limit=workspace_limit,
+        console=console,
     )
 
     if not files:
