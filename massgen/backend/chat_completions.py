@@ -30,6 +30,7 @@ from ..formatter import ChatCompletionsFormatter
 from ..llm_call_logger import get_llm_call_logger
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..stream_chunk import ChunkType
+from ..structured_logging import trace_llm_api_call
 
 # Local imports
 from ._constants import configure_openrouter_extra_body
@@ -214,6 +215,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         # Build API params for this iteration
         # Internal parameters (starting with _) are filtered by the API params handler
         all_params = {**self.config, **kwargs}
+        agent_id = kwargs.get("agent_id")
         api_params = await self.api_params_handler.build_api_params(current_messages, tools, all_params)
 
         # Enable usage tracking in streaming responses (required for token counting)
@@ -245,42 +247,52 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
         # Start API call timing
         model = api_params.get("model", "unknown")
+        provider = self.get_provider_name().lower()
         self.start_api_call_timing(model)
 
-        # Start streaming - wrap in try/except for context length errors
-        try:
-            stream = await client.chat.completions.create(**api_params)
-        except Exception as e:
-            if is_context_length_error(e) and not _compression_retry:
-                # Context length exceeded on initial request - compress and retry
-                logger.warning(
-                    f"[{self.get_provider_name()}] Context length exceeded on request, " f"triggering reactive compression: {e}",
-                )
-                self.end_api_call_timing(success=False, error=str(e))
-                yield StreamChunk(
-                    type="status",
-                    content="⚠️ Context limit reached, compressing conversation...",
-                )
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider=provider,
+            model=model,
+            operation="stream",
+        ) as llm_span:
+            # Start streaming - wrap in try/except for context length errors
+            try:
+                stream = await client.chat.completions.create(**api_params)
+            except Exception as e:
+                if is_context_length_error(e) and not _compression_retry:
+                    # Context length exceeded on initial request - compress and retry
+                    llm_span.set_attribute("massgen.context_compression", True)
+                    llm_span.set_attribute("massgen.compression_reason", "context_length_exceeded")
+                    logger.warning(
+                        f"[{self.get_provider_name()}] Context length exceeded on request, " f"triggering reactive compression: {e}",
+                    )
+                    self.end_api_call_timing(success=False, error=str(e))
+                    yield StreamChunk(
+                        type="status",
+                        content="⚠️ Context limit reached, compressing conversation...",
+                    )
 
-                # Compress messages and retry
-                compressed_messages = await self._compress_messages_for_context_recovery(
-                    current_messages,
-                    buffer_content=None,  # No partial response yet
-                )
+                    # Compress messages and retry
+                    compressed_messages = await self._compress_messages_for_context_recovery(
+                        current_messages,
+                        buffer_content=None,  # No partial response yet
+                    )
 
-                # Retry with compressed messages
-                async for chunk in self._stream_with_custom_and_mcp_tools(
-                    compressed_messages,
-                    tools,
-                    client,
-                    _compression_retry=True,  # Prevent infinite loops
-                    **kwargs,
-                ):
-                    yield chunk
-                return
-            else:
-                self.end_api_call_timing(success=False, error=str(e))
-                raise  # Re-raise non-context errors or if already retried
+                    # Retry with compressed messages (recursive call has its own trace)
+                    async for chunk in self._stream_with_custom_and_mcp_tools(
+                        compressed_messages,
+                        tools,
+                        client,
+                        _compression_retry=True,  # Prevent infinite loops
+                        **kwargs,
+                    ):
+                        yield chunk
+                    return
+                else:
+                    self.end_api_call_timing(success=False, error=str(e))
+                    raise  # Re-raise non-context errors or if already retried
 
         # Track function calls in this iteration
         captured_function_calls = []
@@ -1071,7 +1083,18 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
         all_params = {**self.config, **kwargs}
         base_url = all_params.get("base_url", "https://api.openai.com/v1")
-        return openai.AsyncOpenAI(api_key=self.api_key, base_url=base_url)
+        client = openai.AsyncOpenAI(api_key=self.api_key, base_url=base_url)
+        # Instrument client for Logfire observability if enabled
+        try:
+            from massgen.structured_logging import get_tracer, is_observability_enabled
+
+            if is_observability_enabled():
+                get_tracer().instrument_openai(client)
+        except ImportError:
+            pass  # structured_logging module not available
+        except Exception as e:
+            logger.warning(f"Failed to instrument OpenAI client for observability: {e}")
+        return client
 
     def _handle_reasoning_transition(self, log_prefix: str, agent_id: Optional[str]) -> Optional[StreamChunk]:
         """Handle reasoning state transition and return StreamChunk if transition occurred."""

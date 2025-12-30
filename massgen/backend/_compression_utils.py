@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import httpx
 
 from ..logger_config import get_log_session_dir, logger
+from ..structured_logging import log_context_compression
 
 if TYPE_CHECKING:
     from .base import BackendBase
@@ -220,6 +221,23 @@ To continue:
 
     logger.info(
         f"[CompressionUtils] Compressed {len(messages)} messages to {len(result)} messages",
+    )
+
+    # Calculate character counts for structured logging
+    original_char_count = sum(len(m.get("content", "")) if isinstance(m.get("content"), str) else 0 for m in messages)
+    compressed_char_count = sum(len(m.get("content", "")) if isinstance(m.get("content"), str) else 0 for m in result)
+    compression_ratio = compressed_char_count / original_char_count if original_char_count > 0 else 0.0
+
+    # Log structured compression event
+    log_context_compression(
+        agent_id=getattr(backend, "agent_id", "unknown"),
+        reason="context_length_exceeded",
+        original_message_count=len(messages),
+        compressed_message_count=len(result),
+        original_char_count=original_char_count,
+        compressed_char_count=compressed_char_count,
+        compression_ratio=compression_ratio,
+        success=True,
     )
 
     # Check if result still exceeds context and apply truncation if needed

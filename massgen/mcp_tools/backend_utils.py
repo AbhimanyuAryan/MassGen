@@ -677,7 +677,7 @@ class MCPResourceManager:
         return None
 
     @staticmethod
-    def convert_tools_to_functions(mcp_client, backend_name: str | None = None, agent_id: str | None = None, hook_manager=None) -> dict[str, Function]:
+    def convert_tools_to_functions(mcp_client, backend_name: str | None = None, agent_id: str | None = None, hook_manager=None, backend=None) -> dict[str, Function]:
         """Convert MCP tools to Function objects with hook support.
 
         Args:
@@ -685,6 +685,7 @@ class MCPResourceManager:
             backend_name: Optional backend name for logging context
             agent_id: Optional agent ID for logging context
             hook_manager: Optional hook manager for function hooks
+            backend: Optional backend instance for round tracking context
 
         Returns:
             Dictionary mapping tool names to Function objects
@@ -697,8 +698,8 @@ class MCPResourceManager:
 
         for tool_name, tool in mcp_client.tools.items():
             try:
-                # Fix closure bug by using default parameter to capture tool_name
-                def create_tool_entrypoint(captured_tool_name: str = tool_name):
+                # Fix closure bug by using default parameter to capture tool_name, agent_id, and backend
+                def create_tool_entrypoint(captured_tool_name: str = tool_name, captured_agent_id: str | None = agent_id, captured_backend=backend):
                     async def tool_entrypoint(input_str: str) -> Any:
                         try:
                             arguments = json.loads(input_str)
@@ -707,14 +708,29 @@ class MCPResourceManager:
                                 backend_name,
                                 "invalid JSON arguments for tool",
                                 {"tool_name": captured_tool_name, "error": str(e)},
-                                agent_id=agent_id,
+                                agent_id=captured_agent_id,
                             )
                             raise MCPValidationError(
                                 f"Invalid JSON arguments for tool {captured_tool_name}: {e}",
                                 field="arguments",
                                 value=input_str,
                             )
-                        return await mcp_client.call_tool(captured_tool_name, arguments)
+                        # Get round tracking info from backend if available
+                        round_number = None
+                        round_type = None
+                        if captured_backend is not None:
+                            try:
+                                round_number = captured_backend.get_current_round_number()
+                                round_type = captured_backend.get_current_round_type()
+                            except AttributeError:
+                                pass  # Backend doesn't have round tracking methods
+                        return await mcp_client.call_tool(
+                            captured_tool_name,
+                            arguments,
+                            agent_id=captured_agent_id,
+                            round_number=round_number,
+                            round_type=round_type,
+                        )
 
                     return tool_entrypoint
 

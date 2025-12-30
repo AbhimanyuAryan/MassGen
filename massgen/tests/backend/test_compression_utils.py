@@ -385,7 +385,7 @@ class TestCompressMessagesForRecovery:
 
         # Last message should be the assistant summary
         assert result[-1]["role"] == "assistant"
-        assert "[Previous conversation summary]" in result[-1]["content"]
+        assert "[CONTEXT RECOVERY" in result[-1]["content"]
 
     @pytest.mark.asyncio
     async def test_includes_buffer_content_in_summary(self, mock_streaming_backend, sample_messages):
@@ -423,7 +423,7 @@ class TestCompressMessagesForRecovery:
         )
 
         # Should produce a result with summary
-        assert any("[Previous conversation summary]" in str(msg.get("content", "")) for msg in result)
+        assert any("[CONTEXT RECOVERY" in str(msg.get("content", "")) for msg in result)
 
     @pytest.mark.asyncio
     async def test_handles_api_error_gracefully(self, mock_backend, sample_messages):

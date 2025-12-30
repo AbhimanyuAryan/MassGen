@@ -383,6 +383,30 @@ def setup_logging(debug: bool = False, log_file: Optional[str] = None, turn: Opt
         logger.info("Streaming debug log: {}", streaming_debug_log)
 
 
+def integrate_logfire_with_loguru():
+    """
+    Integrate Logfire with loguru so that log messages are also sent to Logfire.
+
+    This should be called after both setup_logging() and configure_observability()
+    have been called. It uses Logfire's built-in loguru instrumentation.
+    """
+    try:
+        from .structured_logging import is_observability_enabled
+
+        if not is_observability_enabled():
+            return
+
+        import logfire
+
+        # Logfire has built-in loguru integration
+        logfire.instrument_loguru()
+        logger.debug("Logfire integrated with loguru")
+    except ImportError:
+        pass  # Logfire not available
+    except Exception as e:
+        logger.debug(f"Could not integrate Logfire with loguru: {e}")
+
+
 def suppress_console_logging():
     """
     Temporarily suppress console logging to prevent interference with Rich Live display.
@@ -840,6 +864,7 @@ def _format_message(message: dict) -> str:
 __all__ = [
     "logger",
     "setup_logging",
+    "integrate_logfire_with_loguru",
     "suppress_console_logging",
     "restore_console_logging",
     "get_logger",
