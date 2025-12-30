@@ -731,7 +731,7 @@ MassGen uses **buffer-based context tracking** to accurately monitor token usage
 **Token Tracking Priority**:
 
 1. **Official API counts** (at stream end): Most accurate for cost/pricing
-2. **Buffer estimation** (fallback): Captures all content when API counts unavailable
+2. **Buffer estimation** (fallback): Captures all content provided by API
 
 Monitor context usage in real-time:
 
@@ -740,7 +740,7 @@ Monitor context usage in real-time:
    # Using official API token counts (most accurate)
    📊 Context Window (Turn 5): 45,000 / 128,000 tokens (35%) [API actual]
 
-   # Using buffer estimation (fallback)
+   # Using buffer estimation (fallback, assuming API provides all content)
    📊 Context Buffer (Turn 5): 45,000 / 128,000 tokens (35%) [buffer]
 
 When compression triggers:
@@ -760,7 +760,7 @@ The conversation buffer is the true source of context sent to agents. Unlike mes
 - Tool results (can be very large)
 - Injections from other agents
 - Pending content not yet flushed
-- Reasoning/thinking content
+- Reasoning/thinking content (may not be available, depending on the API)
 
 This provides accurate context usage even mid-stream, before official API counts are available.
 
@@ -1342,7 +1342,7 @@ Planned Features
 
 **1. Proactive Streaming Interruption** *(Partially Implemented)*
 
-**Implemented (v0.1.25+)**: Buffer-based token tracking captures ALL content during streaming:
+**Implemented**: Buffer-based token tracking captures ALL content during streaming:
 
 .. code-block:: text
 
@@ -1425,6 +1425,7 @@ Buffer-based tracking now provides context estimates during streaming:
 - ✅ **Accurate tracking**: Includes tool calls, results, injections, reasoning
 - ❌ Can't stop mid-response if too large (proactive interruption planned)
 - ❌ No real-time budget warnings to agent yet
+- ❌ Reasoning not provided by APIs so buffer can be inaccurate
 
 **Workaround**: Set conservative compression thresholds (50-60%) to leave headroom.
 

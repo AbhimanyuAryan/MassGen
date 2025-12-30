@@ -11,28 +11,52 @@ COMPRESSION_REQUEST = """
 Your context window is at {usage_percent:.0%} capacity ({current_tokens:,}/{max_tokens:,} tokens).
 Before continuing, you MUST save memories and signal completion.
 
+## IMPORTANT: Preserve Task Context
+
+Before writing your summary, read these files to ensure you preserve full context:
+1. `tasks/plan.json` - Your current task plan (if exists)
+2. `tasks/evolving_skill/SKILL.md` - Your workflow plan (if exists)
+
 ## Required Steps:
 
 ### 1. Write Short-Term Summary
-Write a summary to `memory/short_term/recent.md` containing:
+Write a DETAILED summary to `memory/short_term/recent.md` containing:
 
 ```markdown
 # Recent Conversation Summary
 
-## Current Task
-[What you're working on]
+## Task Context
+[Brief description of what you're working on]
+
+## Current Task Plan
+[Summary of your task plan from tasks/ if applicable]
 
 ## Key Progress
-- [Decisions made]
-- [Files modified]
-- [Important findings]
+- [Decisions made with context and reasoning]
+- [Files created/modified with full paths]
+- [Important findings with specifics]
+
+## Environment Setup
+- [Packages installed: pip install X, npm install Y]
+- [Directories created]
+- [Any configuration changes]
 
 ## Tool Results
-- [Key tool outputs worth preserving]
+- [Key tool calls and their outputs]
+- [Function signatures or patterns discovered]
+- [Errors encountered and how they were resolved]
+
+## Current State
+- [Where you are in the workflow]
+- [What has been completed vs what remains]
 
 ## Next Steps
-- [What remains to do]
+- [Specific remaining work with details]
 ```
+
+**CRITICAL**: The summary must be DETAILED ENOUGH that you can continue work after
+context truncation. Vague summaries like "working on website" are NOT acceptable.
+Include specific file paths, decisions made, and actual content where relevant.
 
 ### 2. Write Long-Term Memories (if applicable)
 Save any information worth preserving across sessions to `memory/long_term/[name].md`:

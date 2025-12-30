@@ -129,27 +129,38 @@ When an agent provides a ``new_answer`` while other agents are working, MassGen 
 
 .. code-block:: text
 
-   Agent A: Working on solution... [deep in analysis]
+   Agent A: Working on solution... [completes response]
    Agent B: Provides new_answer
             ↓
-   Agent A: Receive UPDATE → Inject new context → Continue working
-            ✅ Preserved all partial work and thinking
+   Agent A: Receive UPDATE → Append to conversation → New API call
+            ✅ Preserved conversation history
             ✅ Can now build on Agent B's answer
+
+**How It Works:**
+
+When Agent B provides a ``new_answer``, the orchestrator appends an UPDATE message to Agent A's
+conversation history containing Agent B's answer. Agent A then makes a **new API call** with
+this extended context. This preserves the conversation history but requires a fresh inference call.
+
+.. note::
+
+   **Future Enhancement**: True mid-stream injection within tool responses is planned, which would
+   allow updates to be injected while an agent is actively streaming, preserving in-progress thinking.
+   Currently, updates are only processed between API calls.
 
 **Benefits:**
 
-1. **Context Preservation**: Agents keep their full thinking history
-2. **Efficiency**: No wasted computation regenerating ideas
-3. **Better Collaboration**: Agents can synthesize multiple perspectives
-4. **Natural Building**: Agents reference and improve each other's work
+1. **Conversation Preservation**: Agents keep their full conversation history
+2. **Collaboration**: Agents can synthesize and build on each other's work
+3. **No Full Restart**: Agents don't lose their accumulated context
 
-**Update Injection**:
+**Update Injection Points**:
 
 Updates are injected at **safe points** during agent execution:
 
 * Between iteration loops (after completing a response)
 * When agent checks for new context
-* NOT mid-stream (would break agent reasoning)
+* Between API calls (not mid-stream)
 
 **Race Condition**: If an agent is deep in its first response when a new answer arrives, it won't see the injection until completing that response. By then, it may already have full context from the orchestrator's normal flow. This is acceptable - the agent still gets all answers, just via different mechanism (full context on next spawn vs. injection mid-work).
 

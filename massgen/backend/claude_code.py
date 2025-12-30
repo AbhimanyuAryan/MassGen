@@ -863,16 +863,24 @@ class ClaudeCodeBackend(LLMBackend):
                 ],
             }
 
-        # Inject multimodal_config if available (for read_media tool)
-        if hasattr(self, "_multimodal_config") and self._multimodal_config:
-            if "multimodal_config" not in args:
-                args["multimodal_config"] = self._multimodal_config
+        # Build execution context for context param injection
+        # The tool manager will only inject params that match @context_params decorator
+        execution_context = {}
+        if hasattr(self, "_execution_context") and self._execution_context:
+            try:
+                execution_context = self._execution_context.model_dump()
+            except Exception:
+                pass
 
-        # Inject backend context for tools that need it
-        if "backend_type" not in args:
-            args["backend_type"] = "claude_code"
-        if "model" not in args:
-            args["model"] = self.config.get("model", "claude-sonnet-4-5-20250929")
+        # Ensure agent_cwd is always available for custom tools
+        # Use filesystem_manager's cwd which is set to the agent's workspace
+        if self.filesystem_manager:
+            execution_context["agent_cwd"] = str(self.filesystem_manager.cwd)
+            # Also add allowed_paths for path validation
+            if hasattr(self.filesystem_manager, "path_permission_manager") and self.filesystem_manager.path_permission_manager:
+                paths = self.filesystem_manager.path_permission_manager.get_mcp_filesystem_paths()
+                if paths:
+                    execution_context["allowed_paths"] = paths
 
         tool_request = {
             "name": tool_name,
@@ -881,7 +889,10 @@ class ClaudeCodeBackend(LLMBackend):
 
         result_text = ""
         try:
-            async for result in self._custom_tool_manager.execute_tool(tool_request):
+            async for result in self._custom_tool_manager.execute_tool(
+                tool_request,
+                execution_context=execution_context,
+            ):
                 # Accumulate ExecutionResult blocks
                 if hasattr(result, "output_blocks"):
                     for block in result.output_blocks:

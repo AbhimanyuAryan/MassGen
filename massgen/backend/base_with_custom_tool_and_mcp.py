@@ -131,6 +131,11 @@ class ExecutionContext(BaseModel):
     model: Optional[str] = None  # Model name for capability lookup
     current_stage: Optional[CoordinationStage] = None
 
+    # Workspace context for file operations and multimodal tools
+    agent_cwd: Optional[str] = None  # Working directory for file operations
+    allowed_paths: Optional[List[str]] = None  # Allowed paths for file access
+    multimodal_config: Optional[Dict[str, Any]] = None  # Multimodal generation config
+
     # These will be computed after initialization
     system_messages: Optional[List[Dict[str, Any]]] = None
     user_messages: Optional[List[Dict[str, Any]]] = None
@@ -145,6 +150,9 @@ class ExecutionContext(BaseModel):
         backend_type: Optional[str] = None,
         model: Optional[str] = None,
         current_stage: Optional[CoordinationStage] = None,
+        agent_cwd: Optional[str] = None,
+        allowed_paths: Optional[List[str]] = None,
+        multimodal_config: Optional[Dict[str, Any]] = None,
     ):
         """Initialize execution context."""
         super().__init__(
@@ -155,6 +163,9 @@ class ExecutionContext(BaseModel):
             backend_type=backend_type,
             model=model,
             current_stage=current_stage,
+            agent_cwd=agent_cwd,
+            allowed_paths=allowed_paths,
+            multimodal_config=multimodal_config,
         )
         # Now you can process messages after Pydantic initialization
         self._process_messages()
@@ -1504,12 +1515,19 @@ class CustomToolAndMCPBackend(LLMBackend):
                 call_id,
             )
 
-            # Append result to messages (potentially evicted)
+            # Check for mid-stream injection content (updates from other agents)
+            injection_content = self.get_mid_stream_injection()
+
+            # Append result to messages (potentially evicted, potentially with injection)
             if eviction.was_evicted:
                 # Create a new result with the evicted reference
+                result_text = eviction.text
+                if injection_content:
+                    result_text = f"{result_text}\n{injection_content}"
+
                 if hasattr(result, "text"):
                     evicted_result = types.SimpleNamespace(
-                        text=eviction.text,
+                        text=result_text,
                         meta_info=getattr(result, "meta_info", None),
                     )
                     self._append_tool_result_message(
@@ -1522,11 +1540,38 @@ class CustomToolAndMCPBackend(LLMBackend):
                     self._append_tool_result_message(
                         updated_messages,
                         call,
-                        eviction.text,
+                        result_text,
                         config.tool_type,
                     )
             else:
-                self._append_tool_result_message(updated_messages, call, result, config.tool_type)
+                # Non-evicted result - potentially add injection
+                if injection_content:
+                    if hasattr(result, "text"):
+                        modified_result = types.SimpleNamespace(
+                            text=f"{result.text}\n{injection_content}",
+                            meta_info=getattr(result, "meta_info", None),
+                        )
+                        self._append_tool_result_message(
+                            updated_messages,
+                            call,
+                            modified_result,
+                            config.tool_type,
+                        )
+                    else:
+                        modified_result = f"{str(result)}\n{injection_content}"
+                        self._append_tool_result_message(
+                            updated_messages,
+                            call,
+                            modified_result,
+                            config.tool_type,
+                        )
+                else:
+                    self._append_tool_result_message(
+                        updated_messages,
+                        call,
+                        result,
+                        config.tool_type,
+                    )
 
             # Check for reminder in tool result and inject as separate user message
             reminder_text = None
@@ -2806,6 +2851,14 @@ class CustomToolAndMCPBackend(LLMBackend):
                 "",
             ),  # For model-specific multimodal capability lookup
             current_stage=self.coordination_stage,
+            # Workspace context for file operations and multimodal tools
+            agent_cwd=str(self.filesystem_manager.cwd) if self.filesystem_manager else None,
+            allowed_paths=(
+                self.filesystem_manager.path_permission_manager.get_mcp_filesystem_paths()
+                if self.filesystem_manager and hasattr(self.filesystem_manager, "path_permission_manager") and self.filesystem_manager.path_permission_manager
+                else None
+            ),
+            multimodal_config=self._multimodal_config if hasattr(self, "_multimodal_config") else None,
         )
 
         log_backend_activity(

@@ -219,7 +219,7 @@ Here's how agents asynchronously evaluate and respond during coordination:
 * **Asynchronous evaluation** - Agents evaluate continuously and independently (no synchronized rounds)
 * **Anonymized answers** - Agents don't know who provided which answer, reducing bias
 * **Actual agent prompt** - Agents evaluate "Does best CURRENT ANSWER address ORIGINAL MESSAGE well?"
-* **Inject-and-continue** - When any agent uses ``new_answer``, other agents receive an update mid-work and continue (preserving their thinking)
+* **Inject-and-continue** - When any agent uses ``new_answer``, other agents receive an update appended to their conversation and continue (preserving their conversation history, though a new API call is made). Future versions will inject mid-stream within tool responses for true mid-thought continuation.
 * **Natural consensus** - Coordination ends only when all agents vote (no ``new_answer`` calls)
 * **Democratic selection** - Winner determined by peer voting
 

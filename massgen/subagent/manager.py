@@ -537,6 +537,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
         except asyncio.TimeoutError:
             logger.error(f"[SubagentManager] Subagent {config.id} timed out")
+            # Still copy logs even on timeout - they contain useful debugging info
+            _, subprocess_log_dir = self._parse_subprocess_status(workspace)
+            self._write_subprocess_log_reference(config.id, subprocess_log_dir, error="Subagent timed out")
             return SubagentResult.create_timeout(
                 subagent_id=config.id,
                 workspace_path=str(workspace),
@@ -552,6 +555,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 except asyncio.TimeoutError:
                     process.kill()
             self._active_processes.pop(config.id, None)
+            # Still copy logs even on cancellation - they contain useful debugging info
+            _, subprocess_log_dir = self._parse_subprocess_status(workspace)
+            self._write_subprocess_log_reference(config.id, subprocess_log_dir, error="Subagent cancelled")
             return SubagentResult.create_error(
                 subagent_id=config.id,
                 error="Subagent cancelled",
@@ -560,6 +566,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             )
         except Exception as e:
             logger.error(f"[SubagentManager] Subagent {config.id} error: {e}")
+            # Still copy logs even on error - they contain useful debugging info
+            _, subprocess_log_dir = self._parse_subprocess_status(workspace)
+            self._write_subprocess_log_reference(config.id, subprocess_log_dir, error=str(e))
             return SubagentResult.create_error(
                 subagent_id=config.id,
                 error=str(e),
@@ -677,6 +686,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # Build coordination config - disable subagents to prevent nesting
         coord_settings = orch_config.coordination.copy() if orch_config and orch_config.coordination else {}
         coord_settings["enable_subagents"] = False  # CRITICAL: prevent nesting
+
+        # Apply max_new_answers limit to prevent runaway iterations
+        if orch_config and orch_config.max_new_answers:
+            coord_settings["max_new_answers"] = orch_config.max_new_answers
 
         orchestrator_config = {
             "snapshot_storage": str(workspace / "snapshots"),

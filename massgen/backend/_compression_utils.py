@@ -28,14 +28,43 @@ if TYPE_CHECKING:
 #
 # This prevents the model from confusing instructions in the conversation content
 # with the summarization task itself.
-SUMMARIZER_SYSTEM_PROMPT = """You summarize conversations. Include:
-1. User Request: What was asked for
-2. Work Done: Files read, tools used, code written
-3. Key Details: File paths, code snippets, technical findings
-4. Current State: Where things stand
-5. Pending: Remaining work
+SUMMARIZER_SYSTEM_PROMPT = """You summarize conversations for context continuity.
 
-Be thorough but concise. This summary replaces the original messages."""
+CRITICAL: You are summarizing an IN-PROGRESS conversation. The task is NOT COMPLETE.
+The agent MUST continue working after reading this summary. Do NOT imply work is done.
+
+Include ALL of the following:
+
+1. **Task Context**: Briefly describe the task being worked on (e.g., "Building a Bob Dylan website").
+
+2. **Work Completed**:
+   - Files created/modified (with full paths)
+   - Key tool calls and their results
+   - Code written or configurations made
+
+3. **Environment Setup**:
+   - Packages installed (e.g., `pip install jinja2`, `npm install playwright`)
+   - Directories created
+   - Environment variables or configurations set
+
+4. **Key Technical Details**:
+   - Specific file paths and their purposes
+   - Important decisions made and why
+   - Any errors encountered and how they were resolved (or still pending)
+   - Function signatures or API patterns discovered
+
+5. **Current State**: Where the work stands right now
+
+6. **Remaining Work / Next Steps** (CRITICAL - be explicit and detailed):
+   - List SPECIFIC tasks that MUST still be completed
+   - The agent MUST continue working after reading this summary
+   - Do NOT imply the work is finished - there is ALWAYS more to do unless the task is fully complete
+
+Be detailed - this summary replaces the original messages. The agent must be able
+to continue working effectively from this summary alone. Avoid vague descriptions
+like "working on website" - include specific files, decisions, and progress.
+
+REMEMBER: The agent will read this and CONTINUE WORKING. Make the remaining work clear."""
 
 # Conversation content - provided as separate message
 SUMMARIZER_CONVERSATION_PROMPT = """Here is the conversation to summarize:
@@ -164,10 +193,28 @@ async def compress_messages_for_recovery(
     # Add summary as assistant message LAST - this is the most recent context
     # the model sees, so it should continue from here rather than start fresh
     # Strip trailing whitespace to avoid Claude API error about trailing whitespace
+    # CRITICAL: Make it explicit that the agent must CONTINUE WORKING, not submit an answer
     result.append(
         {
             "role": "assistant",
-            "content": f"[Previous conversation summary]\n{summary.strip()}",
+            "content": f"""[CONTEXT RECOVERY - DO NOT CALL new_answer YET]
+
+You hit a context limit and your conversation was compressed. Below is a summary of your progress.
+
+**IMPORTANT**: You MUST CONTINUE WORKING on the task. Do NOT call `new_answer` until the task is fully complete.
+
+To continue:
+1. Read `tasks/plan.json` to see your task plan and remaining work
+2. Read `tasks/evolving_skill/SKILL.md` to see your workflow (if applicable)
+3. Continue executing the remaining tasks
+
+---
+
+{summary.strip()}
+
+---
+
+**RESUME WORKING NOW.** Check your task plan and continue from where you left off. Do NOT submit an answer yet.""",
         },
     )
 

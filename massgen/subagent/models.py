@@ -134,11 +134,14 @@ class SubagentOrchestratorConfig:
                 backend (with type, model, base_url, etc.)
                 If empty/None, inherits from parent config.
         coordination: Optional coordination config subset (broadcast, planning, etc.)
+        max_new_answers: Maximum new answers per agent before forcing consensus.
+                        Default 3 for subagents to prevent runaway iterations.
     """
 
     enabled: bool = False
     agents: List[Dict[str, Any]] = field(default_factory=list)
     coordination: Dict[str, Any] = field(default_factory=dict)
+    max_new_answers: int = 3  # Conservative default for subagents
 
     @property
     def num_agents(self) -> int:
@@ -177,6 +180,7 @@ class SubagentOrchestratorConfig:
             enabled=data.get("enabled", False),
             agents=data.get("agents", []),
             coordination=data.get("coordination", {}),
+            max_new_answers=data.get("max_new_answers", 3),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -185,6 +189,7 @@ class SubagentOrchestratorConfig:
             "enabled": self.enabled,
             "agents": [a.copy() for a in self.agents] if self.agents else [],
             "coordination": self.coordination.copy() if self.coordination else {},
+            "max_new_answers": self.max_new_answers,
         }
 
 
