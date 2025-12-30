@@ -17,7 +17,7 @@ from mcp.client.stdio import get_default_environment, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from ..logger_config import logger
-from ..structured_logging import get_current_round, get_tracer, log_tool_execution
+from ..structured_logging import get_current_round, get_tracer
 from .circuit_breaker import MCPCircuitBreaker
 from .config_validator import MCPConfigValidator
 from .exceptions import (
@@ -631,7 +631,7 @@ class MCPClient:
 
         tracer = get_tracer()
         start_time = asyncio.get_event_loop().time()
-        effective_agent_id = agent_id or "mcp"
+        agent_id or "mcp"
 
         try:
             # Add timeout to tool calls with tracing span
@@ -660,6 +660,15 @@ class MCPClient:
             if effective_round_type is not None:
                 span_attributes["massgen.round_type"] = effective_round_type
 
+            # Add input preview to span attributes
+            try:
+                args_json = json.dumps(validated_arguments) if validated_arguments else ""
+                span_attributes["tool.input_preview"] = args_json[:500] if args_json else ""
+                span_attributes["tool.input_chars"] = len(args_json)
+            except (TypeError, ValueError):
+                span_attributes["tool.input_preview"] = "<non-serializable>"
+                span_attributes["tool.input_chars"] = 0
+
             with tracer.span(
                 f"mcp.{server_name}.{original_tool_name}",
                 attributes=span_attributes,
@@ -672,35 +681,23 @@ class MCPClient:
                 span.set_attribute("tool.success", True)
                 span.set_attribute("tool.execution_time_ms", execution_time_ms)
 
+                # Add output preview to span
+                output_text = ""
+                output_chars = 0
+                if result and hasattr(result, "content"):
+                    for content_item in result.content:
+                        if hasattr(content_item, "text"):
+                            output_chars += len(content_item.text)
+                            output_text += content_item.text
+                span.set_attribute("tool.output_preview", output_text[:500] if output_text else "")
+                span.set_attribute("tool.output_chars", output_chars)
+
             logger.debug(f"Tool {original_tool_name} completed successfully on {server_name}")
 
-            # Calculate input/output sizes for observability
-            args_json = json.dumps(validated_arguments) if validated_arguments else ""
-            input_chars = len(args_json)
-            # Result is typically a CallToolResult with content list
-            output_chars = 0
-            output_text = ""
-            if result and hasattr(result, "content"):
-                for content_item in result.content:
-                    if hasattr(content_item, "text"):
-                        output_chars += len(content_item.text)
-                        output_text += content_item.text
-
-            # Log structured tool execution for observability
-            log_tool_execution(
-                agent_id=effective_agent_id,
-                tool_name=tool_name,
-                tool_type="mcp",
-                execution_time_ms=execution_time_ms,
-                success=True,
-                input_chars=input_chars,
-                output_chars=output_chars,
-                server_name=server_name,
-                arguments_preview=args_json[:200] if args_json else None,
-                output_preview=output_text[:200] if output_text else None,
-                round_number=effective_round,
-                round_type=effective_round_type,
-            )
+            # Note: log_tool_execution is NOT called here because the parent
+            # (base_with_custom_tool_and_mcp.py) already logs tool execution.
+            # The span above (mcp.{server_name}.{tool_name}) provides MCP-specific
+            # attributes while the parent handles consolidated logging.
 
             # Send tool call success status if callback is available
             if self.status_callback:
@@ -716,25 +713,7 @@ class MCPClient:
             return result
 
         except asyncio.TimeoutError:
-            execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
-            try:
-                args_json = json.dumps(validated_arguments) if validated_arguments else ""
-            except (TypeError, ValueError):
-                args_json = "<non-serializable>"
-            log_tool_execution(
-                agent_id=effective_agent_id,
-                tool_name=tool_name,
-                tool_type="mcp",
-                execution_time_ms=execution_time_ms,
-                success=False,
-                input_chars=len(args_json),
-                error_message=f"Timeout after {self.timeout_seconds}s",
-                server_name=server_name,
-                arguments_preview=args_json[:200] if args_json else None,
-                round_number=effective_round,
-                round_type=effective_round_type,
-            )
-
+            # Note: log_tool_execution is NOT called here - parent handles logging
             if self.status_callback:
                 await self.status_callback(
                     "tool_call_timeout",
@@ -756,25 +735,7 @@ class MCPClient:
                 context={"tool_name": original_tool_name, "server_name": server_name},
             )
         except Exception as e:
-            execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
-            try:
-                args_json = json.dumps(validated_arguments) if validated_arguments else ""
-            except (TypeError, ValueError):
-                args_json = "<non-serializable>"
-            log_tool_execution(
-                agent_id=effective_agent_id,
-                tool_name=tool_name,
-                tool_type="mcp",
-                execution_time_ms=execution_time_ms,
-                success=False,
-                input_chars=len(args_json),
-                error_message=str(e),
-                server_name=server_name,
-                arguments_preview=args_json[:200] if args_json else None,
-                round_number=effective_round,
-                round_type=effective_round_type,
-            )
-
+            # Note: log_tool_execution is NOT called here - parent handles logging
             logger.error(f"Tool call failed for {original_tool_name} on {server_name}: {e}", exc_info=True)
 
             # Record failure with circuit breaker

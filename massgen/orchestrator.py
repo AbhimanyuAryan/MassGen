@@ -361,17 +361,6 @@ class Orchestrator(ChatAgent):
                 self._inject_subagent_tools_for_all_agents()
                 logger.info("[Orchestrator] Subagent tools injection complete")
 
-        # Inject memory MCP tools and set up auto-compression if filesystem memory is enabled
-        # Memory MCP provides the compression_complete tool needed for agent-driven compression
-        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
-            if self.config.coordination_config.enable_memory_filesystem_mode:
-                logger.info(f"[Orchestrator] Injecting memory tools for {len(self.agents)} agents")
-                self._inject_memory_tools_for_all_agents()
-                logger.info("[Orchestrator] Memory tools injection complete")
-
-                # Set up agent-driven compression on each agent
-                self._setup_agent_driven_compression()
-
         # NLIP Configuration
         self.enable_nlip = enable_nlip
         self.nlip_config = nlip_config or {}
@@ -1115,224 +1104,6 @@ class Orchestrator(ChatAgent):
 
         except Exception as e:
             logger.warning(f"[Orchestrator] Failed to save personas to log: {e}")
-
-    def _inject_memory_tools_for_all_agents(self) -> None:
-        """
-        Inject memory MCP tools into all agents.
-
-        This method adds the memory MCP server to each agent's backend
-        configuration, enabling them to create and manage memories.
-        """
-        for agent_id, agent in self.agents.items():
-            self._inject_memory_tools_for_agent(agent_id, agent)
-
-    def _inject_memory_tools_for_agent(self, agent_id: str, agent: Any) -> None:
-        """
-        Inject memory MCP tools into a specific agent.
-
-        Args:
-            agent_id: ID of the agent
-            agent: Agent instance
-        """
-        logger.info(f"[Orchestrator] Injecting memory tools for agent: {agent_id}")
-
-        # Create memory MCP config
-        memory_mcp_config = self._create_memory_mcp_config(agent_id, agent)
-        logger.info(f"[Orchestrator] Created memory MCP config: {memory_mcp_config['name']}")
-
-        # Get existing mcp_servers configuration
-        mcp_servers = agent.backend.config.get("mcp_servers", [])
-        logger.info(f"[Orchestrator] Existing MCP servers for {agent_id}: {type(mcp_servers)} with {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} entries")
-
-        # Handle both list format and dict format (Claude Code)
-        if isinstance(mcp_servers, dict):
-            # Claude Code dict format
-            logger.info("[Orchestrator] Using dict format for MCP servers")
-            mcp_servers[f"memory_{agent_id}"] = memory_mcp_config
-        else:
-            # Standard list format
-            logger.info("[Orchestrator] Using list format for MCP servers")
-            if not isinstance(mcp_servers, list):
-                mcp_servers = []
-            mcp_servers.append(memory_mcp_config)
-
-        # Update backend config
-        agent.backend.config["mcp_servers"] = mcp_servers
-        logger.info(f"[Orchestrator] Updated MCP servers for {agent_id}, now has {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} servers")
-
-    def _create_memory_mcp_config(self, agent_id: str, agent: Any) -> Dict[str, Any]:
-        """
-        Create MCP server configuration for memory tools.
-
-        Args:
-            agent_id: ID of the agent
-            agent: Agent instance (for accessing workspace path)
-
-        Returns:
-            MCP server configuration dictionary
-        """
-        from pathlib import Path as PathlibPath
-
-        import massgen.mcp_tools.memory._memory_mcp_server as memory_module
-
-        script_path = PathlibPath(memory_module.__file__).resolve()
-
-        args = [
-            "run",
-            f"{script_path}:create_server",
-            "--",
-            "--agent-id",
-            agent_id,
-            "--orchestrator-id",
-            self.orchestrator_id,
-        ]
-
-        # Add workspace path if filesystem mode is enabled
-        logger.info(f"[Orchestrator] Checking enable_memory_filesystem_mode for {agent_id}")
-
-        filesystem_mode_enabled = (
-            hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode") and self.config.coordination_config.enable_memory_filesystem_mode
-        )
-
-        if filesystem_mode_enabled:
-            logger.info("[Orchestrator] enable_memory_filesystem_mode is enabled")
-            if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
-                if agent.backend.filesystem_manager.cwd:
-                    workspace_path = str(agent.backend.filesystem_manager.cwd)
-                    args.extend(["--workspace-path", workspace_path])
-                    logger.info(f"[Orchestrator] Enabling filesystem mode for memory: {workspace_path}")
-                else:
-                    logger.warning(f"[Orchestrator] Agent {agent_id} filesystem_manager.cwd is None")
-            else:
-                logger.warning(f"[Orchestrator] Agent {agent_id} has no filesystem_manager")
-
-        # Check if full memory tools should be enabled (default: False, only compression_complete)
-        enable_memory_tools = (
-            hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_mcp_tools") and self.config.coordination_config.enable_memory_mcp_tools
-        )
-        if enable_memory_tools:
-            args.append("--enable-memory-tools")
-            logger.info("[Orchestrator] Enabling full memory MCP tools (create, append, remove, load)")
-
-        config = {
-            "name": f"memory_{agent_id}",
-            "type": "stdio",
-            "command": "fastmcp",
-            "args": args,
-            "env": {
-                "FASTMCP_SHOW_CLI_BANNER": "false",
-            },
-        }
-
-        return config
-
-    def _setup_agent_driven_compression(self) -> None:
-        """
-        Set up agent-driven compression for all agents with filesystem memory enabled.
-
-        This configures each agent's SingleAgent instance to use the AgentDrivenCompressor,
-        which coordinates with the compression_complete MCP tool for context management.
-
-        Also creates ContextWindowMonitor for each agent to track token usage and
-        determine when compression should be triggered.
-        """
-        from pathlib import Path as PathlibPath
-
-        from .memory._context_monitor import ContextWindowMonitor
-
-        # Get compression settings from coordination config
-        trigger_threshold = 0.75
-        target_ratio = 0.20
-
-        if hasattr(self.config, "coordination_config"):
-            coord_config = self.config.coordination_config
-            if hasattr(coord_config, "compression_trigger_threshold"):
-                trigger_threshold = coord_config.compression_trigger_threshold
-            if hasattr(coord_config, "compression_target_ratio"):
-                target_ratio = coord_config.compression_target_ratio
-
-        logger.info(
-            f"[Orchestrator] Setting up agent-driven compression " f"(trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%)",
-        )
-
-        for agent_id, agent in self.agents.items():
-            # Get workspace path from filesystem manager
-            workspace_path = None
-            if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
-                if agent.backend.filesystem_manager and agent.backend.filesystem_manager.cwd:
-                    workspace_path = PathlibPath(agent.backend.filesystem_manager.cwd)
-
-            if not workspace_path:
-                logger.warning(f"[Orchestrator] Agent {agent_id} has no workspace path, skipping compression setup")
-                continue
-
-            # Create conversation_memory if agent doesn't have one
-            # This is required for context_compressor to work
-            if not agent.conversation_memory:
-                from .memory import ConversationMemory
-
-                agent.conversation_memory = ConversationMemory()
-                logger.info(f"[Orchestrator] Created conversation_memory for {agent_id} (required for compression)")
-
-            # Create context monitor if agent doesn't have one
-            # This is required for compression to work - tracks token usage
-            if not agent.context_monitor:
-                # Get model name and provider from backend
-                model_name = "unknown"
-                provider = "openai"  # Default provider
-
-                if hasattr(agent, "backend"):
-                    backend = agent.backend
-                    # Model can be in backend.model or backend.config["model"]
-                    if hasattr(backend, "model") and backend.model:
-                        model_name = backend.model
-                    elif hasattr(backend, "config") and isinstance(backend.config, dict):
-                        model_name = backend.config.get("model", "unknown")
-
-                    # Determine provider from backend class name or model name
-                    backend_class = type(backend).__name__.lower()
-                    if "claude" in backend_class or "anthropic" in backend_class:
-                        provider = "anthropic"
-                    elif "gemini" in backend_class or "google" in backend_class:
-                        provider = "google"
-                    elif "grok" in backend_class:
-                        provider = "xai"
-                    # For chatcompletion/openrouter backends, try to infer from model name
-                    elif model_name != "unknown":
-                        model_lower = model_name.lower()
-                        if "claude" in model_lower or "anthropic" in model_lower:
-                            provider = "anthropic"
-                        elif "gemini" in model_lower or "google" in model_lower:
-                            provider = "google"
-                        elif "grok" in model_lower or "x-ai" in model_lower:
-                            provider = "xai"
-                        elif "openrouter" in str(getattr(backend, "config", {}).get("base_url", "")):
-                            provider = "openrouter"
-
-                agent.context_monitor = ContextWindowMonitor(
-                    model_name=model_name,
-                    provider=provider,
-                    trigger_threshold=trigger_threshold,
-                    target_ratio=target_ratio,
-                    enabled=True,
-                )
-                logger.info(
-                    f"[Orchestrator] Created context monitor for {agent_id}: "
-                    f"{agent.context_monitor.context_window:,} tokens, "
-                    f"trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%",
-                )
-
-            # Set up agent-driven compressor on the agent
-            try:
-                agent.set_agent_driven_compressor(
-                    workspace_path=workspace_path,
-                    fallback_compressor=getattr(agent, "context_compressor", None),
-                    trigger_threshold=trigger_threshold,
-                    target_ratio=target_ratio,
-                )
-                logger.info(f"[Orchestrator] Set up agent-driven compression for {agent_id}")
-            except Exception as e:
-                logger.warning(f"[Orchestrator] Failed to set up compression for {agent_id}: {e}")
 
     @staticmethod
     def _get_chunk_type_value(chunk) -> str:
@@ -4122,7 +3893,7 @@ Your answer:"""
             attempt = 0
             is_first_real_attempt = True  # Track first LLM call separately from attempt counter
             while attempt < max_attempts:
-                logger.info(f"[Orchestrator] Agent {agent_id} attempt {attempt + 1}/{max_attempts}")
+                logger.info(f"[Orchestrator] Agent {agent_id} workflow enforcement attempt {attempt + 1}/{max_attempts}")
 
                 if self._check_restart_pending(agent_id):
                     logger.info(f"[Orchestrator] Agent {agent_id} has restart_pending flag")
@@ -4304,6 +4075,18 @@ Your answer:"""
                         # Stream error information to user interface
                         error_msg = getattr(chunk, "error", str(chunk.content)) if hasattr(chunk, "error") else str(chunk.content)
                         yield ("content", f"❌ Error: {error_msg}\n")
+                    elif chunk_type == "incomplete_response_recovery":
+                        # Handle incomplete response recovery - API stream ended early
+                        # Buffer content is preserved in chunk.content
+                        buffer_size = len(chunk.content or "") if chunk.content else 0
+                        detail = getattr(chunk, "detail", "")
+                        logger.info(
+                            f"[Orchestrator] Agent {agent_id} recovering from incomplete response - " f"preserved {buffer_size} chars of content. {detail}",
+                        )
+                        # Yield status message for visibility
+                        yield ("content", f"⚠️ API stream ended early - recovering with preserved context ({detail})\n")
+                        # Note: The orchestrator's while loop will continue and make a new API call
+                        # The buffer content has already been yielded as stream content, so it's already in the context
 
                 # Handle multiple vote calls - take the last vote (agent's final decision)
                 vote_calls = [tc for tc in tool_calls if agent.backend.extract_tool_name(tc) == "vote"]

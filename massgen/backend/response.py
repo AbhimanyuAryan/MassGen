@@ -530,7 +530,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     yield result
 
                 # Response completed
-                if chunk.type == "response.completed":
+                if chunk.type in ["response.completed", "response.incomplete"]:
                     response_completed = True
                     # Note: Usage tracking is handled in _process_stream_chunk() above
                     # Capture response ID and ALL output items for reasoning continuity
@@ -1484,7 +1484,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 source="response_api",
             )
 
-        elif chunk.type == "response.completed":
+        elif chunk.type in ["response.completed", "response.incomplete"]:
             # Extract usage data for token tracking
             if hasattr(chunk, "response") and hasattr(chunk.response, "usage"):
                 self._update_token_usage_from_api_response(

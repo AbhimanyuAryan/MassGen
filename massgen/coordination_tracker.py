@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 from .logger_config import logger
 from .structured_logging import (
     log_agent_answer,
+    log_agent_restart,
     log_agent_vote,
     log_final_answer,
     log_winner_selected,
@@ -460,6 +461,17 @@ class CoordinationTracker:
             f"Triggered restart affecting {len(agents_restarted)} agents",
             context,
         )
+
+        # Log to Logfire for observability
+        for agent_id in agents_restarted:
+            restart_count = self.agent_rounds.get(agent_id, 0) + 1
+            log_agent_restart(
+                agent_id=agent_id,
+                reason="new_answer_available",
+                triggering_agent=triggering_agent,
+                restart_count=restart_count,
+                affected_agents=agents_restarted,
+            )
 
     def complete_agent_restart(self, agent_id: str):
         """Record when an agent has completed its restart and increment their round.

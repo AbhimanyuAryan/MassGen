@@ -85,6 +85,10 @@ uv run python scripts/test_compression_backends.py --list-backends
 
 Context compression is enabled by default and cannot be disabled. The compression behavior adapts to each backend's context window size automatically.
 
+## Future Work: Proactive Compression
+
+A proactive "agent-driven" compression approach was designed but not implemented due to API limitations (providers only report token usage after requests complete, making it impossible to reliably prevent context overflow). See `proactive_compression_design.md` for the future vision and archived implementation code.
+
 ## Bugs Fixed
 
 1. **Pydantic validation error (Gemini)**: `_compression_retry` was leaking into Gemini's config and causing validation errors. Fixed by extracting it into an instance variable before kwargs merge.

@@ -77,12 +77,6 @@ class LLMBackend(ABC):
         # This is different from token_usage.input_tokens which is cumulative
         self._last_call_input_tokens: int = 0
 
-        # Mid-stream compression check (between tool calls)
-        # Set via set_compression_check() method by chat_agent when compression is enabled
-        self._compression_threshold: Optional[float] = None  # e.g., 0.75 = 75% of context window
-        self._context_window_size: Optional[int] = None  # Model's context window in tokens
-        self._compression_target_ratio: float = 0.20  # Target after compression (20% = preserve 20% of messages)
-
         # Round-level token tracking
         self._round_token_history: List[RoundTokenUsage] = []
         self._current_round_number: int = 0
@@ -444,87 +438,6 @@ class LLMBackend(ABC):
     def reset_token_usage(self):
         """Reset token usage tracking."""
         self.token_usage = TokenUsage()
-
-    # ==================== Mid-Stream Compression Check ====================
-
-    def set_compression_check(
-        self,
-        threshold: float,
-        context_window: int,
-        target_ratio: float = 0.20,
-    ) -> None:
-        """Enable mid-stream compression checking between tool calls.
-
-        When enabled, the backend will check after each API call if the input tokens
-        exceed the threshold percentage of the context window. If so, it yields a
-        special 'compression_needed' chunk to signal the agent to trigger compression.
-
-        Note: The threshold (upper bound) cannot be reliably enforced because token
-        counts are only available AFTER each LLM call completes. The target_ratio
-        (lower bound) IS enforced when reactive compression occurs.
-
-        Args:
-            threshold: Fraction of context window that triggers compression (e.g., 0.75)
-            context_window: Model's context window size in tokens
-            target_ratio: Target fraction after compression (e.g., 0.20 = preserve 20%)
-        """
-        self._compression_threshold = threshold
-        self._context_window_size = context_window
-        self._compression_target_ratio = target_ratio
-        logger.info(
-            f"[{self.__class__.__name__}] Mid-stream compression check enabled: " f"threshold={threshold*100:.0f}%, context_window={context_window:,}, " f"target_ratio={target_ratio*100:.0f}%",
-        )
-
-    def should_trigger_compression(self) -> bool:
-        """Check if current token usage should trigger compression.
-
-        Returns:
-            True if _last_call_input_tokens exceeds threshold percentage of context window
-        """
-        if self._compression_threshold is None or self._context_window_size is None:
-            return False
-
-        if self._last_call_input_tokens <= 0:
-            return False
-
-        usage_percent = self._last_call_input_tokens / self._context_window_size
-        should_compress = usage_percent >= self._compression_threshold
-
-        if should_compress:
-            logger.warning(
-                f"[{self.__class__.__name__}] Mid-stream compression triggered: "
-                f"{self._last_call_input_tokens:,}/{self._context_window_size:,} tokens "
-                f"({usage_percent*100:.1f}%) >= {self._compression_threshold*100:.0f}% threshold",
-            )
-
-        return should_compress
-
-    def _build_compression_request_message(self) -> Dict[str, Any]:
-        """Build a compression request message to inject into the conversation.
-
-        This message is appended alongside tool results when compression is needed,
-        allowing the agent to see both the tool output AND the compression warning
-        in the same context window. This preserves hidden reasoning tokens that would
-        be lost if we started a new LLM call for compression.
-
-        Returns:
-            Dict with role and content for the compression request message
-        """
-        usage_percent = 0
-        if self._context_window_size and self._context_window_size > 0:
-            usage_percent = int(self._last_call_input_tokens / self._context_window_size * 100)
-
-        return {
-            "role": "user",
-            "content": (
-                f"⚠️ CONTEXT WINDOW ALERT: You have used {usage_percent}% of available context "
-                f"({self._last_call_input_tokens:,} / {self._context_window_size:,} tokens).\n\n"
-                "Before continuing, please:\n"
-                "1. Write important context to memory/short_term/ or memory/long_term/\n"
-                "2. Call the compression_complete tool when done\n\n"
-                "After compression, older messages will be removed but your memories remain accessible."
-            ),
-        }
 
     # ==================== Round Token Tracking ====================
 

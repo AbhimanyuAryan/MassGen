@@ -1695,10 +1695,6 @@ async def run_question_with_history(
                 "compression_target_ratio",
                 0.20,
             ),
-            enable_memory_mcp_tools=coord_cfg.get(
-                "enable_memory_mcp_tools",
-                False,
-            ),
             use_skills=coord_cfg.get("use_skills", False),
             massgen_skills=coord_cfg.get("massgen_skills", []),
             skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
@@ -1842,10 +1838,6 @@ async def run_question_with_history(
                 compression_target_ratio=coordination_settings.get(
                     "compression_target_ratio",
                     0.20,
-                ),
-                enable_memory_mcp_tools=coordination_settings.get(
-                    "enable_memory_mcp_tools",
-                    False,
                 ),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
@@ -2287,10 +2279,6 @@ async def run_single_question(
                     "compression_target_ratio",
                     0.20,
                 ),
-                enable_memory_mcp_tools=coordination_settings.get(
-                    "enable_memory_mcp_tools",
-                    False,
-                ),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
                 skills_directory=coordination_settings.get(
@@ -2415,10 +2403,6 @@ async def run_single_question(
                 compression_target_ratio=coord_cfg.get(
                     "compression_target_ratio",
                     0.20,
-                ),
-                enable_memory_mcp_tools=coord_cfg.get(
-                    "enable_memory_mcp_tools",
-                    False,
                 ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),

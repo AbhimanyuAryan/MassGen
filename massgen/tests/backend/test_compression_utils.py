@@ -5,7 +5,7 @@ Tests the core compression recovery logic in _compression_utils.py.
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -30,7 +30,6 @@ def mock_backend():
     backend = MagicMock()
     backend.get_provider_name.return_value = "test_provider"
     backend.config = {"model": "test-model"}
-    backend._context_window_size = 128000
     return backend
 
 
@@ -206,9 +205,6 @@ class TestEnsureFitsContext:
 
     def test_messages_over_limit_truncated(self, mock_backend):
         """Messages over the context limit should be truncated."""
-        # Set a small context window
-        mock_backend._context_window_size = 1000
-
         # Create messages that exceed the limit
         large_content = "x" * 50000  # Very large
         messages = [
@@ -216,7 +212,12 @@ class TestEnsureFitsContext:
             {"role": "assistant", "content": large_content},
         ]
 
-        result = _ensure_fits_context(messages, mock_backend)
+        # Patch to use a small context window for testing
+        with patch(
+            "massgen.backend._compression_utils._get_context_window_for_backend",
+            return_value=(1000, "test"),
+        ):
+            result = _ensure_fits_context(messages, mock_backend)
 
         # The large message should be truncated
         assert len(result[1]["content"]) < len(large_content)
@@ -224,8 +225,6 @@ class TestEnsureFitsContext:
 
     def test_truncates_largest_message(self, mock_backend):
         """Should truncate the largest message, not others."""
-        mock_backend._context_window_size = 2000
-
         small_content = "small message"
         large_content = "x" * 50000
 
@@ -235,7 +234,12 @@ class TestEnsureFitsContext:
             {"role": "user", "content": small_content},
         ]
 
-        result = _ensure_fits_context(messages, mock_backend)
+        # Patch to use a small context window for testing
+        with patch(
+            "massgen.backend._compression_utils._get_context_window_for_backend",
+            return_value=(2000, "test"),
+        ):
+            result = _ensure_fits_context(messages, mock_backend)
 
         # Small messages should be unchanged
         assert result[0]["content"] == small_content
@@ -245,7 +249,6 @@ class TestEnsureFitsContext:
 
     def test_no_truncatable_content(self, mock_backend):
         """Should handle messages with no truncatable string content."""
-        mock_backend._context_window_size = 100
 
         # Multimodal content (list, not string) - can't truncate
         messages = [
@@ -268,19 +271,9 @@ class TestEnsureFitsContext:
 class TestGetContextWindowForBackend:
     """Tests for _get_context_window_for_backend function."""
 
-    def test_uses_backend_context_window(self, mock_backend):
-        """Should use backend's _context_window_size if set."""
-        mock_backend._context_window_size = 200000
-
-        window, source = _get_context_window_for_backend(mock_backend)
-
-        assert window == 200000
-        assert "backend._context_window_size" in source
-
-    def test_falls_back_to_token_calculator(self):
-        """Should fall back to TokenCostCalculator if no backend attribute."""
+    def test_uses_token_calculator(self):
+        """Should use TokenCostCalculator to get context window."""
         backend = MagicMock()
-        backend._context_window_size = None
         backend.get_provider_name.return_value = "openai"
         backend.config = {"model": "gpt-4o"}
 
@@ -293,7 +286,6 @@ class TestGetContextWindowForBackend:
     def test_falls_back_to_default(self):
         """Should fall back to 128k default if nothing else works."""
         backend = MagicMock()
-        backend._context_window_size = None
         backend.get_provider_name.return_value = "unknown_provider"
         backend.config = {"model": "unknown-model"}
 
@@ -323,7 +315,6 @@ class TestCompressMessagesForRecovery:
         backend = MagicMock()
         backend.get_provider_name.return_value = "test"
         backend.config = {"model": "test-model"}
-        backend._context_window_size = 128000
         backend.stream_with_tools = mock_stream
         return backend
 
@@ -541,7 +532,6 @@ class TestCompressMessagesForRecovery:
         backend = MagicMock()
         backend.get_provider_name.return_value = "test"
         backend.config = {"model": "test-model"}
-        backend._context_window_size = 128000
         backend.stream_with_tools = mock_stream_with_mcp
 
         result = await compress_messages_for_recovery(

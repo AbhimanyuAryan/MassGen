@@ -416,9 +416,8 @@ def _get_context_window_for_backend(backend: "BackendBase") -> tuple[int, str]:
     """Get the context window size for a backend.
 
     Tries in order:
-    1. Backend's _context_window_size attribute (set by mid-stream compression check)
-    2. TokenCostCalculator model pricing (from LiteLLM or hardcoded)
-    3. Default fallback of 128k
+    1. TokenCostCalculator model pricing (from LiteLLM or hardcoded)
+    2. Default fallback of 128k
 
     Args:
         backend: The backend to get context window for
@@ -426,12 +425,7 @@ def _get_context_window_for_backend(backend: "BackendBase") -> tuple[int, str]:
     Returns:
         Tuple of (context_window_size, source_description)
     """
-    # 1. Check if backend has context window set (from set_compression_check)
-    backend_context = getattr(backend, "_context_window_size", None)
-    if backend_context and backend_context > 0:
-        return backend_context, "backend._context_window_size"
-
-    # 2. Try to look up from token calculator using provider/model
+    # 1. Try to look up from token calculator using provider/model
     calc = _get_token_calculator()
     provider = backend.get_provider_name() if hasattr(backend, "get_provider_name") else None
     model = None
@@ -443,7 +437,7 @@ def _get_context_window_for_backend(backend: "BackendBase") -> tuple[int, str]:
         if pricing and pricing.context_window and pricing.context_window > 0:
             return pricing.context_window, f"TokenCostCalculator({provider}/{model})"
 
-    # 3. Default fallback
+    # 2. Default fallback
     return 128000, "default_fallback"
 
 

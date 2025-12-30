@@ -194,9 +194,6 @@ class SingleAgent(ChatAgent):
 
         # Create context compressor if monitor and conversation_memory exist
         self.context_compressor = None
-        self.agent_driven_compressor = None
-        self._compression_pending = False
-        self._compression_usage_info = None
 
         if self.context_monitor and self.conversation_memory:
             from .memory._compression import ContextCompressor
@@ -208,10 +205,6 @@ class SingleAgent(ChatAgent):
                 persistent_memory=self.persistent_memory,
             )
             logger.info(f"🗜️  Context compressor created for {self.agent_id}")
-
-            # Agent-driven compressor will be initialized with workspace path
-            # when filesystem memory is enabled (set via set_agent_driven_compressor)
-            self.agent_driven_compressor = None
 
         # Add system message to history if provided
         if self.system_message:
@@ -299,9 +292,6 @@ class SingleAgent(ChatAgent):
         self._current_turn_reasoning = []
         self._current_turn_mcp_calls = []
 
-        # Agent-driven compression flag (set when compression_complete tool is called)
-        self._should_truncate_after_stream = False
-
         # Optional accumulators (based on config)
         all_tool_calls_executed = [] if self._record_all_tool_calls else None
         reasoning_chunks = [] if self._record_reasoning else None
@@ -346,48 +336,12 @@ class SingleAgent(ChatAgent):
                     if self._record_reasoning and hasattr(chunk, "content") and chunk.content:
                         reasoning_summaries.append(chunk.content)
                     yield chunk
-                elif chunk_type == "compression_needed":
-                    # Mid-stream compression signal from backend
-                    # This is triggered when context exceeds threshold between tool rounds
-                    logger.warning(
-                        f"⚠️ [{self.agent_id}] Mid-stream compression needed: {getattr(chunk, 'content', '')}",
-                    )
-                    # Set pending flag so compression triggers after this stream
-                    if self.agent_driven_compressor and not self._compression_pending:
-                        self._compression_pending = True
-                        # Build usage info for the compression request
-                        if self.context_monitor:
-                            self._compression_usage_info = {
-                                "current_tokens": self.backend._last_call_input_tokens if hasattr(self.backend, "_last_call_input_tokens") else 0,
-                                "max_tokens": self.context_monitor.context_window,
-                                "usage_percent": (self.backend._last_call_input_tokens / self.context_monitor.context_window)
-                                if hasattr(self.backend, "_last_call_input_tokens") and self.context_monitor.context_window > 0
-                                else 0,
-                                "should_compress": True,
-                                "target_tokens": int(self.context_monitor.context_window * self.context_monitor.target_ratio),
-                                "trigger_threshold": self.context_monitor.trigger_threshold,
-                                "target_ratio": self.context_monitor.target_ratio,
-                            }
-                        logger.info(
-                            f"📝 Mid-stream compression pending for {self.agent_id}: " f"will request agent summarization next turn",
-                        )
-                    yield chunk  # Pass through so orchestrator can see it too
                 elif chunk_type == "mcp_status":
                     # Extract status for broadcast checking (always needed)
                     status = getattr(chunk, "status", "")
                     content = getattr(chunk, "content", "")
 
                     import re
-
-                    # Check for compression_complete tool call (agent-driven compression)
-                    if status == "mcp_tool_called" and "compression_complete" in content:
-                        if self.agent_driven_compressor:
-                            logger.info("🔄 Detected compression_complete tool call")
-                            should_truncate = self.agent_driven_compressor.on_compression_complete_tool_called()
-                            if should_truncate:
-                                # Mark that we need to truncate after this stream completes
-                                self._compression_pending = False  # Clear pending flag
-                                self._should_truncate_after_stream = True
 
                     # Track MCP tool calls for shadow agents (always) and optionally for memory
                     # Status 1: Tool call initiated - "🔧 [MCP Tool] Calling tool_name..."
@@ -655,51 +609,8 @@ class SingleAgent(ChatAgent):
                                 f"[{self.agent_id}] No API token count available",
                             )
 
-                        # Debug: log compression decision context
-                        logger.debug(
-                            f"[{self.agent_id}] Compression check: "
-                            f"agent_driven_compressor={self.agent_driven_compressor is not None}, "
-                            f"context_compressor={self.context_compressor is not None}, "
-                            f"_should_truncate={self._should_truncate_after_stream}, "
-                            f"_compression_pending={self._compression_pending}",
-                        )
-
-                        # Check if agent-driven compression signaled truncation
-                        if self._should_truncate_after_stream and self.context_compressor:
-                            logger.info(
-                                f"🔄 Performing truncation after agent compression for {self.agent_id} " f"({usage_info['current_tokens']:,} → {usage_info['target_tokens']:,} tokens)",
-                            )
-                            # Get messages for compression
-                            compression_stats = await self.context_compressor.compress_if_needed(
-                                messages=self.conversation_history,
-                                current_tokens=usage_info["current_tokens"],
-                                target_tokens=usage_info["target_tokens"],
-                                should_compress=True,
-                            )
-                            if compression_stats and self.conversation_memory:
-                                self.conversation_history = await self.conversation_memory.get_messages()
-                                self._compression_has_occurred = True
-                                logger.info(
-                                    f"✅ Truncation complete after agent compression: " f"{len(self.conversation_history)} messages",
-                                )
-                            self._should_truncate_after_stream = False
-                        elif self._should_truncate_after_stream:
-                            # Truncation requested but no compressor available
-                            logger.warning(
-                                f"⚠️ Truncation requested but context_compressor not available for {self.agent_id}",
-                            )
-                            self._should_truncate_after_stream = False
-
-                        # Check if agent-driven compression should be requested (deferred to next turn)
-                        elif self.agent_driven_compressor and self.agent_driven_compressor.should_request_compression(usage_info):
-                            self._compression_pending = True
-                            self._compression_usage_info = usage_info
-                            logger.info(
-                                f"📝 Compression pending for {self.agent_id}: " f"{usage_info['usage_percent']*100:.0f}% usage, " f"will request agent summarization next turn",
-                            )
-
-                        # Fallback: Use algorithmic compression if agent-driven not enabled
-                        elif self.context_compressor and usage_info.get("should_compress") and not self.agent_driven_compressor:
+                        # Use algorithmic compression if threshold exceeded
+                        if self.context_compressor and usage_info.get("should_compress"):
                             logger.info(
                                 f"🔄 Attempting algorithmic compression for {self.agent_id} " f"({usage_info['current_tokens']:,} → {usage_info['target_tokens']:,} tokens)",
                             )
@@ -848,15 +759,6 @@ class SingleAgent(ChatAgent):
                 f"⏭️  Skipping retrieval for {self.agent_id} " f"(no compression yet, all context in conversation_memory)",
             )
 
-        # Build compression request if pending
-        compression_msg = None
-        if self._compression_pending and self.agent_driven_compressor:
-            compression_msg = self.agent_driven_compressor.build_compression_request(
-                usage_info=self._compression_usage_info,
-            )
-            self._compression_pending = False
-            logger.info(f"📝 Injected compression request for {self.agent_id}")
-
         if current_stage:
             self.backend.set_stage(current_stage)
 
@@ -871,9 +773,6 @@ class SingleAgent(ChatAgent):
                     "content": f"Relevant memories:\n{memory_context}",
                 }
                 backend_messages.insert(0, memory_msg)
-            # Append compression request if it was added
-            if compression_msg:
-                backend_messages.append(compression_msg)
         else:
             # Stateless: use conversation_history as source of truth
             backend_messages = self.conversation_history.copy()
@@ -891,9 +790,6 @@ class SingleAgent(ChatAgent):
                     else:
                         break
                 backend_messages.insert(insert_idx, memory_msg)
-            # Append compression request if it was added
-            if compression_msg:
-                backend_messages.append(compression_msg)
 
         # Log context usage before processing (if monitor enabled)
         # Use litellm.token_counter for accurate count including tools
@@ -1015,71 +911,6 @@ class SingleAgent(ChatAgent):
 
         # Add new system message at the beginning
         self.conversation_history.insert(0, {"role": "system", "content": system_message})
-
-    def set_agent_driven_compressor(
-        self,
-        workspace_path: str,
-        fallback_compressor: Optional[Any] = None,
-        max_attempts: int = 2,
-        short_term_path: str = "memory/short_term",
-        long_term_path: str = "memory/long_term",
-        trigger_threshold: float = 0.75,
-        target_ratio: float = 0.20,
-    ) -> None:
-        """
-        Enable agent-driven compression with filesystem memory.
-
-        Args:
-            workspace_path: Path to agent workspace
-            fallback_compressor: Optional compressor to use if agent fails
-            max_attempts: Max retries before fallback
-            short_term_path: Relative path for short-term memories
-            long_term_path: Relative path for long-term memories
-            trigger_threshold: Context usage (0.0-1.0) at which to trigger compression
-            target_ratio: Target context percentage after compression
-        """
-        from pathlib import Path
-
-        from .memory._compression import AgentDrivenCompressor
-
-        # Lazily create context_compressor if we have the required dependencies
-        # (context_monitor may have been set after agent init by orchestrator)
-        if not self.context_compressor and self.context_monitor and self.conversation_memory:
-            from .memory._compression import ContextCompressor
-            from .token_manager.token_manager import TokenCostCalculator
-
-            self.context_compressor = ContextCompressor(
-                token_calculator=TokenCostCalculator(),
-                conversation_memory=self.conversation_memory,
-                persistent_memory=self.persistent_memory,
-            )
-            logger.info(f"🗜️  Context compressor lazily created for {self.agent_id}")
-
-        self.agent_driven_compressor = AgentDrivenCompressor(
-            workspace_path=Path(workspace_path),
-            fallback_compressor=fallback_compressor or self.context_compressor,
-            max_attempts=max_attempts,
-            short_term_path=short_term_path,
-            long_term_path=long_term_path,
-        )
-
-        # Update context monitor thresholds if available
-        if self.context_monitor:
-            self.context_monitor.trigger_threshold = trigger_threshold
-            self.context_monitor.target_ratio = target_ratio
-            logger.info(
-                f"📝 Agent-driven compressor enabled for {self.agent_id} " f"(trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%)",
-            )
-
-            # Enable mid-stream compression check on backend
-            # This allows the backend to signal when compression is needed between tool calls
-            if hasattr(self, "backend") and hasattr(self.backend, "set_compression_check"):
-                self.backend.set_compression_check(
-                    threshold=trigger_threshold,
-                    context_window=self.context_monitor.context_window,
-                )
-        else:
-            logger.info(f"📝 Agent-driven compressor enabled for {self.agent_id}")
 
 
 class ConfigurableAgent(SingleAgent):

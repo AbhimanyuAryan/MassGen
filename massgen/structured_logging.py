@@ -800,6 +800,38 @@ def log_coordination_event(
     )
 
 
+def log_agent_restart(
+    agent_id: str,
+    reason: str,
+    triggering_agent: Optional[str] = None,
+    restart_count: int = 1,
+    affected_agents: Optional[List[str]] = None,
+):
+    """
+    Log when an agent restart is triggered or completed.
+
+    This is crucial for understanding coordination flow and debugging
+    why agents restarted during a session.
+
+    Args:
+        agent_id: ID of the agent being restarted.
+        reason: Reason for the restart (e.g., "new_answer_available", "api_error", "mcp_disconnect").
+        triggering_agent: ID of the agent that triggered this restart (if any).
+        restart_count: How many times this agent has restarted in this session.
+        affected_agents: List of all agents affected by this restart event.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        "Agent restart: {agent_id} (reason: {reason})",
+        event_type="agent_restart",
+        agent_id=agent_id,
+        reason=reason,
+        triggering_agent=triggering_agent,
+        restart_count=restart_count,
+        affected_agents=",".join(affected_agents) if affected_agents else None,
+    )
+
+
 # Coordination iteration tracking for hierarchical spans
 _current_iteration_span: Optional[Any] = None
 _current_coordination_span: Optional[Any] = None
@@ -1446,6 +1478,7 @@ __all__ = [
     "log_token_usage",
     "log_tool_execution",
     "log_coordination_event",
+    "log_agent_restart",
     # Coordination-specific loggers
     "log_agent_round_context",
     "log_agent_answer",

@@ -706,23 +706,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if functions_executed:
                 updated_messages = self._trim_message_history(updated_messages)
 
-                # Check if compression is needed before continuing with more tool calls
-                # This prevents runaway context growth during multi-turn tool execution
-                if self.should_trigger_compression():
-                    logger.warning(
-                        f"[{self.__class__.__name__}] Mid-stream compression check: " f"injecting compression request into messages before next tool round",
-                    )
-                    # Piggyback: append compression request AFTER the tool results
-                    # Agent sees both in same context - no separate call, preserves reasoning
-                    compression_msg = self._build_compression_request_message()
-                    updated_messages.append(compression_msg)
-
-                    yield StreamChunk(
-                        type="compression_needed",
-                        content=f"Context window usage exceeded threshold: {self._last_call_input_tokens:,} tokens",
-                    )
-                    # Continue with recursive call - agent now sees tool results + compression request
-
                 # End LLM call logging before recursion (this call is complete, recursion starts a new one)
                 if llm_logger and llm_call_id:
                     llm_logger.end_call(

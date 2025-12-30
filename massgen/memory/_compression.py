@@ -2,21 +2,19 @@
 """
 Context Window Compression
 
-Provides two compression strategies:
-1. ContextCompressor: Algorithmic compression that removes old messages
-2. AgentDrivenCompressor: Agent-driven compression with memory writing
+Provides algorithmic compression that removes old messages from conversation
+history when context window fills up.
 
-The agent-driven approach asks the agent to summarize context to filesystem
-memory before truncation, preserving important information.
+Note: A proactive "agent-driven" compression approach was designed but not
+implemented due to API limitations (providers only report token usage after
+requests complete). See docs/dev_notes/proactive_compression_design.md.
 """
 
-import time
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from ..logger_config import logger
+from ..structured_logging import log_context_compression
 from ..token_manager.token_manager import TokenCostCalculator
-from ._compression_prompts import COMPRESSION_FAILED_RETRY, COMPRESSION_REQUEST
 from ._conversation import ConversationMemory
 from ._persistent import PersistentMemoryBase
 
@@ -42,10 +40,9 @@ class ContextCompressor:
     Compresses conversation history when context window fills up.
 
     Strategy:
-    - Messages are already recorded to persistent_memory after each turn
-    - Compression removes old messages from conversation_memory
-    - Recent messages stay in active context
-    - Old messages remain accessible via semantic retrieval
+    - Removes old messages from conversation_memory
+    - Preserves system messages (always kept)
+    - Keeps most recent messages that fit within token budget
 
     Features:
     - Token-aware compression (not just message count)
@@ -73,6 +70,7 @@ class ContextCompressor:
         conversation_memory: ConversationMemory,
         persistent_memory: Optional[PersistentMemoryBase] = None,
         on_compress: Optional[Callable[[CompressionStats], None]] = None,
+        agent_id: Optional[str] = None,
     ):
         """
         Initialize context compressor.
@@ -82,11 +80,13 @@ class ContextCompressor:
             conversation_memory: Conversation memory to compress
             persistent_memory: Optional persistent memory (for logging purposes)
             on_compress: Optional callback called after compression
+            agent_id: Optional agent ID for observability logging
         """
         self.token_calculator = token_calculator
         self.conversation_memory = conversation_memory
         self.persistent_memory = persistent_memory
         self.on_compress = on_compress
+        self.agent_id = agent_id or "unknown"
 
         # Stats tracking
         self.total_compressions = 0
@@ -179,6 +179,23 @@ class ContextCompressor:
             tokens_kept=tokens_kept,
         )
 
+        # Log to Logfire for observability
+        # Calculate original char count from all messages
+        original_char_count = sum(len(str(msg.get("content", ""))) for msg in messages)
+        compressed_char_count = sum(len(str(msg.get("content", ""))) for msg in messages_to_keep)
+        compression_ratio = compressed_char_count / original_char_count if original_char_count > 0 else 0
+
+        log_context_compression(
+            agent_id=self.agent_id,
+            reason="context_length_exceeded",
+            original_message_count=len(messages),
+            compressed_message_count=len(messages_to_keep),
+            original_char_count=original_char_count,
+            compressed_char_count=compressed_char_count,
+            compression_ratio=compression_ratio,
+            success=True,
+        )
+
         # Trigger callback if provided
         if self.on_compress:
             self.on_compress(stats)
@@ -244,250 +261,4 @@ class ContextCompressor:
             "total_compressions": self.total_compressions,
             "total_messages_removed": self.total_messages_removed,
             "total_tokens_removed": self.total_tokens_removed,
-        }
-
-
-class AgentDrivenCompressor:
-    """
-    Coordinates agent-driven context compression with filesystem memory.
-
-    Instead of algorithmically removing messages, this compressor:
-    1. Injects a summarization request into the conversation
-    2. Waits for agent to write memories using file writing tools
-    3. Detects when agent calls compression_complete MCP tool
-    4. Validates that required memory files exist
-    5. Falls back to algorithmic compression if agent fails
-    6. Performs final truncation after summaries are saved
-
-    States:
-        idle: Normal operation, monitoring context usage
-        requesting: Injected compression request, waiting for agent
-        validating: Agent signaled completion, validating files
-
-    Example:
-        >>> compressor = AgentDrivenCompressor(
-        ...     workspace_path=Path("/workspace"),
-        ...     fallback_compressor=context_compressor,
-        ... )
-        >>> if compressor.should_request_compression(usage_info):
-        ...     msg = compressor.build_compression_request(usage_info)
-        ...     # Inject msg into conversation
-    """
-
-    # Compression states
-    STATE_IDLE = "idle"
-    STATE_REQUESTING = "requesting"
-    STATE_VALIDATING = "validating"
-
-    def __init__(
-        self,
-        workspace_path: Optional[Path] = None,
-        fallback_compressor: Optional[ContextCompressor] = None,
-        max_attempts: int = 2,
-        short_term_path: str = "memory/short_term",
-        long_term_path: str = "memory/long_term",
-    ):
-        """
-        Initialize agent-driven compressor.
-
-        Args:
-            workspace_path: Path to agent workspace for memory validation
-            fallback_compressor: Algorithmic compressor for fallback
-            max_attempts: Max retries before fallback (default 2)
-            short_term_path: Relative path for short-term memories
-            long_term_path: Relative path for long-term memories
-        """
-        self.workspace_path = Path(workspace_path) if workspace_path else None
-        self.fallback_compressor = fallback_compressor
-        self.max_attempts = max_attempts
-        self.short_term_path = short_term_path
-        self.long_term_path = long_term_path
-
-        # State tracking
-        self.state = self.STATE_IDLE
-        self.current_attempt = 0
-        self.pending_usage_info: Optional[Dict[str, Any]] = None
-
-        # Stats
-        self.total_agent_compressions = 0
-        self.total_fallback_compressions = 0
-        self.total_attempts = 0
-
-    def should_request_compression(self, usage_info: Dict[str, Any]) -> bool:
-        """
-        Check if compression should be requested.
-
-        Args:
-            usage_info: Dict from ContextWindowMonitor.log_context_usage()
-
-        Returns:
-            True if compression should be requested
-        """
-        should_compress = usage_info.get("should_compress", False)
-        is_idle = self.state == self.STATE_IDLE
-        result = should_compress and is_idle
-
-        logger.debug(
-            f"[AgentDrivenCompressor] should_request_compression: "
-            f"should_compress={should_compress}, state={self.state}, is_idle={is_idle}, "
-            f"usage={usage_info.get('usage_percent', 0)*100:.1f}%, "
-            f"threshold={usage_info.get('trigger_threshold', 0)*100:.0f}% -> {result}",
-        )
-
-        return result
-
-    def build_compression_request(
-        self,
-        usage_info: Dict[str, Any],
-        task_summary: str = "",
-    ) -> Dict[str, Any]:
-        """
-        Build the compression request message to inject.
-
-        Args:
-            usage_info: Context usage info with tokens/percentage
-            task_summary: Optional summary of current task
-
-        Returns:
-            Message dict to inject into conversation
-        """
-        content = COMPRESSION_REQUEST.format(
-            usage_percent=usage_info.get("usage_percent", 0),
-            current_tokens=usage_info.get("current_tokens", 0),
-            max_tokens=usage_info.get("max_tokens", 0),
-        )
-
-        # Transition to requesting state
-        self.state = self.STATE_REQUESTING
-        self.pending_usage_info = usage_info
-        self.current_attempt += 1
-        self.total_attempts += 1
-
-        logger.info(
-            f"📝 Requesting agent-driven compression " f"(attempt {self.current_attempt}/{self.max_attempts})",
-        )
-
-        return {
-            "role": "user",
-            "content": content,
-            "_is_compression_request": True,  # Internal marker
-        }
-
-    def build_retry_request(self) -> Dict[str, Any]:
-        """
-        Build a retry request if validation failed.
-
-        Returns:
-            Message dict to inject into conversation
-        """
-        self.current_attempt += 1
-        self.total_attempts += 1
-
-        content = COMPRESSION_FAILED_RETRY.format(
-            attempt=self.current_attempt,
-            max_attempts=self.max_attempts,
-        )
-
-        logger.warning(
-            f"⚠️ Compression validation failed, retrying " f"(attempt {self.current_attempt}/{self.max_attempts})",
-        )
-
-        return {
-            "role": "user",
-            "content": content,
-            "_is_compression_request": True,
-        }
-
-    def validate_memory_written(self) -> Tuple[bool, List[str]]:
-        """
-        Check if agent wrote the required memories.
-
-        Returns:
-            Tuple of (success, list of written file paths)
-        """
-        if not self.workspace_path:
-            logger.warning("No workspace path configured, skipping validation")
-            return True, []  # Can't validate, assume success
-
-        written_files = []
-        current_time = time.time()
-
-        # Check for required recent.md
-        short_term_dir = self.workspace_path / self.short_term_path
-        recent_file = short_term_dir / "recent.md"
-
-        if recent_file.exists():
-            # Check if recently modified (within 60 seconds)
-            mtime = recent_file.stat().st_mtime
-            if current_time - mtime < 60:
-                written_files.append(str(recent_file))
-                logger.info(f"✅ Found recent memory: {recent_file}")
-            else:
-                logger.warning("⚠️ recent.md exists but wasn't recently modified")
-
-        # Also check for any new long-term memories
-        long_term_dir = self.workspace_path / self.long_term_path
-        if long_term_dir.exists():
-            for f in long_term_dir.glob("*.md"):
-                if current_time - f.stat().st_mtime < 60:
-                    if str(f) not in written_files:
-                        written_files.append(str(f))
-                        logger.info(f"✅ Found long-term memory: {f}")
-
-        success = recent_file.exists()
-        return success, written_files
-
-    def on_compression_complete_tool_called(self) -> bool:
-        """
-        Called when compression_complete MCP tool is detected.
-
-        Returns:
-            True if validation passed and truncation should proceed
-        """
-        if self.state != self.STATE_REQUESTING:
-            logger.warning(
-                f"compression_complete called in unexpected state: {self.state}",
-            )
-            return False
-
-        self.state = self.STATE_VALIDATING
-        success, files = self.validate_memory_written()
-
-        if success:
-            logger.info(f"✅ Agent compression validated. Files: {files}")
-            self.total_agent_compressions += 1
-            self._reset_state()
-            return True
-        else:
-            # Check if we should retry or fallback
-            if self.current_attempt >= self.max_attempts:
-                logger.warning(
-                    f"⚠️ Agent failed to write memory summary after " f"{self.max_attempts} attempts. Falling back to " f"algorithmic compression (no summary preserved).",
-                )
-                self.total_fallback_compressions += 1
-                self._reset_state()
-                return True  # Still proceed with truncation via fallback
-            else:
-                # Will retry - stay in requesting state
-                self.state = self.STATE_REQUESTING
-                return False
-
-    def should_use_fallback(self) -> bool:
-        """Check if we should use fallback compression."""
-        return self.current_attempt >= self.max_attempts
-
-    def _reset_state(self) -> None:
-        """Reset state machine to idle."""
-        self.state = self.STATE_IDLE
-        self.current_attempt = 0
-        self.pending_usage_info = None
-
-    def get_stats(self) -> Dict[str, Any]:
-        """Get compression statistics."""
-        return {
-            "total_agent_compressions": self.total_agent_compressions,
-            "total_fallback_compressions": self.total_fallback_compressions,
-            "total_attempts": self.total_attempts,
-            "current_state": self.state,
-            "current_attempt": self.current_attempt,
         }

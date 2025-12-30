@@ -30,6 +30,7 @@ from typing import (
 )
 
 import httpx
+import logfire
 from pydantic import BaseModel
 
 from ..filesystem_manager._constants import (
@@ -320,6 +321,10 @@ class CustomToolAndMCPBackend(LLMBackend):
         self._nlip_router = None
         self._nlip_enabled = False
 
+        # Incomplete response recovery tracking
+        self._incomplete_response_count = 0
+        self._max_incomplete_response_retries = kwargs.get("max_incomplete_response_retries", 5)
+
         # Register custom tools if provided
         custom_tools = kwargs.get("custom_tools", [])
         if custom_tools:
@@ -498,6 +503,18 @@ class CustomToolAndMCPBackend(LLMBackend):
             )
 
         return multimodal_config
+
+    def reset_incomplete_response_count(self) -> None:
+        """Reset the incomplete response recovery counter.
+
+        Should be called after a successful stream completion to reset
+        the counter for the next streaming operation.
+        """
+        if self._incomplete_response_count > 0:
+            logger.debug(
+                f"[{self.backend_name}] Resetting incomplete response count from {self._incomplete_response_count}",
+            )
+        self._incomplete_response_count = 0
 
     def set_nlip_router(self, nlip_router, enabled: bool = True) -> None:
         """
@@ -3073,8 +3090,59 @@ class CustomToolAndMCPBackend(LLMBackend):
                                     error=f"Compression recovery failed: {type(retry_error).__name__}: {retry_error}",
                                 )
                         else:
-                            logger.error(f"Streaming error: {e}")
-                            yield StreamChunk(type="error", error=str(e))
+                            # Check if this is the known "response.completed" error from OpenAI SDK/Logfire
+                            # This happens when streams end early (e.g., after tool execution) - it's recoverable
+                            if "response.completed" in str(e):
+                                # Track incomplete response recovery attempts
+                                self._incomplete_response_count += 1
+
+                                # Get the streaming buffer content if available
+                                buffer_content = None
+                                if hasattr(self, "_get_streaming_buffer"):
+                                    buffer_content = self._get_streaming_buffer()
+
+                                # Get agent_id for logging
+                                agent_id = kwargs.get("agent_id")
+
+                                # Check retry limit (default 5)
+                                max_incomplete_retries = getattr(self, "_max_incomplete_response_retries", 5)
+
+                                # Log with Logfire span for visibility
+                                with logfire.span(
+                                    "incomplete_response_recovery",
+                                    attempt=self._incomplete_response_count,
+                                    max_attempts=max_incomplete_retries,
+                                    buffer_size=len(buffer_content or ""),
+                                    agent_id=agent_id,
+                                ):
+                                    logger.warning(
+                                        f"[IncompleteResponse] Recovery attempt {self._incomplete_response_count}/{max_incomplete_retries} - "
+                                        f"preserved {len(buffer_content or '')} chars of streamed content",
+                                    )
+
+                                if self._incomplete_response_count > max_incomplete_retries:
+                                    logger.error(
+                                        f"[IncompleteResponse] Max retries ({max_incomplete_retries}) exceeded",
+                                    )
+                                    yield StreamChunk(
+                                        type="error",
+                                        error=f"Max incomplete response retries ({max_incomplete_retries}) exceeded. " f"The API stream ended prematurely {self._incomplete_response_count} times.",
+                                    )
+                                else:
+                                    # Yield a special chunk to signal incomplete response recovery
+                                    # The orchestrator will continue with the existing context
+                                    # Note: Buffer content has already been streamed and is in the conversation history
+                                    yield StreamChunk(
+                                        type="incomplete_response_recovery",
+                                        content=buffer_content,
+                                        source=agent_id,
+                                        detail=f"Recovery attempt {self._incomplete_response_count}/{max_incomplete_retries}",
+                                    )
+                                    # Don't yield error chunk - this is recoverable
+                                    # The streaming loop will continue and make a new API call
+                            else:
+                                logger.error(f"Streaming error: {e}")
+                                yield StreamChunk(type="error", error=str(e))
 
                 finally:
                     await self._cleanup_client(client)
