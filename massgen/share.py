@@ -37,14 +37,37 @@ from .filesystem_manager._constants import WORKSPACE_INCLUDE_EXTENSIONS
 # Office Document PDF Conversion
 # =============================================================================
 
-# Docker image for LibreOffice conversion
-MASSGEN_DOCKER_IMAGE = "ghcr.io/massgen/mcp-runtime:latest"
+# Docker images for LibreOffice conversion (in order of preference)
+# Sudo image is recommended and pre-selected in `massgen --setup-docker`
+MASSGEN_DOCKER_IMAGES = [
+    "ghcr.io/massgen/mcp-runtime-sudo:latest",  # Preferred - has sudo access
+    "ghcr.io/massgen/mcp-runtime:latest",  # Fallback - standard image
+]
+
+
+def _get_available_docker_image(client) -> Optional[str]:
+    """Find the first available MassGen Docker image.
+
+    Args:
+        client: Docker client instance
+
+    Returns:
+        Image name if found, None otherwise
+    """
+    for image in MASSGEN_DOCKER_IMAGES:
+        try:
+            client.images.get(image)
+            return image
+        except Exception:
+            continue
+    return None
 
 
 def convert_office_to_pdf(file_path: Path, console: Optional[Console] = None) -> Optional[bytes]:
     """Convert DOCX/PPTX/XLSX to PDF using Docker + LibreOffice.
 
     Uses the same approach as the webui /api/convert/document endpoint.
+    Tries the sudo image first (recommended), falls back to standard image.
 
     Args:
         file_path: Path to the Office document
@@ -67,12 +90,11 @@ def convert_office_to_pdf(file_path: Path, console: Optional[Console] = None) ->
             console.print("[yellow]Docker not available - skipping Office document conversion[/yellow]")
         return None
 
-    # Check if MassGen image exists
-    try:
-        client.images.get(MASSGEN_DOCKER_IMAGE)
-    except Exception:
+    # Find an available MassGen image (tries sudo first, then standard)
+    docker_image = _get_available_docker_image(client)
+    if docker_image is None:
         if console:
-            console.print(f"[yellow]MassGen Docker image not found. Run: docker pull {MASSGEN_DOCKER_IMAGE}[/yellow]")
+            console.print("[yellow]MassGen Docker image not found. Run: massgen --setup-docker[/yellow]")
         return None
 
     # Create temp directory for output
@@ -88,7 +110,7 @@ def convert_office_to_pdf(file_path: Path, console: Optional[Console] = None) ->
         try:
             # Run soffice in container
             client.containers.run(
-                MASSGEN_DOCKER_IMAGE,
+                docker_image,
                 command=[
                     "/bin/sh",
                     "-c",
