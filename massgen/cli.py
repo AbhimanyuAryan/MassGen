@@ -88,22 +88,37 @@ def load_env_file():
 load_env_file()
 
 
-def _setup_logfire_observability():
+def _setup_logfire_observability() -> bool:
     """Configure Logfire observability and instrument all LLM providers.
 
     This sets up structured logging/tracing via Logfire and instruments
     all supported LLM provider clients (OpenAI, Anthropic, Google GenAI).
+
+    Returns:
+        True if Logfire was successfully configured, False otherwise.
     """
+    try:
+        import logfire  # noqa: F401 - Check if logfire is installed
+    except ImportError:
+        print(
+            f"{BRIGHT_YELLOW}⚠️  Logfire not installed. " f"Install with: pip install massgen[observability]{RESET}",
+        )
+        return False
+
     from .logger_config import integrate_logfire_with_loguru
     from .structured_logging import configure_observability, get_tracer
 
-    configure_observability(enabled=True)
+    success = configure_observability(enabled=True)
+    if not success:
+        return False
+
     integrate_logfire_with_loguru()
     # Instrument all LLM providers globally
     tracer = get_tracer()
     tracer.instrument_google_genai()  # Gemini
     tracer.instrument_openai()  # OpenAI-compatible APIs
     tracer.instrument_anthropic()  # Claude
+    return True
 
 
 # Add project root to path for imports
@@ -656,7 +671,11 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         api_key = kwargs.get("api_key") or os.getenv("FIREWORKS_API_KEY")
         if not api_key:
             raise ConfigurationError(
-                _api_key_error_message("Fireworks AI", "FIREWORKS_API_KEY", config_path),
+                _api_key_error_message(
+                    "Fireworks AI",
+                    "FIREWORKS_API_KEY",
+                    config_path,
+                ),
             )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.fireworks.ai/inference/v1"
@@ -1653,7 +1672,9 @@ async def run_question_with_history(
                 persona_guidelines=pg_cfg.get("persona_guidelines"),
                 persist_across_turns=pg_cfg.get("persist_across_turns", False),
             )
-            logger.info(f"[CLI] Created PersonaGeneratorConfig: enabled={persona_generator_config.enabled}")
+            logger.info(
+                f"[CLI] Created PersonaGeneratorConfig: enabled={persona_generator_config.enabled}",
+            )
 
         # Parse subagent_orchestrator config if present
         subagent_orchestrator_config = None
@@ -5316,9 +5337,13 @@ async def main(args):
                     model=model_name,
                     log_directory=log_dir_name,
                 )
-                logger.info(f"📝 Registered new session in registry: {memory_session_id}")
+                logger.info(
+                    f"📝 Registered new session in registry: {memory_session_id}",
+                )
             else:
-                logger.debug(f"📝 Skipping session registry (--no-session-registry): {memory_session_id}")
+                logger.debug(
+                    f"📝 Skipping session registry (--no-session-registry): {memory_session_id}",
+                )
 
         agents = create_agents_from_config(
             config,
