@@ -1550,6 +1550,199 @@ class PlanningModeSection(SystemPromptSection):
         return self.planning_mode_instruction
 
 
+class SubagentSection(SystemPromptSection):
+    """
+    Subagent delegation guidance for spawning independent agent instances.
+
+    Provides instructions on when and how to use subagents for task delegation,
+    parallel execution, and context isolation.
+
+    Args:
+        workspace_path: Path to the agent's workspace (for subagent workspace location)
+        max_concurrent: Maximum concurrent subagents allowed
+    """
+
+    def __init__(self, workspace_path: str, max_concurrent: int = 3):
+        super().__init__(
+            title="Subagent Delegation",
+            priority=Priority.MEDIUM,
+            xml_tag="subagent_delegation",
+        )
+        self.workspace_path = workspace_path
+        self.max_concurrent = max_concurrent
+
+    def build_content(self) -> str:
+        return f"""
+# Subagent Delegation
+
+You can spawn **subagents** to execute tasks with fresh context and isolated workspaces.
+
+## When to Use Subagents
+
+**USING TASK DEPENDENCIES TO IDENTIFY SUBAGENT CANDIDATES:**
+When you create a task plan, tasks with the SAME dependencies (or no dependencies) can potentially run in parallel via subagents. Look at your plan:
+- Tasks that share dependencies → candidates for parallel subagent execution
+- Tasks that depend on each other → must be sequential (do NOT subagent)
+- Simple/quick tasks → do yourself (subagent overhead not worth it)
+
+Example task plan analysis:
+```
+Task A: Research biography (no deps)        ← Can parallelize
+Task B: Research discography (no deps)      ← Can parallelize
+Task C: Research quotes (no deps)           ← Can parallelize
+Task D: Build website (deps: A, B, C)       ← Sequential, do yourself after A/B/C
+```
+→ Spawn subagents for A, B, C simultaneously. Wait for results. Then do D yourself.
+
+**IDEAL USE CASES:**
+- Complex subtasks that benefit from fresh context (avoid context pollution)
+- Parallel work streams that can execute independently (same or no dependencies in your plan)
+- Research or analysis tasks that would consume too many tokens
+- Experimental operations you want isolated from your main workspace
+
+**AVOID SUBAGENTS FOR:**
+- Simple, quick operations you can do directly (overhead not worth it)
+- Tasks requiring back-and-forth coordination (high overhead)
+- Operations that need to modify your main workspace directly
+- Sequential tasks that depend on other task outputs
+
+## How Subagents Work
+
+1. **Isolated Workspace**: Each subagent gets its own workspace
+   - You can READ files from subagent workspaces
+   - You CANNOT write directly to subagent workspaces
+2. **Fresh Context**: Subagents start with a clean slate (just the task you provide)
+3. **Context Files**: Pass `context_files` to give the subagent READ-ONLY access to files
+4. **No Nesting**: Subagents cannot spawn their own subagents
+
+## Waiting for Subagents (CRITICAL)
+
+**DO NOT submit your answer until ALL subagents have returned results.**
+
+When you spawn subagents:
+1. **Wait for the tool to return** - `spawn_subagents` blocks until ALL tasks complete
+2. **Do NOT say "I will now run subagents"** and submit an answer - wait for actual results first
+3. **Only after receiving results** should you integrate outputs and submit your answer
+
+**BAD**: "I spawned 5 subagents. I will now wait for them and report back." (submitting answer before results)
+**GOOD**: Wait for spawn tool to return → read results → integrate → then submit answer with completed work
+
+## Integrating Subagent Results (MANDATORY)
+
+**YOU MUST INTEGRATE SUBAGENT OUTPUTS.** Subagents are helpers - YOU are responsible for the final deliverable.
+
+After subagents complete (or timeout):
+1. **Read each subagent's answer** to get the file paths they created
+2. **Read those files** from the paths listed in the answer
+3. **Write integrated files to YOUR workspace** - combine, merge, and organize the content
+4. **If a subagent timed out**: Check its workspace anyway - it may have created partial work you can use. Complete any remaining work yourself.
+5. **Your final answer**: Describe the COMPLETED work in your workspace, not what subagents did
+
+**Handling timeouts/failures - YOU MUST CHECK WORKSPACES:**
+When a subagent times out, the result still includes the `workspace` path. You MUST:
+1. **Read the workspace path** from the result (e.g., `/path/to/subagents/bio/workspace`)
+2. **List files in that directory** to see what was created before timeout
+3. **Read and use any partial work** - even a half-finished file is better than nothing
+4. **Complete the remaining work yourself** - don't just report the timeout
+
+**DO NOT:**
+- ❌ Submit answer before subagents finish
+- ❌ Say "I will run subagents and report back" as your answer
+- ❌ List what subagents produced and ask "what do you want next?"
+- ❌ Leave files scattered in subagent workspaces
+- ❌ Report subagent failures without completing the work yourself
+- ❌ Provide "next steps" menus (A/B/C options) instead of finished work
+
+**DO:**
+- ✅ Wait for all subagent results before submitting answer
+- ✅ Read subagent output files and write them to YOUR workspace
+- ✅ If building a website: create the actual HTML/CSS/content files in your workspace
+- ✅ If subagent timed out: check for partial work, use it, complete the rest
+- ✅ Final answer: "I created X, Y, Z in my workspace" with the actual files present
+
+## Retrieving Files from Subagents
+
+When a subagent creates files you need:
+1. **Check the answer**: The subagent lists relevant file paths in its answer
+2. **Read the files**: Read from the paths in the answer
+3. **Copy to your workspace**: Save files you need to your workspace
+
+**IMPORTANT**: Only copy files you actually need. Context isolation is a key feature - you don't need every file the subagent created, just the relevant outputs.
+
+## The spawn_subagents Tool
+
+**CRITICAL: Tasks run in PARALLEL (simultaneously), NOT sequentially!**
+
+All subagents start at the same time and cannot see each other's output. Design tasks that are INDEPENDENT:
+- ✅ GOOD: "Research biography" + "Research discography" + "Research songs" (independent research)
+- ❌ BAD: "Research content" + "Build site using researched content" (task 2 can't access task 1's output!)
+
+**REQUIREMENTS:**
+1. **Maximum {self.max_concurrent} tasks per call** - requests for more will error
+2. **`context` parameter is REQUIRED** - subagents need to know the project/goal
+3. **Each task dict must have `"task"` field** (not "description" or "id")
+
+```python
+# CORRECT: Independent parallel tasks (each can complete without the others)
+spawn_subagents(
+    tasks=[
+        {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio"}},
+        {{"task": "Create discography table in discography.md", "subagent_id": "discog"}},
+        {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs"}}
+    ],
+    context="Building a Bob Dylan tribute website with biography, discography, songs, and quotes pages"
+)
+
+# WRONG - DO NOT DO THIS (task 2 depends on task 1's output):
+# spawn_subagents(tasks=[
+#     {{"task": "Research all content"}},
+#     {{"task": "Build website using the researched content"}}  # CAN'T ACCESS TASK 1!
+# ])
+```
+
+## Available Tools
+
+- `spawn_subagents(tasks, context, timeout_seconds?)` - `context` is REQUIRED! Max {self.max_concurrent} parallel tasks.
+- `list_subagents()` - List all spawned subagents with status
+- `get_subagent_result(subagent_id)` - Get result from a completed subagent
+- `check_subagent_status(subagent_id)` - Check status of a subagent
+
+## Result Format
+
+```json
+{{
+    "success": true,
+    "operation": "spawn_subagents",
+    "results": [
+        {{
+            "subagent_id": "research_oauth",
+            "status": "completed",
+            "workspace": "{self.workspace_path}/subagents/research_oauth/workspace",
+            "answer": "The subagent's answer with file paths...",
+            "execution_time_seconds": 45.2
+        }}
+    ],
+    "summary": {{"total": 1, "completed": 1, "failed": 0, "timeout": 0}}
+}}
+```
+
+## Workspace Structure
+
+```
+{self.workspace_path}/
+├── ... (your files)
+└── subagents/
+    ├── _registry.json    # Subagent tracking
+    ├── sub_abc123/
+    │   ├── workspace/    # Subagent's files (READ-ONLY to you)
+    │   └── _metadata.json
+    └── sub_def456/
+        ├── workspace/
+        └── _metadata.json
+```
+"""
+
+
 class BroadcastCommunicationSection(SystemPromptSection):
     """
     Agent-to-agent communication capabilities via broadcast tools.
@@ -1858,7 +2051,7 @@ After execution, the actual scripts live in `scripts/` and can be reused.
 
 1. **Be specific** - Workflow steps should be actionable, not vague
 2. **Document tools upfront** - Plan scripts before writing them
-3. **Verify outputs first** - Test the result as a user would (run code, view websites, check files)
+3. **Test like a user** - Verify artifacts through interaction, not just observation (click buttons, play games, navigate pages, run with edge cases, etc)
 4. **Update with learnings** - The skill improves through use
 5. **Keep scripts reusable** - Design tools to work in similar future tasks"""
 
@@ -1883,40 +2076,57 @@ class OutputFirstVerificationSection(SystemPromptSection):
     def build_content(self) -> str:
         return """## Output-First Iteration
 
-**Core Principle: Experience your work as a user would, then iterate until the outcome is excellent.**
+**Core Principle: Experience your work exactly as a user would - through dynamic interaction, not just static observation.**
 
 This is an **improvement loop**, not just a verification step:
-1. Run/view output → 2. Identify gaps or issues → 3. Fix and enhance → 4. Re-run → 5. Confirm improvements → 6. Repeat until excellent
+1. Run/view output → 2. **Interact as a user would** → 3. Identify gaps or issues → 4. Fix and enhance → 5. Re-run and re-interact → 6. Repeat until excellent
 
-| Artifact Type | Experience It (user view) | Then Improve (iterate) |
-|--------------|---------------------------|------------------------|
-| Script/Code | Run it, observe output | Fix errors, enhance behavior |
-| Website/App | View it in browser | Adjust layout, styling, UX |
-| Generated files | Open and read contents | Refine content, fix formatting |
-| API integration | Make test calls | Handle edge cases, improve responses |
-| Data processing | Check output data | Fix accuracy, optimize pipeline |
+### Dynamic Verification: Think Like a User
 
-**Why this matters:**
-- Code that "looks correct" but crashes needs **fixing**
-- A file generator that runs but produces weak content needs **improvement**
-- An API call that executes but has poor error handling needs **enhancement**
+Static screenshots or a single code run are often not sufficient. Users don't just look at artifacts - they interact with them:
 
-**The goal is to iterate on OUTCOMES until they meet or exceed the task requirements.**
+| Artifact Type | Static Check (incomplete) | Dynamic Check (required) |
+|--------------|---------------------------|--------------------------|
+| Website/App | Screenshot looks good | Click all buttons, navigate all pages, test forms, verify links work |
+| Game | Screenshot shows UI | Play the game - test controls, scoring, game over states, restart |
+| Interactive tool | Interface renders | Use every feature, test edge cases, verify all interactions |
+| Script/Code | No errors on run | Test with various inputs, edge cases, invalid data |
+| API | Single call works | Test all endpoints, error states, authentication flows |
+| Data pipeline | Output exists | Validate accuracy, test with edge case inputs |
+
+**For any artifact not listed above:** Apply the same principle - ask "How will a user actually USE this?" and test that way.
+The goal is always to verify the complete user experience, not just surface appearance.
+
+### The User Experience Test
+
+Before considering any interactive artifact complete, ask:
+1. **What will users click/interact with?** → Do it. Does it work?
+2. **What will users type/input?** → Try it. Does it respond correctly?
+3. **What paths will users take?** → Navigate them all. Any broken routes?
+4. **How will users break it?** → Try to break it. Does it handle errors gracefully?
+
+### Why this matters:
+- A website screenshot can look perfect while half the links are broken
+- A game screenshot shows nothing about whether gameplay works
+- An interactive tool may render but crash on first click
+- Any artifact may LOOK correct but FAIL when actually used
+
+**The goal is to verify INTERACTION OUTCOMES, not just visual appearance.**
 
 ### Apply at every stage:
-1. **During development** - short loops: run/view, improve, rerun
-2. **Before answering** - final iteration pass on the actual output
-3. **During evaluation** - judge by results, improve if gaps found
+1. **During development** - short loops: interact, improve, re-interact
+2. **Before answering** - full interaction test on the actual output
+3. **During evaluation** - judge by interaction results, improve if gaps found
 
 ### Iteration examples:
-- **Code**: `python script.py` → output missing edge case → add handling → rerun → confirm fixed
-- **Files**: Read generated file → content unclear → rewrite section → re-read → confirm improved
-- **Websites**: View in browser → layout broken on mobile → fix CSS → re-screenshot → confirm responsive
-- **APIs**: Test request → error handling weak → add try/catch → re-test → confirm robust
+- **Websites**: Visit all pages → click every nav link → found 2 broken links → fix routes → re-test all links → confirm working
+- **Games**: Play game → controls unresponsive → fix input handling → replay → confirm smooth gameplay
+- **Interactive tools**: Use all features → export fails on large files → add chunking → re-test export → confirm fixed
+- **Code**: Run with test inputs → crashes on empty array → add validation → rerun with edge cases → confirm robust
 
 ### Finalization:
-- Use `new_answer` when you produced work or iterated improvements based on output review.
-- Use `vote` only when an existing answer already meets the bar without needing changes."""
+- Use `new_answer` when you produced work or iterated improvements based on **interaction testing**.
+- Use `vote` only when an existing answer already meets the bar after **testing as a user would**."""
 
 
 class MultimodalToolsSection(SystemPromptSection):
@@ -1935,15 +2145,15 @@ class MultimodalToolsSection(SystemPromptSection):
         )
 
     def build_content(self) -> str:
-        return """## Visual Verification with read_media
+        return """## Visual & Interactive Verification
 
-For visual artifacts, use `read_media` to apply output-first verification:
+Use `read_media` for visual analysis, but remember: **interact first, screenshot second.**
 
-### When to use read_media:
-- **Websites/UIs**: Screenshot and analyze layout, styling, content
-- **Diagrams/Charts**: Verify labels are readable, data is correct
-- **Generated images**: Check quality and correctness
-- **Videos**: Verify content matches requirements
+### Key Principle
+Screenshots verify appearance. Interaction verifies functionality. Do both:
+1. **Interact** with the artifact as a user would (click, navigate, play, input)
+2. **Screenshot** key states during/after interaction
+3. **Analyze** with read_media to confirm visual quality
 
 ### Tool usage:
 ```
@@ -1957,11 +2167,7 @@ read_media(file_path="output.mp4", prompt="Does this show the expected content?"
 - Audio: mp3, wav, m4a, ogg, flac, aac
 - Video: mp4, mov, avi, mkv, webm
 
-### Website verification workflow:
-1. Start server or open HTML file
-2. Take screenshot (Playwright or screenshot command)
-3. Analyze: `read_media(file_path="screenshot.png", prompt="Does this look professional?")`
-4. Fix issues based on what you SEE, not what code suggests"""
+A beautiful screenshot means nothing if buttons don't work or links are broken. Test functionality, then verify visuals."""
 
 
 class SystemPromptBuilder:

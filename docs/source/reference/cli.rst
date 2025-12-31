@@ -79,6 +79,8 @@ CLI Parameters
      - Don't auto-open browser when using ``--web`` with a question. Useful for automation or when running on servers
    * - ``--output-file PATH``
      - Write final answer to specified file path. Works in any mode (automation, interactive, etc.). Useful for capturing agent responses in scripts or pipelines
+   * - ``--logfire``
+     - Enable Logfire observability for structured tracing of LLM calls, tool executions, and orchestration. Requires Logfire token (via ``logfire auth login`` or ``LOGFIRE_TOKEN`` env var). See :doc:`../user_guide/logging` for setup details
    * - ``"<your question>"``
      - Optional single-question input. If omitted, MassGen enters interactive chat mode
 
@@ -293,6 +295,22 @@ Output to File
    # With config and output file
    massgen --config my_config.yaml --output-file report.md "Generate a project report"
 
+Logfire Observability
+~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # Enable structured tracing with Logfire
+   massgen --logfire --config your_config.yaml "Your question"
+
+   # Combine with debug mode for maximum observability
+   massgen --logfire --debug --config your_config.yaml "Your question"
+
+   # Or enable via environment variable
+   export MASSGEN_LOGFIRE_ENABLED=true
+   massgen --config your_config.yaml "Your question"
+
+See :doc:`../user_guide/logging` for detailed Logfire setup instructions.
 
 Additional Commands
 -------------------

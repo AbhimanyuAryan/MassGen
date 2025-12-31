@@ -1412,6 +1412,7 @@ class ConfigBuilder:
                                     "gemini",
                                     "grok",
                                     "azure_openai",
+                                    "openrouter",  # Supports web search via plugins array
                                 ]:
                                     agent["backend"]["enable_web_search"] = True
 
@@ -1549,6 +1550,7 @@ class ConfigBuilder:
                 "gemini",
                 "grok",
                 "azure_openai",
+                "openrouter",  # Supports web search via plugins array
             ]:
                 agent["backend"]["enable_web_search"] = True
 
@@ -1913,6 +1915,7 @@ class ConfigBuilder:
                                     "gemini",
                                     "grok",
                                     "azure_openai",
+                                    "openrouter",  # Supports web search via plugins array
                                 ]:
                                     agent["backend"]["enable_web_search"] = True
 
@@ -4083,14 +4086,57 @@ class ConfigBuilder:
 
                 # System message (optional)
                 console.print(
-                    "\n[dim]  System message (optional) - custom instructions for all agents[/dim]",
+                    "\n[dim]  System message (optional) - custom instructions for agents[/dim]",
                 )
-                system_msg = questionary.text(
-                    "  System message (press Enter to skip):",
-                    default="",
+                sys_msg_mode = questionary.select(
+                    "  System messages:",
+                    choices=[
+                        questionary.Choice("Skip (no custom instructions)", value="skip"),
+                        questionary.Choice("Same message for all agents", value="same"),
+                        questionary.Choice("Different message per agent", value="different"),
+                    ],
+                    default="skip",
+                    style=questionary.Style(
+                        [
+                            ("selected", "fg:cyan bold"),
+                            ("pointer", "fg:cyan bold"),
+                            ("highlighted", "fg:cyan"),
+                        ],
+                    ),
+                    use_arrow_keys=True,
                 ).ask()
-                if system_msg is None:
+
+                if sys_msg_mode is None:
                     raise KeyboardInterrupt
+
+                # Collect system messages based on mode
+                per_agent_system_msgs: Dict[str, str] = {}
+
+                if sys_msg_mode == "same":
+                    system_msg = questionary.text(
+                        "  System message for all agents:",
+                        default="",
+                    ).ask()
+                    if system_msg is None:
+                        raise KeyboardInterrupt
+                    if system_msg.strip():
+                        for i in range(num_agents):
+                            agent_letter = chr(ord("a") + i)
+                            per_agent_system_msgs[f"agent_{agent_letter}"] = system_msg.strip()
+
+                elif sys_msg_mode == "different":
+                    for i in range(num_agents):
+                        agent_letter = chr(ord("a") + i)
+                        agent_id = f"agent_{agent_letter}"
+                        console.print(f"\n[dim]  Agent {i + 1} ({agent_letter}):[/dim]")
+                        system_msg = questionary.text(
+                            "    System message (Enter to skip):",
+                            default="",
+                        ).ask()
+                        if system_msg is None:
+                            raise KeyboardInterrupt
+                        if system_msg.strip():
+                            per_agent_system_msgs[agent_id] = system_msg.strip()
 
                 # Create all agents with same config
                 for i in range(num_agents):
@@ -4106,8 +4152,8 @@ class ConfigBuilder:
                     # Track per-agent settings
                     if enable_web_search:
                         agent_tools[agent_id] = {"enable_web_search": True}
-                    if system_msg and system_msg.strip():
-                        agent_system_messages[agent_id] = system_msg.strip()
+                    if agent_id in per_agent_system_msgs:
+                        agent_system_messages[agent_id] = per_agent_system_msgs[agent_id]
 
             else:
                 # Configure each agent individually
@@ -4307,85 +4353,245 @@ class ConfigBuilder:
 
             # Step 5: Coordination settings (only for multi-agent)
             if num_agents > 1:
-                console.print("\n[bold cyan]Coordination Settings[/bold cyan]")
+                # Subagents section (separate from coordination tuning)
+                console.print("\n[bold cyan]Subagents[/bold cyan]")
                 console.print(
-                    "[dim]Configure how agents evaluate and accept answers.[/dim]\n",
+                    "[dim]Subagents allow agents to spawn parallel child processes for independent tasks.[/dim]",
+                )
+                enable_subagents = questionary.confirm(
+                    "Enable subagents?",
+                    default=False,
+                    style=questionary.Style([("question", "fg:cyan bold")]),
+                ).ask()
+
+                if enable_subagents is None:
+                    raise KeyboardInterrupt
+
+                if enable_subagents:
+                    coordination_settings["enable_subagents"] = True
+
+                    # Ask for subagent model configuration
+                    console.print(
+                        "\n[dim]Subagents can use the same model as parent agents or different ones.[/dim]",
+                    )
+                    subagent_model_choice = questionary.select(
+                        "Subagent model:",
+                        choices=[
+                            questionary.Choice("Same as parent agents", value="inherit"),
+                            questionary.Choice("Choose different model(s)", value="custom"),
+                        ],
+                        style=questionary.Style([("question", "fg:cyan bold")]),
+                    ).ask()
+
+                    if subagent_model_choice is None:
+                        raise KeyboardInterrupt
+
+                    if subagent_model_choice == "custom":
+                        # Support multiple subagent backends
+                        subagent_agents = []
+
+                        while True:
+                            agent_num = len(subagent_agents) + 1
+                            console.print(f"\n[bold cyan]Subagent Backend {agent_num}[/bold cyan]")
+
+                            # Only show providers with API keys
+                            provider_choices = [
+                                questionary.Choice(
+                                    self.PROVIDERS.get(pid, {}).get("name", pid),
+                                    value=pid,
+                                )
+                                for pid in available_providers
+                            ]
+
+                            subagent_provider = questionary.select(
+                                "  Backend:",
+                                choices=provider_choices,
+                                style=questionary.Style(
+                                    [
+                                        ("selected", "fg:cyan bold"),
+                                        ("pointer", "fg:cyan bold"),
+                                        ("highlighted", "fg:cyan"),
+                                    ],
+                                ),
+                                use_arrow_keys=True,
+                            ).ask()
+
+                            if subagent_provider is None:
+                                raise KeyboardInterrupt
+
+                            # Select model for subagents
+                            subagent_provider_info = self.PROVIDERS.get(subagent_provider, {})
+                            subagent_models = subagent_provider_info.get("models", ["default"])
+                            subagent_default_model = subagent_provider_info.get(
+                                "default_model",
+                                subagent_models[0] if subagent_models else None,
+                            )
+
+                            subagent_model = self.select_model_smart(
+                                subagent_provider,
+                                subagent_models,
+                                current_model=subagent_default_model,
+                                prompt="  Model:",
+                            )
+
+                            if subagent_model is None:
+                                raise KeyboardInterrupt
+
+                            # Build this subagent config
+                            subagent_config = {
+                                "backend": {
+                                    "type": subagent_provider_info.get("type", subagent_provider),
+                                    "model": subagent_model,
+                                },
+                            }
+
+                            # Add base_url for providers that need it
+                            if subagent_provider_info.get("base_url"):
+                                subagent_config["backend"]["base_url"] = subagent_provider_info["base_url"]
+
+                            subagent_agents.append(subagent_config)
+                            console.print(f"  [green]✓ Added: {subagent_model}[/green]")
+
+                            # Ask if they want to add another
+                            add_another = questionary.confirm(
+                                "Add another subagent backend?",
+                                default=False,
+                                style=questionary.Style([("question", "fg:cyan bold")]),
+                            ).ask()
+
+                            if add_another is None:
+                                raise KeyboardInterrupt
+
+                            if not add_another:
+                                break
+
+                        # Store all subagent configs
+                        coordination_settings["subagent_orchestrator"] = {
+                            "enabled": True,
+                            "agents": subagent_agents,
+                        }
+
+                        if len(subagent_agents) > 1:
+                            console.print(f"\n  [dim]Configured {len(subagent_agents)} subagent backends[/dim]")
+
+                # Coordination tuning section (optional, hidden by default)
+                console.print("\n[bold cyan]Coordination Tuning[/bold cyan]")
+                console.print(
+                    "[dim]Fine-tune voting sensitivity, answer novelty, and limits.[/dim]",
+                )
+                console.print("[dim]Default settings (lenient) work well for most tasks.[/dim]")
+
+                customize_coordination = questionary.confirm(
+                    "Customize coordination settings?",
+                    default=False,
+                    style=questionary.Style([("question", "fg:cyan bold")]),
+                ).ask()
+
+                if customize_coordination is None:
+                    raise KeyboardInterrupt
+
+                if customize_coordination:
+                    # Voting sensitivity
+                    voting_choices = [
+                        questionary.Choice(
+                            "Lenient - Agents accept answers more easily",
+                            value="lenient",
+                        ),
+                        questionary.Choice(
+                            "Balanced - Moderate scrutiny of answers",
+                            value="balanced",
+                        ),
+                        questionary.Choice(
+                            "Strict - Agents are highly critical",
+                            value="strict",
+                        ),
+                    ]
+
+                    voting_sensitivity = questionary.select(
+                        "Voting Sensitivity:",
+                        choices=voting_choices,
+                        default="lenient",
+                        style=questionary.Style(
+                            [
+                                ("selected", "fg:cyan bold"),
+                                ("pointer", "fg:cyan bold"),
+                                ("highlighted", "fg:cyan"),
+                            ],
+                        ),
+                        use_arrow_keys=True,
+                    ).ask()
+
+                    if voting_sensitivity is None:
+                        raise KeyboardInterrupt
+
+                    coordination_settings["voting_sensitivity"] = voting_sensitivity
+
+                    # Answer novelty requirement
+                    novelty_choices = [
+                        questionary.Choice(
+                            "Lenient - Similar answers are accepted",
+                            value="lenient",
+                        ),
+                        questionary.Choice(
+                            "Balanced - Some differentiation required",
+                            value="balanced",
+                        ),
+                        questionary.Choice(
+                            "Strict - Answers must be substantially different",
+                            value="strict",
+                        ),
+                    ]
+
+                    answer_novelty = questionary.select(
+                        "Answer Novelty Requirement:",
+                        choices=novelty_choices,
+                        default="lenient",
+                        style=questionary.Style(
+                            [
+                                ("selected", "fg:cyan bold"),
+                                ("pointer", "fg:cyan bold"),
+                                ("highlighted", "fg:cyan"),
+                            ],
+                        ),
+                        use_arrow_keys=True,
+                    ).ask()
+
+                    if answer_novelty is None:
+                        raise KeyboardInterrupt
+
+                    coordination_settings["answer_novelty_requirement"] = answer_novelty
+
+                    # Max answers per agent
+                    max_answers_input = questionary.text(
+                        "Max answers per agent (leave empty for unlimited):",
+                        default="",
+                        style=questionary.Style(
+                            [
+                                ("question", "fg:cyan bold"),
+                            ],
+                        ),
+                    ).ask()
+
+                    if max_answers_input is None:
+                        raise KeyboardInterrupt
+
+                    if max_answers_input.strip():
+                        try:
+                            max_answers = int(max_answers_input)
+                            if max_answers > 0:
+                                coordination_settings["max_new_answers_per_agent"] = max_answers
+                        except ValueError:
+                            pass  # Ignore invalid input, use unlimited
+
+                # Persona Generation (multi-agent only)
+                console.print("\n[bold cyan]Persona Generation[/bold cyan]")
+                console.print(
+                    "[dim]Auto-generate diverse approaches for each agent to explore " "different regions of the solution space.[/dim]\n",
                 )
 
-                # Voting sensitivity
-                voting_choices = [
-                    questionary.Choice(
-                        "Lenient - Agents accept answers more easily",
-                        value="lenient",
-                    ),
-                    questionary.Choice(
-                        "Balanced - Moderate scrutiny of answers",
-                        value="balanced",
-                    ),
-                    questionary.Choice(
-                        "Strict - Agents are highly critical",
-                        value="strict",
-                    ),
-                ]
-
-                voting_sensitivity = questionary.select(
-                    "Voting Sensitivity:",
-                    choices=voting_choices,
-                    default="lenient",
-                    style=questionary.Style(
-                        [
-                            ("selected", "fg:cyan bold"),
-                            ("pointer", "fg:cyan bold"),
-                            ("highlighted", "fg:cyan"),
-                        ],
-                    ),
-                    use_arrow_keys=True,
-                ).ask()
-
-                if voting_sensitivity is None:
-                    raise KeyboardInterrupt
-
-                coordination_settings["voting_sensitivity"] = voting_sensitivity
-
-                # Answer novelty requirement
-                novelty_choices = [
-                    questionary.Choice(
-                        "Lenient - Similar answers are accepted",
-                        value="lenient",
-                    ),
-                    questionary.Choice(
-                        "Balanced - Some differentiation required",
-                        value="balanced",
-                    ),
-                    questionary.Choice(
-                        "Strict - Answers must be substantially different",
-                        value="strict",
-                    ),
-                ]
-
-                answer_novelty = questionary.select(
-                    "Answer Novelty Requirement:",
-                    choices=novelty_choices,
-                    default="lenient",
-                    style=questionary.Style(
-                        [
-                            ("selected", "fg:cyan bold"),
-                            ("pointer", "fg:cyan bold"),
-                            ("highlighted", "fg:cyan"),
-                        ],
-                    ),
-                    use_arrow_keys=True,
-                ).ask()
-
-                if answer_novelty is None:
-                    raise KeyboardInterrupt
-
-                coordination_settings["answer_novelty_requirement"] = answer_novelty
-
-                # Max answers per agent
-                max_answers_input = questionary.text(
-                    "Max answers per agent (leave empty for unlimited):",
-                    default="",
+                enable_personas = questionary.confirm(
+                    "Enable automatic persona generation?",
+                    default=True,
                     style=questionary.Style(
                         [
                             ("question", "fg:cyan bold"),
@@ -4393,16 +4599,33 @@ class ConfigBuilder:
                     ),
                 ).ask()
 
-                if max_answers_input is None:
+                if enable_personas is None:
                     raise KeyboardInterrupt
 
-                if max_answers_input.strip():
-                    try:
-                        max_answers = int(max_answers_input)
-                        if max_answers > 0:
-                            coordination_settings["max_new_answers_per_agent"] = max_answers
-                    except ValueError:
-                        pass  # Ignore invalid input, use unlimited
+                if enable_personas:
+                    # Ask for diversity mode
+                    diversity_mode = questionary.select(
+                        "Diversity mode:",
+                        choices=[
+                            questionary.Choice(
+                                "Perspective - Different values/priorities (e.g., simplicity vs robustness)",
+                                value="perspective",
+                            ),
+                            questionary.Choice(
+                                "Implementation - Different solution types (e.g., minimal vs feature-rich)",
+                                value="implementation",
+                            ),
+                        ],
+                        default="perspective",
+                    ).ask()
+
+                    if diversity_mode is None:
+                        raise KeyboardInterrupt
+
+                    coordination_settings["persona_generator"] = {
+                        "enabled": True,
+                        "diversity_mode": diversity_mode,
+                    }
 
             # Step 6: Generate the full config
             console.print("\n[dim]Generating configuration...[/dim]")
@@ -4672,6 +4895,18 @@ class ConfigBuilder:
             orchestrator_config["answer_novelty_requirement"] = coordination_settings["answer_novelty_requirement"]
         if coordination_settings.get("max_new_answers_per_agent"):
             orchestrator_config["max_new_answers_per_agent"] = coordination_settings["max_new_answers_per_agent"]
+        if coordination_settings.get("enable_subagents"):
+            orchestrator_config["coordination"]["enable_subagents"] = True
+            orchestrator_config["coordination"]["subagent_default_timeout"] = 300  # 5 minutes
+            orchestrator_config["coordination"]["subagent_max_concurrent"] = 3
+
+            # Add subagent orchestrator config if custom model was selected
+            if coordination_settings.get("subagent_orchestrator"):
+                orchestrator_config["coordination"]["subagent_orchestrator"] = coordination_settings["subagent_orchestrator"]
+
+        # Add persona generator config if enabled
+        if coordination_settings.get("persona_generator"):
+            orchestrator_config["coordination"]["persona_generator"] = coordination_settings["persona_generator"]
 
         # Build full config
         config = {

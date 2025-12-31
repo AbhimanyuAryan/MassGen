@@ -154,6 +154,21 @@ def set_log_base_session_dir(log_dir: str) -> None:
     _LOG_SESSION_DIR = None  # Force recreation with new base
 
 
+def set_log_base_session_dir_absolute(log_dir_path: Path) -> None:
+    """Set the base log session directory to an existing absolute path.
+
+    Used by subagent orchestrator to inherit the parent's log directory
+    instead of creating a new timestamped session.
+
+    Args:
+        log_dir_path: Absolute path to existing log directory
+    """
+    global _LOG_BASE_SESSION_DIR, _LOG_SESSION_DIR
+    _LOG_BASE_SESSION_DIR = log_dir_path
+    _LOG_BASE_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    _LOG_SESSION_DIR = None  # Force recreation with new base
+
+
 def get_log_session_dir_base() -> Path:
     """Get the turn-level directory without attempt subdirectory.
 
@@ -366,6 +381,30 @@ def setup_logging(debug: bool = False, log_file: Optional[str] = None, turn: Opt
 
         logger.info("Logging enabled - logging INFO+ to file: {}", log_file)
         logger.info("Streaming debug log: {}", streaming_debug_log)
+
+
+def integrate_logfire_with_loguru():
+    """
+    Integrate Logfire with loguru so that log messages are also sent to Logfire.
+
+    This should be called after both setup_logging() and configure_observability()
+    have been called. It uses Logfire's built-in loguru instrumentation.
+    """
+    try:
+        from .structured_logging import is_observability_enabled
+
+        if not is_observability_enabled():
+            return
+
+        import logfire
+
+        # Logfire has built-in loguru integration
+        logfire.instrument_loguru()
+        logger.debug("Logfire integrated with loguru")
+    except ImportError:
+        pass  # Logfire not available
+    except Exception as e:
+        logger.debug(f"Could not integrate Logfire with loguru: {e}")
 
 
 def suppress_console_logging():
@@ -825,6 +864,7 @@ def _format_message(message: dict) -> str:
 __all__ = [
     "logger",
     "setup_logging",
+    "integrate_logfire_with_loguru",
     "suppress_console_logging",
     "restore_console_logging",
     "get_logger",
@@ -834,6 +874,7 @@ __all__ = [
     "set_log_turn",
     "set_log_attempt",
     "set_log_base_session_dir",
+    "set_log_base_session_dir_absolute",
     "save_execution_metadata",
     "log_orchestrator_activity",
     "log_agent_message",

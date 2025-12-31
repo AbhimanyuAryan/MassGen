@@ -89,7 +89,7 @@ from .orchestrator import Orchestrator, create_orchestrator
 
 LITELLM_AVAILABLE = True
 
-__version__ = "0.1.28"
+__version__ = "0.1.31"
 __author__ = "MassGen Contributors"
 
 

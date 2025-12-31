@@ -9,6 +9,7 @@ agents:
       cwd: "workspace1"  # Required for filesystem mode
       enable_mcp_command_line: true
       command_line_execution_mode: "docker"
+      command_line_docker_enable_sudo: true
 
   - id: "agent_b"
     backend:
@@ -17,6 +18,7 @@ agents:
       cwd: "workspace2"  # Required for filesystem mode
       enable_mcp_command_line: true
       command_line_execution_mode: "docker"
+      command_line_docker_enable_sudo: true
 
 orchestrator:
   snapshot_storage: "snapshots"

@@ -32,6 +32,13 @@ def check_vhs_installed() -> bool:
         return False
 
 
+# Skip marker for tests that require VHS
+requires_vhs = pytest.mark.skipif(
+    not check_vhs_installed(),
+    reason="VHS not installed (install with: brew install vhs or go install github.com/charmbracelet/vhs@latest)",
+)
+
+
 class TestTerminalEvaluation:
     """Test suite for terminal evaluation (run_massgen_with_recording)."""
 
@@ -62,9 +69,11 @@ ui:
         config_path.write_text(config_content)
         return config_path
 
+    @requires_vhs
     def test_vhs_installed(self):
         """Test that VHS is installed (prerequisite for terminal evaluation)."""
-        assert check_vhs_installed(), "VHS is not installed. Install with: brew install vhs (macOS) " "or go install github.com/charmbracelet/vhs@latest"
+        # This test verifies VHS works when installed
+        assert check_vhs_installed()
 
     @pytest.mark.asyncio
     async def test_vhs_check_function(self):

@@ -53,6 +53,13 @@ from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
 from .persona_generator import PersonaGenerator
 from .stream_chunk import ChunkType
+from .structured_logging import (
+    clear_current_round,
+    get_tracer,
+    log_agent_round_context,
+    log_coordination_event,
+    set_current_round,
+)
 from .system_message_builder import SystemMessageBuilder
 from .tool import get_post_evaluation_tools, get_workflow_tools
 from .utils import ActionType, AgentStatus, CoordinationStage
@@ -139,6 +146,7 @@ class Orchestrator(ChatAgent):
         nlip_config: Optional[Dict[str, Any]] = None,
         enable_rate_limit: bool = False,
         trace_classification: str = "legacy",
+        generated_personas: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize MassGen orchestrator.
@@ -162,6 +170,8 @@ class Orchestrator(ChatAgent):
             enable_rate_limit: Whether to enable rate limiting and cooldown delays (default: False)
             trace_classification: "legacy" (default) preserves current content traces; "strict" emits
                                   coordination/status as non-content for server mode.
+            generated_personas: Pre-generated personas from previous turn (for multi-turn persistence)
+                               Format: {agent_id: GeneratedPersona, ...}
         """
         super().__init__(session_id, shared_conversation_memory, shared_persistent_memory)
         self.orchestrator_id = orchestrator_id
@@ -205,6 +215,7 @@ class Orchestrator(ChatAgent):
         self._coordination_messages: List[Dict[str, str]] = []
         self._selected_agent: Optional[str] = None
         self._final_presentation_content: Optional[str] = None
+        self._presentation_started: bool = False  # Guard against duplicate presentations
 
         # Track winning agents by turn for memory sharing
         # Format: [{"agent_id": "agent_b", "turn": 1}, {"agent_id": "agent_a", "turn": 2}]
@@ -248,8 +259,12 @@ class Orchestrator(ChatAgent):
         self._paraphrase_generation_errors: int = 0
 
         # Persona generation tracking
-        self._personas_generated: bool = False
-        self._generated_personas: Dict[str, Any] = {}  # agent_id -> GeneratedPersona
+        # If personas are passed in (from previous turn), use them and mark as already generated
+        self._generated_personas: Dict[str, Any] = generated_personas or {}  # agent_id -> GeneratedPersona
+        self._personas_generated: bool = bool(generated_personas)  # Skip generation if already have them
+        self._original_system_messages: Dict[str, Optional[str]] = {}  # agent_id -> original message
+        if self._personas_generated:
+            logger.info(f"📝 Restored {len(self._generated_personas)} persona(s) from previous turn")
 
         # Multi-turn session tracking (loaded by CLI, not managed by orchestrator)
         self._previous_turns: List[Dict[str, Any]] = previous_turns or []
@@ -344,6 +359,13 @@ class Orchestrator(ChatAgent):
                 logger.info(f"[Orchestrator] Injecting planning tools for {len(self.agents)} agents")
                 self._inject_planning_tools_for_all_agents()
                 logger.info("[Orchestrator] Planning tools injection complete")
+
+        # Inject subagent tools if enabled
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents"):
+            if self.config.coordination_config.enable_subagents:
+                logger.info(f"[Orchestrator] Injecting subagent tools for {len(self.agents)} agents")
+                self._inject_subagent_tools_for_all_agents()
+                logger.info("[Orchestrator] Subagent tools injection complete")
 
         # NOTE: Memory MCP tools are disabled - using file-based approach with task completion reminders
         # Agents use standard file tools to manage memory files in workspace/memory/
@@ -753,42 +775,213 @@ class Orchestrator(ChatAgent):
 
         return config
 
+    def _inject_subagent_tools_for_all_agents(self) -> None:
+        """
+        Inject subagent MCP tools into all agents.
+
+        This method adds the subagent MCP server to each agent's backend
+        configuration, enabling them to spawn and manage subagents.
+        """
+        for agent_id, agent in self.agents.items():
+            self._inject_subagent_tools_for_agent(agent_id, agent)
+
+    def _inject_subagent_tools_for_agent(self, agent_id: str, agent: Any) -> None:
+        """
+        Inject subagent MCP tools into a specific agent.
+
+        Args:
+            agent_id: ID of the agent
+            agent: Agent instance
+        """
+        # Only inject if agent has filesystem manager (needs workspace)
+        if not hasattr(agent, "backend") or not hasattr(agent.backend, "filesystem_manager"):
+            logger.warning(f"[Orchestrator] Agent {agent_id} has no filesystem_manager, skipping subagent tools")
+            return
+
+        if not agent.backend.filesystem_manager:
+            logger.warning(f"[Orchestrator] Agent {agent_id} filesystem_manager is None, skipping subagent tools")
+            return
+
+        if not agent.backend.filesystem_manager.cwd:
+            logger.warning(f"[Orchestrator] Agent {agent_id} filesystem_manager.cwd is None, skipping subagent tools")
+            return
+
+        logger.info(f"[Orchestrator] Injecting subagent tools for agent: {agent_id}")
+
+        # Create subagent MCP config
+        subagent_mcp_config = self._create_subagent_mcp_config(agent_id, agent)
+        logger.info(f"[Orchestrator] Created subagent MCP config: {subagent_mcp_config['name']}")
+
+        # Get existing mcp_servers configuration
+        mcp_servers = agent.backend.config.get("mcp_servers", [])
+        logger.info(f"[Orchestrator] Existing MCP servers for {agent_id}: {type(mcp_servers)} with {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} entries")
+
+        # Handle both list format and dict format (Claude Code)
+        if isinstance(mcp_servers, dict):
+            # Claude Code dict format
+            logger.info("[Orchestrator] Using dict format for MCP servers")
+            mcp_servers[f"subagent_{agent_id}"] = subagent_mcp_config
+        else:
+            # Standard list format
+            logger.info("[Orchestrator] Using list format for MCP servers")
+            if not isinstance(mcp_servers, list):
+                mcp_servers = []
+            mcp_servers.append(subagent_mcp_config)
+
+        # Update backend config
+        agent.backend.config["mcp_servers"] = mcp_servers
+        logger.info(f"[Orchestrator] Updated MCP servers for {agent_id}, now has {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} servers")
+
+    def _create_subagent_mcp_config(self, agent_id: str, agent: Any) -> Dict[str, Any]:
+        """
+        Create MCP server configuration for subagent tools.
+
+        Args:
+            agent_id: ID of the agent
+            agent: Agent instance (for accessing workspace path)
+
+        Returns:
+            MCP server configuration dictionary
+        """
+        import tempfile
+        from pathlib import Path as PathlibPath
+
+        import massgen.mcp_tools.subagent._subagent_mcp_server as subagent_module
+
+        script_path = PathlibPath(subagent_module.__file__).resolve()
+
+        workspace_path = str(agent.backend.filesystem_manager.cwd)
+
+        # Build list of all parent agent configs to pass to subagent manager
+        # This allows subagents to inherit the exact same agent setup by default
+        import json
+
+        agent_configs = []
+        for aid, a in self.agents.items():
+            agent_cfg = {"id": aid}
+            if hasattr(a.backend, "config"):
+                # Filter out non-serializable or internal keys
+                backend_cfg = {k: v for k, v in a.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+                agent_cfg["backend"] = backend_cfg
+            agent_configs.append(agent_cfg)
+
+        # Write agent configs to temp file to avoid command line / env var length limits
+        agent_configs_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix="massgen_subagent_configs_",
+            delete=False,  # Keep file until subagent reads it
+        )
+        json.dump(agent_configs, agent_configs_file)
+        agent_configs_file.close()
+        agent_configs_path = agent_configs_file.name
+
+        # Get subagent configuration from coordination config
+        max_concurrent = 3
+        default_timeout = 300
+        subagent_orchestrator_config_json = "{}"
+        if hasattr(self.config, "coordination_config"):
+            if hasattr(self.config.coordination_config, "subagent_max_concurrent"):
+                max_concurrent = self.config.coordination_config.subagent_max_concurrent
+            if hasattr(self.config.coordination_config, "subagent_default_timeout"):
+                default_timeout = self.config.coordination_config.subagent_default_timeout
+            # Get subagent_orchestrator config if present
+            if hasattr(self.config.coordination_config, "subagent_orchestrator"):
+                so_config = self.config.coordination_config.subagent_orchestrator
+                if so_config:
+                    subagent_orchestrator_config_json = json.dumps(so_config.to_dict())
+
+        # Get log directory for subagent logs
+        log_directory = ""
+        try:
+            log_dir = get_log_session_dir()
+            if log_dir:
+                log_directory = str(log_dir)
+        except Exception:
+            pass  # Log directory not configured
+
+        args = [
+            "run",
+            f"{script_path}:create_server",
+            "--",
+            "--agent-id",
+            agent_id,
+            "--orchestrator-id",
+            self.orchestrator_id,
+            "--workspace-path",
+            workspace_path,
+            "--agent-configs-file",
+            agent_configs_path,
+            "--max-concurrent",
+            str(max_concurrent),
+            "--default-timeout",
+            str(default_timeout),
+            "--orchestrator-config",
+            subagent_orchestrator_config_json,
+            "--log-directory",
+            log_directory,
+        ]
+
+        config = {
+            "name": f"subagent_{agent_id}",
+            "type": "stdio",
+            "command": "fastmcp",
+            "args": args,
+            "env": {
+                "FASTMCP_SHOW_CLI_BANNER": "false",
+            },
+        }
+
+        logger.info(f"[Orchestrator] Created subagent MCP config for {agent_id} with workspace: {workspace_path}")
+
+        return config
+
     async def _generate_and_inject_personas(self) -> None:
         """
         Generate diverse personas for all agents and inject into their system messages.
 
-        This method uses an LLM (specified in persona_generator config) to create
+        This method uses a subagent (running the same models as parent) to generate
         complementary personas for each agent, increasing response diversity.
         The generated personas are prepended to existing system messages.
+
+        The subagent approach:
+        - Inherits the same models/backends as the parent config
+        - Uses stripped-down config (no filesystem/command line tools)
+        - If parent has N agents, subagent uses N agents to collaboratively generate personas
         """
         # Check if persona generation is enabled
         if not hasattr(self.config, "coordination_config"):
+            logger.info("[Orchestrator] No coordination_config, skipping persona generation")
             return
         if not hasattr(self.config.coordination_config, "persona_generator"):
+            logger.info("[Orchestrator] No persona_generator config, skipping persona generation")
             return
+
+        pg = self.config.coordination_config.persona_generator
+        logger.info(f"[Orchestrator] persona_generator config: type={type(pg)}, value={pg}")
+        if hasattr(pg, "enabled"):
+            logger.info(f"[Orchestrator] persona_generator.enabled = {pg.enabled}")
+        else:
+            logger.info(f"[Orchestrator] persona_generator has no 'enabled' attr, attrs={dir(pg)}")
+
         if not self.config.coordination_config.persona_generator.enabled:
+            logger.info("[Orchestrator] Persona generation disabled in config")
             return
 
         # Skip if already generated (for multi-turn scenarios)
         if self._personas_generated:
-            logger.debug("[Orchestrator] Personas already generated, skipping")
+            logger.info("[Orchestrator] Personas already generated, skipping")
             return
 
-        logger.info(f"[Orchestrator] Generating personas for {len(self.agents)} agents")
+        logger.info(f"[Orchestrator] Generating personas for {len(self.agents)} agents via subagent")
 
         try:
-            # Create backend for persona generation
-            from .cli import create_backend
-
             pg_config = self.config.coordination_config.persona_generator
-            backend_config = pg_config.backend
-            persona_backend = create_backend(backend_type=backend_config["type"], **{k: v for k, v in backend_config.items() if k != "type"})
 
             # Initialize generator
             generator = PersonaGenerator(
-                backend=persona_backend,
-                strategy=pg_config.strategy,
                 guidelines=pg_config.persona_guidelines,
+                diversity_mode=pg_config.diversity_mode,
             )
 
             # Get existing system messages
@@ -799,32 +992,63 @@ class Orchestrator(ChatAgent):
                 else:
                     existing_messages[agent_id] = None
 
-            # Generate personas
-            personas = await generator.generate_personas(
+            # Build parent agent configs for inheritance
+            parent_configs = []
+            for agent_id, agent in self.agents.items():
+                agent_cfg = {"id": agent_id}
+                if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
+                    # Filter out non-serializable keys
+                    backend_cfg = {k: v for k, v in agent.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+                    agent_cfg["backend"] = backend_cfg
+                parent_configs.append(agent_cfg)
+
+            # Get workspace path (use first agent's workspace or temp)
+            parent_workspace = None
+            for agent in self.agents.values():
+                if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
+                    if agent.backend.filesystem_manager and agent.backend.filesystem_manager.cwd:
+                        parent_workspace = str(agent.backend.filesystem_manager.cwd)
+                        break
+
+            if not parent_workspace:
+                import tempfile
+
+                parent_workspace = tempfile.mkdtemp(prefix="massgen_persona_")
+                logger.debug(f"[Orchestrator] Using temp workspace for persona generation: {parent_workspace}")
+
+            # Get log directory
+            log_directory = None
+            try:
+                log_dir = get_log_session_dir()
+                if log_dir:
+                    log_directory = str(log_dir)
+            except Exception:
+                pass
+
+            # Generate personas via subagent
+            personas = await generator.generate_personas_via_subagent(
                 agent_ids=list(self.agents.keys()),
                 task=self.current_task or "Complete the assigned task",
                 existing_system_messages=existing_messages,
+                parent_agent_configs=parent_configs,
+                parent_workspace=parent_workspace,
+                orchestrator_id=self.orchestrator_id,
+                log_directory=log_directory,
             )
 
-            # Inject personas into agents
-            for agent_id, agent in self.agents.items():
-                persona = personas.get(agent_id)
-                if persona:
-                    existing = existing_messages.get(agent_id) or ""
-                    # Prepend persona to existing system message
-                    new_message = f"{persona.persona_text}\n\n{existing}".strip()
-
-                    # Set the new system message
-                    if hasattr(agent, "set_system_message"):
-                        agent.set_system_message(new_message)
-                    elif hasattr(agent, "system_message"):
-                        agent.system_message = new_message
-
-                    logger.debug(f"[Orchestrator] Injected persona for {agent_id}: {persona.attributes.get('thinking_style', 'unknown')}")
-
-            # Store for logging/debugging
+            # Store personas and original system messages for phase-based injection
+            # We don't inject into agents here - we do it dynamically per execution
+            # based on whether they've seen other answers (exploration vs convergence)
             self._generated_personas = personas
+            self._original_system_messages = existing_messages
             self._personas_generated = True
+
+            for agent_id, persona in personas.items():
+                approach = persona.attributes.get(
+                    "approach_summary",
+                    persona.attributes.get("thinking_style", "unknown"),
+                )
+                logger.info(f"[Orchestrator] Generated persona for {agent_id}: {approach}")
 
             # Save personas to log file
             self._save_personas_to_log(personas)
@@ -835,6 +1059,38 @@ class Orchestrator(ChatAgent):
             logger.error(f"[Orchestrator] Failed to generate personas: {e}")
             logger.warning("[Orchestrator] Continuing without persona generation")
             self._personas_generated = True  # Don't retry on failure
+
+    def _get_persona_for_agent(self, agent_id: str, has_seen_answers: bool) -> Optional[str]:
+        """Get the appropriate persona text for an agent based on phase.
+
+        Args:
+            agent_id: The agent ID
+            has_seen_answers: True if agent has seen other agents' answers (convergence phase)
+
+        Returns:
+            The persona text to prepend, or None if no persona exists
+        """
+        if not self._generated_personas:
+            return None
+
+        persona = self._generated_personas.get(agent_id)
+        if not persona:
+            return None
+
+        if has_seen_answers:
+            # Convergence phase - use softened perspective
+            return persona.get_softened_text()
+        else:
+            # Exploration phase - use strong perspective
+            return persona.persona_text
+
+    def get_generated_personas(self) -> Dict[str, Any]:
+        """Get the generated personas for persistence across turns.
+
+        Returns:
+            Dictionary of agent_id -> GeneratedPersona
+        """
+        return self._generated_personas
 
     def _save_personas_to_log(self, personas: Dict[str, Any]) -> None:
         """
@@ -1517,6 +1773,10 @@ class Orchestrator(ChatAgent):
                     total_output_tokens += tu.get("output_tokens", 0)
                     total_reasoning_tokens += tu.get("reasoning_tokens", 0)
 
+            # Collect subagent costs from status files
+            subagents_summary = self._collect_subagent_costs(log_dir)
+            subagent_total_cost = subagents_summary.get("total_estimated_cost", 0.0)
+
             # Aggregate API call timing metrics
             api_timing = {
                 "total_calls": 0,
@@ -1577,7 +1837,9 @@ class Orchestrator(ChatAgent):
                     "winner": self.coordination_tracker.final_winner,
                 },
                 "totals": {
-                    "estimated_cost": round(total_cost, 6),
+                    "estimated_cost": round(total_cost + subagent_total_cost, 6),
+                    "agent_cost": round(total_cost, 6),
+                    "subagent_cost": round(subagent_total_cost, 6),
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
                     "reasoning_tokens": total_reasoning_tokens,
@@ -1586,6 +1848,7 @@ class Orchestrator(ChatAgent):
                 "rounds": rounds_summary,
                 "api_timing": api_timing,
                 "agents": agent_metrics,
+                "subagents": subagents_summary,
             }
             with open(summary_file, "w", encoding="utf-8") as f:
                 json.dump(summary_data, f, indent=2, default=str)
@@ -1594,6 +1857,118 @@ class Orchestrator(ChatAgent):
 
         except Exception as e:
             logger.warning(f"Failed to save metrics files: {e}", exc_info=True)
+
+    def _collect_subagent_costs(self, log_dir: Path) -> Dict[str, Any]:
+        """
+        Collect subagent costs and metrics from status.json and subprocess metrics.
+
+        Args:
+            log_dir: Path to the log directory (e.g., turn_1/attempt_1)
+
+        Returns:
+            Dictionary with total costs, timing data, and per-subagent breakdown
+        """
+        subagents_dir = log_dir / "subagents"
+        if not subagents_dir.exists():
+            return {
+                "total_subagents": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_estimated_cost": 0.0,
+                "total_api_time_ms": 0.0,
+                "total_api_calls": 0,
+                "subagents": [],
+            }
+
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_estimated_cost = 0.0
+        total_api_time_ms = 0.0
+        total_api_calls = 0
+        subagent_details = []
+
+        # Find all status.json files in subagent directories
+        for subagent_path in subagents_dir.iterdir():
+            if not subagent_path.is_dir():
+                continue
+
+            status_file = subagent_path / "status.json"
+            if not status_file.exists():
+                continue
+
+            try:
+                # Read status.json for basic info
+                with open(status_file, "r", encoding="utf-8") as f:
+                    status_data = json.load(f)
+
+                token_usage = status_data.get("token_usage", {})
+                input_tokens = token_usage.get("input_tokens", 0)
+                output_tokens = token_usage.get("output_tokens", 0)
+                cost = token_usage.get("estimated_cost", 0.0)
+                elapsed_seconds = status_data.get("elapsed_seconds", 0.0)
+
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
+                total_estimated_cost += cost
+
+                # Initialize subagent detail entry
+                subagent_detail = {
+                    "subagent_id": status_data.get("subagent_id", subagent_path.name),
+                    "status": status_data.get("status", "unknown"),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "estimated_cost": round(cost, 6),
+                    "elapsed_seconds": elapsed_seconds,
+                    "task": status_data.get("task", "")[:100],
+                }
+
+                # Try to read subprocess metrics for API timing data
+                subprocess_logs_file = subagent_path / "subprocess_logs.json"
+                if subprocess_logs_file.exists():
+                    try:
+                        with open(subprocess_logs_file, "r", encoding="utf-8") as f:
+                            subprocess_logs = json.load(f)
+
+                        subprocess_log_dir = subprocess_logs.get("subprocess_log_dir")
+                        if subprocess_log_dir:
+                            # Read the subprocess's metrics_summary.json
+                            metrics_file = Path(subprocess_log_dir) / "metrics_summary.json"
+                            if metrics_file.exists():
+                                with open(metrics_file, "r", encoding="utf-8") as f:
+                                    metrics_data = json.load(f)
+
+                                # Extract API timing data
+                                api_timing = metrics_data.get("api_timing", {})
+                                if api_timing:
+                                    subagent_api_time = api_timing.get("total_time_ms", 0.0)
+                                    subagent_api_calls = api_timing.get("total_calls", 0)
+
+                                    total_api_time_ms += subagent_api_time
+                                    total_api_calls += subagent_api_calls
+
+                                    subagent_detail["api_timing"] = {
+                                        "total_time_ms": round(subagent_api_time, 2),
+                                        "total_calls": subagent_api_calls,
+                                        "avg_time_ms": api_timing.get("avg_time_ms", 0.0),
+                                        "avg_ttft_ms": api_timing.get("avg_ttft_ms", 0.0),
+                                    }
+                    except Exception as e:
+                        logger.debug(f"Failed to read subprocess metrics for {subagent_path.name}: {e}")
+
+                subagent_details.append(subagent_detail)
+
+            except Exception as e:
+                logger.debug(f"Failed to read subagent status from {status_file}: {e}")
+
+        return {
+            "total_subagents": len(subagent_details),
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_estimated_cost": round(total_estimated_cost, 6),
+            "total_api_time_ms": round(total_api_time_ms, 2),
+            "total_api_calls": total_api_calls,
+            "subagents": subagent_details,
+        }
 
     def _format_planning_mode_ui(
         self,
@@ -1924,6 +2299,7 @@ Your answer:"""
         self.total_tokens = 0
         self.is_orchestrator_timeout = False
         self.timeout_reason = None
+        self._presentation_started = False  # Reset presentation guard for new attempt
 
         log_orchestrator_activity(
             self.orchestrator_id,
@@ -1976,6 +2352,16 @@ Your answer:"""
 
     async def _coordinate_agents(self, conversation_context: Optional[Dict[str, Any]] = None) -> AsyncGenerator[StreamChunk, None]:
         """Execute unified MassGen coordination workflow with real-time streaming."""
+        # Log structured coordination event for observability
+        log_coordination_event(
+            "coordination_started",
+            details={
+                "num_agents": len(self.agents),
+                "agent_ids": list(self.agents.keys()),
+                "task": self.current_task[:200] if self.current_task else None,
+            },
+        )
+
         log_coordination_step(
             "Starting multi-agent coordination",
             {
@@ -2112,6 +2498,17 @@ Your answer:"""
         log_coordination_step(
             "Final agent selected",
             {"selected_agent": self._selected_agent, "votes": votes},
+        )
+
+        # Log structured event for observability
+        log_coordination_event(
+            "winner_selected",
+            agent_id=self._selected_agent,
+            details={
+                "turn": self._current_turn,
+                "vote_count": len(votes),
+                "num_answers": len(current_answers),
+            },
         )
 
         # Merge all agents' memories into winner's workspace before final presentation
@@ -3504,9 +3901,52 @@ Your answer:"""
             # agent.backend.filesystem_manager.clear_workspace()  # Don't clear for now.
             agent.backend.filesystem_manager.log_current_state("before execution")
 
+        # Create agent execution span for hierarchical tracing in Logfire
+        # This groups all tool calls, LLM calls, and events under this agent's execution
+        tracer = get_tracer()
+        current_round = self.coordination_tracker.get_agent_round(agent_id)
+        context_labels = self.coordination_tracker.get_agent_context_labels(agent_id)
+        round_type = "voting" if answers else "initial_answer"
+
+        span_attributes = {
+            "massgen.agent_id": agent_id,
+            "massgen.iteration": self.coordination_tracker.current_iteration,
+            "massgen.round": current_round,
+            "massgen.round_type": round_type,
+            "massgen.backend": backend_name or "unknown",
+            "massgen.num_context_answers": len(answers) if answers else 0,
+        }
+        if context_labels:
+            span_attributes["massgen.context_labels"] = ",".join(context_labels)
+
+        _agent_span_cm = tracer.span(
+            f"agent.{agent_id}.round_{current_round}",
+            attributes=span_attributes,
+        )
+        _agent_span = _agent_span_cm.__enter__()  # Capture the yielded span for set_attribute()
+
+        # Set the round context for nested tool calls to use
+        set_current_round(current_round, round_type)
+
+        # Track outcome for span attributes (set in finally block)
+        _agent_outcome = None  # "vote", "answer", or "error"
+        _agent_voted_for = None  # Only set for votes
+        _agent_answer_label = None  # Only set for answers (e.g., "agent1.1")
+        _agent_voted_for_label = None  # Only set for votes (e.g., "agent2.1")
+        _agent_error_message = None  # Only set for errors
+
         try:
             # Normalize workspace paths in agent answers for better comparison from this agent's perspective
             normalized_answers = self._normalize_workspace_paths_in_answers(answers, agent_id) if answers else answers
+
+            # Log structured context for this agent's round (for observability/debugging)
+            log_agent_round_context(
+                agent_id=agent_id,
+                round_number=current_round,
+                round_type=round_type,
+                answers_in_context=normalized_answers,
+                answer_labels=context_labels,
+            )
 
             # Log the normalized answers this agent will see
             if normalized_answers:
@@ -3538,6 +3978,15 @@ Your answer:"""
                 previous_turns=self._previous_turns,
                 human_qa_history=human_qa_history,
             )
+
+            # Inject phase-appropriate persona if enabled
+            has_seen_answers = bool(normalized_answers)
+            persona_text = self._get_persona_for_agent(agent_id, has_seen_answers)
+            if persona_text:
+                phase = "convergence" if has_seen_answers else "exploration"
+                logger.info(f"[Orchestrator] Injecting {phase} persona for {agent_id}")
+                system_message = f"{persona_text}\n\n{system_message}"
+
             logger.info(f"[Orchestrator] Structured system message built for {agent_id} (length: {len(system_message)} chars)")
 
             # Note: Broadcast communication section is now integrated in SystemMessageBuilder
@@ -3645,11 +4094,12 @@ Your answer:"""
             self.coordination_tracker.change_status(agent_id, AgentStatus.STREAMING)
 
             # Start round token tracking for this agent
+            # Note: round_type was computed earlier as "voting" if answers else "initial_answer"
             current_round = self.coordination_tracker.get_agent_round(agent_id)
             if hasattr(agent.backend, "start_round_tracking"):
                 agent.backend.start_round_tracking(
                     round_number=current_round,
-                    round_type="initial_answer",
+                    round_type=round_type,  # Use computed round_type (voting or initial_answer)
                     agent_id=agent_id,
                 )
 
@@ -3852,38 +4302,21 @@ Your answer:"""
                         error_msg = getattr(chunk, "error", str(chunk.content)) if hasattr(chunk, "error") else str(chunk.content)
                         yield ("content", f"❌ Error: {error_msg}\n")
 
-                # Check for multiple vote calls before processing
+                # Handle multiple vote calls - take the last vote (agent's final decision)
                 vote_calls = [tc for tc in tool_calls if agent.backend.extract_tool_name(tc) == "vote"]
                 if len(vote_calls) > 1:
-                    if attempt < max_attempts - 1:
-                        if self._check_restart_pending(agent_id):
-                            should_continue = await self._inject_update_and_continue(
-                                agent_id,
-                                answers,
-                                conversation_messages,
-                            )
-                            if should_continue:
-                                yield self._trace_tuple(f"📨 [{agent_id}] receiving update with new answers\n", kind="coordination")
-                                continue  # Agent continues working with update
-                            # else: No new answers, proceed with normal error handling
-                        error_msg = f"Multiple vote calls not allowed. Made {len(vote_calls)} calls but must make exactly 1. Call vote tool once with chosen agent."
-                        yield self._trace_tuple(f"❌ {error_msg}", kind="coordination")
+                    # Take the last vote - represents the agent's final, most refined decision
+                    num_votes = len(vote_calls)
+                    final_vote_call = vote_calls[-1]
+                    final_vote_args = agent.backend.extract_tool_arguments(final_vote_call)
+                    final_voted_agent = final_vote_args.get("agent_id", "unknown")
 
-                        # Send tool error response for all tool calls
-                        enforcement_msg = self._create_tool_error_messages(
-                            agent,
-                            tool_calls,
-                            error_msg,
-                            "Vote rejected due to multiple votes.",
-                        )
-                        continue  # Retry this attempt
-                    else:
-                        yield (
-                            "error",
-                            f"Agent made {len(vote_calls)} vote calls in single response after max attempts",
-                        )
-                        yield ("done", None)
-                        return
+                    # Replace tool_calls with deduplicated list (all non-votes + final vote)
+                    vote_calls = [final_vote_call]
+                    tool_calls = [tc for tc in tool_calls if agent.backend.extract_tool_name(tc) != "vote"] + [final_vote_call]
+
+                    logger.info(f"[Orchestrator] Agent {agent_id} made {num_votes} votes - using last vote: {final_voted_agent}")
+                    yield ("content", f"⚠️ Agent made {num_votes} votes - using last (final decision): {final_voted_agent}\n")
 
                 # Check for mixed new_answer and vote calls - violates binary decision framework
                 new_answer_calls = [tc for tc in tool_calls if agent.backend.extract_tool_name(tc) == "new_answer"]
@@ -4017,6 +4450,10 @@ Your answer:"""
 
                             # Send tool result - orchestrator will decide if vote is accepted
                             # Vote submitted (result will be shown by orchestrator)
+                            _agent_outcome = "vote"
+                            _agent_voted_for = voted_agent
+                            # Get the answer label that this voter was shown for voted-for agent
+                            _agent_voted_for_label = self.coordination_tracker.get_voted_for_label(agent_id, voted_agent)
                             yield (
                                 "result",
                                 ("vote", {"agent_id": voted_agent, "reason": reason}),
@@ -4124,6 +4561,11 @@ Your answer:"""
                                 role="assistant",
                             )
 
+                            _agent_outcome = "answer"
+                            # Compute the answer label that will be assigned (e.g., "agent1.1")
+                            agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                            current_answers = len(self.coordination_tracker.answers_by_agent.get(agent_id, []))
+                            _agent_answer_label = f"agent{agent_num}.{current_answers + 1}"
                             yield ("result", ("answer", content))
                             yield ("done", None)
                             return
@@ -4212,8 +4654,45 @@ Your answer:"""
                         return
 
         except Exception as e:
+            _agent_outcome = "error"
+            _agent_error_message = str(e)
             yield ("error", f"Agent execution failed: {str(e)}")
             yield ("done", None)
+        finally:
+            # Add outcome attributes to agent execution span
+            if _agent_outcome:
+                _agent_span.set_attribute("massgen.outcome", _agent_outcome)
+            if _agent_voted_for:
+                _agent_span.set_attribute("massgen.voted_for", _agent_voted_for)
+            if _agent_voted_for_label:
+                _agent_span.set_attribute("massgen.voted_for_label", _agent_voted_for_label)
+            if _agent_answer_label:
+                _agent_span.set_attribute("massgen.answer_label", _agent_answer_label)
+            if _agent_error_message:
+                _agent_span.set_attribute("massgen.error_message", _agent_error_message)
+
+            # Add token usage and cost to agent execution span before closing
+            # Note: Use "usage" instead of "tokens" to avoid logfire's security scrubbing
+            if hasattr(agent.backend, "token_usage") and agent.backend.token_usage:
+                token_usage = agent.backend.token_usage
+                _agent_span.set_attribute("massgen.usage.input", token_usage.input_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.output", token_usage.output_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.reasoning", token_usage.reasoning_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.cached_input", token_usage.cached_input_tokens or 0)
+                _agent_span.set_attribute("massgen.usage.cost", round(token_usage.estimated_cost or 0, 6))
+
+            # Close the agent execution span for hierarchical tracing
+            # Wrap in try/except to handle OpenTelemetry context issues in async generators
+            try:
+                _agent_span_cm.__exit__(None, None, None)
+            except ValueError as e:
+                # Context detach failures are expected in async generators - safe to ignore
+                # The span is still closed, just the context token can't be detached
+                if "context" not in str(e).lower() and "detach" not in str(e).lower():
+                    logger.debug(f"Unexpected ValueError closing agent span: {e}")
+
+            # Clear the round context
+            clear_current_round()
 
     async def _get_next_chunk(self, stream: AsyncGenerator[tuple, None]) -> tuple:
         """Get the next chunk from an agent stream."""
@@ -4432,6 +4911,13 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
     async def get_final_presentation(self, selected_agent_id: str, vote_results: Dict[str, Any]) -> AsyncGenerator[StreamChunk, None]:
         """Ask the winning agent to present their final answer with voting context."""
+        # Guard against duplicate presentations (e.g., if timeout handler runs after presentation started)
+        if self._presentation_started:
+            logger.warning(f"Presentation already started, skipping duplicate call for {selected_agent_id}")
+            yield StreamChunk(type="status", content="Presentation already in progress, skipping duplicate...")
+            return
+        self._presentation_started = True
+
         # Start tracking the final round
         self.coordination_tracker.start_final_round(selected_agent_id)
 
@@ -4441,6 +4927,30 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             return
 
         agent = self.agents[selected_agent_id]
+
+        # Create presentation span for hierarchical tracing in Logfire
+        tracer = get_tracer()
+        final_round = self.coordination_tracker.get_agent_round(selected_agent_id)
+        backend_name = agent.backend.get_provider_name() if hasattr(agent.backend, "get_provider_name") else "unknown"
+
+        span_attributes = {
+            "massgen.agent_id": selected_agent_id,
+            "massgen.iteration": self.coordination_tracker.current_iteration,
+            "massgen.round": final_round,
+            "massgen.round_type": "presentation",
+            "massgen.backend": backend_name,
+            "massgen.is_winner": True,
+            "massgen.vote_count": vote_results.get("vote_counts", {}).get(selected_agent_id, 0),
+        }
+
+        _presentation_span_cm = tracer.span(
+            f"agent.{selected_agent_id}.presentation",
+            attributes=span_attributes,
+        )
+        _presentation_span = _presentation_span_cm.__enter__()  # Capture yielded span for set_attribute()
+
+        # Set the round context for nested tool calls to use
+        set_current_round(final_round, "presentation")
 
         # Enable write access for final agent on context paths. This ensures that those paths marked `write` by the user are now writable (as all previous agents were read-only).
         if agent.backend.filesystem_manager:
@@ -4790,6 +5300,27 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
             # Mark final round as completed
             self.coordination_tracker.change_status(selected_agent_id, AgentStatus.COMPLETED)
+
+            # Add token usage and cost to presentation span before closing
+            if hasattr(agent.backend, "token_usage") and agent.backend.token_usage:
+                token_usage = agent.backend.token_usage
+                _presentation_span.set_attribute("massgen.usage.input", token_usage.input_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.output", token_usage.output_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.reasoning", token_usage.reasoning_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.cached_input", token_usage.cached_input_tokens or 0)
+                _presentation_span.set_attribute("massgen.usage.cost", round(token_usage.estimated_cost or 0, 6))
+
+            # Close the presentation span for hierarchical tracing
+            # Wrap in try/except to handle OpenTelemetry context issues in async generators
+            try:
+                _presentation_span_cm.__exit__(None, None, None)
+            except ValueError as e:
+                # Context detach failures are expected in async generators - safe to ignore
+                if "context" not in str(e).lower() and "detach" not in str(e).lower():
+                    logger.debug(f"Unexpected ValueError closing presentation span: {e}")
+
+            # Clear the round context
+            clear_current_round()
 
         # Don't yield done here - let _present_final_answer handle final done after post-evaluation
 
@@ -5416,7 +5947,13 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                             if item.is_file():
                                 shutil.copy2(item, dest)
                             elif item.is_dir():
-                                shutil.copytree(item, dest, dirs_exist_ok=True)
+                                shutil.copytree(
+                                    item,
+                                    dest,
+                                    dirs_exist_ok=True,
+                                    symlinks=True,
+                                    ignore_dangling_symlinks=True,
+                                )
                         logger.info(f"[Orchestrator] Pre-populated {agent_id} workspace with writable copy of turn n-1")
 
     def _archive_agent_memories(self, agent_id: str, workspace_path: Path) -> None:
@@ -5451,7 +5988,13 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         # Copy entire memory/ directory to archive
         try:
             archive_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(memory_dir, archive_path, dirs_exist_ok=True)
+            shutil.copytree(
+                memory_dir,
+                archive_path,
+                dirs_exist_ok=True,
+                symlinks=True,
+                ignore_dangling_symlinks=True,
+            )
             logger.info(f"[Orchestrator] Archived memories for {agent_id} answer {answer_num} to {archive_path}")
         except Exception as e:
             logger.error(f"[Orchestrator] Failed to archive memories for {agent_id}: {e}")

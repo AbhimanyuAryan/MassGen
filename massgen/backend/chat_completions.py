@@ -29,8 +29,10 @@ from ..api_params_handler import ChatCompletionsAPIParamsHandler
 from ..formatter import ChatCompletionsFormatter
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..stream_chunk import ChunkType
+from ..structured_logging import trace_llm_api_call
 
 # Local imports
+from ._constants import configure_openrouter_extra_body
 from .base import FilesystemSupport, StreamChunk
 from .base_with_custom_tool_and_mcp import (
     CustomToolAndMCPBackend,
@@ -184,19 +186,15 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
         # Build API params for this iteration
         all_params = {**self.config, **kwargs}
+        agent_id = kwargs.get("agent_id")
         api_params = await self.api_params_handler.build_api_params(current_messages, tools, all_params)
 
         # Enable usage tracking in streaming responses (required for token counting)
         if "stream" in api_params and api_params["stream"]:
             api_params["stream_options"] = {"include_usage": True}
 
-        # OpenRouter: Enable cost tracking in usage response
-        # This adds the 'cost' field to the usage object
-        base_url = all_params.get("base_url", "")
-        if "openrouter.ai" in base_url:
-            extra_body = api_params.get("extra_body", {})
-            extra_body["usage"] = {"include": True}
-            api_params["extra_body"] = extra_body
+        # OpenRouter: Enable cost tracking and web search plugin
+        configure_openrouter_extra_body(api_params, all_params)
 
         # Add provider tools (web search, code interpreter) if enabled
         provider_tools = self.api_params_handler.get_provider_tools(all_params)
@@ -208,14 +206,22 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
         # Start API call timing
         model = api_params.get("model", "unknown")
+        provider = self.get_provider_name().lower()
         self.start_api_call_timing(model)
 
-        # Start streaming
-        try:
-            stream = await client.chat.completions.create(**api_params)
-        except Exception as e:
-            self.end_api_call_timing(success=False, error=str(e))
-            raise
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider=provider,
+            model=model,
+            operation="stream",
+        ):
+            # Start streaming
+            try:
+                stream = await client.chat.completions.create(**api_params)
+            except Exception as e:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         # Track function calls in this iteration
         captured_function_calls = []
@@ -911,7 +917,18 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
         all_params = {**self.config, **kwargs}
         base_url = all_params.get("base_url", "https://api.openai.com/v1")
-        return openai.AsyncOpenAI(api_key=self.api_key, base_url=base_url)
+        client = openai.AsyncOpenAI(api_key=self.api_key, base_url=base_url)
+        # Instrument client for Logfire observability if enabled
+        try:
+            from massgen.structured_logging import get_tracer, is_observability_enabled
+
+            if is_observability_enabled():
+                get_tracer().instrument_openai(client)
+        except ImportError:
+            pass  # structured_logging module not available
+        except Exception as e:
+            logger.warning(f"Failed to instrument OpenAI client for observability: {e}")
+        return client
 
     def _handle_reasoning_transition(self, log_prefix: str, agent_id: Optional[str]) -> Optional[StreamChunk]:
         """Handle reasoning state transition and return StreamChunk if transition occurred."""

@@ -41,6 +41,7 @@ dependencies = [
     "typing-extensions>=4.0.0",
     "claude-agent-sdk>=0.0.22",
     "loguru>=0.7.0",
+    "logfire>=3.0.0",
     "mcp>=1.12.0",
     "aiohttp>=3.8.0",
     "nest-asyncio>=1.6.0",
@@ -243,6 +244,7 @@ markers = [
     "asyncio: mark test as requiring asyncio",
     "docker: marks tests that require Docker to be installed and running",
     "expensive: marks tests that cost money (API calls with >$0.01 cost, skip by default)",
+    "performance: marks tests as performance tests (run manually when needed)",
 ]
 asyncio_mode = "auto"
 filterwarnings = [

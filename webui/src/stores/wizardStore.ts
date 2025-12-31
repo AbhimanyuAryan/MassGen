@@ -47,11 +47,33 @@ export interface AgentConfig {
   system_message?: string;
 }
 
+// Subagent orchestrator configuration
+export interface SubagentOrchestratorConfig {
+  enabled: boolean;
+  agents: Array<{
+    backend: {
+      type: string;
+      model: string;
+      base_url?: string;
+    };
+  }>;
+}
+
+// Persona generator configuration
+export interface PersonaGeneratorConfig {
+  enabled: boolean;
+  diversity_mode?: 'perspective' | 'implementation';
+}
+
 // Coordination settings (shared across all agents)
 export interface CoordinationSettings {
   voting_sensitivity: 'lenient' | 'balanced' | 'strict';
   answer_novelty_requirement: 'lenient' | 'balanced' | 'strict';
   max_new_answers_per_agent?: number;
+  enable_subagents?: boolean;
+  subagent_model_choice?: 'inherit' | 'custom';
+  subagent_orchestrator?: SubagentOrchestratorConfig;
+  persona_generator?: PersonaGeneratorConfig;
 }
 
 export interface SetupStatus {

@@ -9,16 +9,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
-**v0.1.28 (December 22, 2025)** - Unified Multimodal Tools & Artifact Previews
-Unified multimodal understanding via `read_media` tool and generation via `generate_media` tool. Web UI artifact previewer for documents, images, PDFs, and code. Azure OpenAI workflow fixes and OpenRouter tool-capable model filtering.
+**v0.1.31 (December 29, 2025)** - Logfire Observability Integration
+Comprehensive structured logging via Logfire with automatic LLM instrumentation (OpenAI, Anthropic, Gemini), tool execution tracing, and agent coordination observability. Enable with `--logfire` CLI flag. Azure OpenAI native tool call streaming fixes.
 
-**v0.1.27 (December 19, 2025)** - Session Sharing, Log Analysis & Config Builder Enhancements
-Session sharing via GitHub Gist with `massgen export`. New `massgen logs` CLI command for run log analysis. Per-LLM call time tracking. Gemini 3 Flash model support. CLI config builder with per-agent web search, system messages, and coordination settings. Web UI context paths wizard and "Open in Browser" button.
+**v0.1.30 (December 26, 2025)** - OpenRouter Web Search & Persona Diversity Modes
+OpenRouter native web search plugin via `enable_web_search`. Persona generator diversity modes (`perspective`/`implementation`) with phase-based adaptation. Azure OpenAI multi-endpoint support and environment variable expansion in configs.
 
-**v0.1.26 (December 17, 2025)** - Web UI Setup & Shadow Agent Depth Scaling
-New Web UI setup wizard for guided first-run configuration, Docker diagnostics module with platform-specific resolution, and shadow agent response depth for test-time compute scaling.
+**v0.1.29 (December 24, 2025)** - Subagent System & Responses API Fixes
+New subagent system for spawning parallel child MassGen processes with isolated workspaces. Enhanced tool metrics with distribution statistics. CLI config builder per-agent system messages. OpenAI Responses API duplicate item and function call ID fixes.
 
 ---
+
+## [0.1.31] - 2025-12-29
+
+### Added
+- **Logfire Observability Integration**: Comprehensive structured logging and tracing via [Logfire](https://logfire.pydantic.dev/)
+  - Automatic LLM instrumentation for OpenAI, Anthropic Claude, and Google Gemini backends
+  - Tool execution tracing for MCP and custom tools with timing metrics
+  - Agent coordination observability with per-round spans and token usage logging
+  - Enable via `--logfire` CLI flag or `MASSGEN_LOGFIRE_ENABLED=true` environment variable
+  - Graceful degradation to loguru when Logfire is disabled
+  - New `massgen-log-analyzer` skill for AI-assisted log analysis
+
+### Fixed
+- **Azure OpenAI Native Tool Call Streaming**: Tool calls now accumulated and yielded as structured `tool_calls` chunks instead of plain content
+
+- **OpenRouter Web Search Logging**: Fixed logging output for web search operations
+
+### Documentations, Configurations and Resources
+- **Logfire Documentation**: New `docs/source/user_guide/logging.rst` with usage guide and SQL query examples
+- **Python Installation Guide**: Added link to Python installation guide in quickstart docs
+
+### Technical Details
+- **Major Focus**: Logfire observability integration, Azure OpenAI tool call streaming
+- **Contributors**: @ncrispino @AbhimanyuAryan @shubham2345 @franklinnwren and the MassGen team
+
+## [0.1.30] - 2025-12-26
+
+### Added
+- **OpenRouter Web Search Plugin**: Native web search integration via OpenRouter's plugins array
+  - Maps `enable_web_search` to `{"id": "web"}` plugin format
+  - Configurable search engine (`exa`/`native`) and `max_results` parameters
+  - Added to research preset's auto-enabled web search backends
+
+### Changed
+- **Persona Generator Diversity Modes**: Enhanced persona generation with two diversity modes and phase-based adaptation
+  - New `diversity_mode`: `perspective` (different values/priorities) or `implementation` (different solution types)
+  - Phase-based adaptation: strong personas for exploration, softened for convergence
+  - Multi-turn persistence via `persist_across_turns` option
+  - Web UI integration with toggle in coordination settings
+
+- **Azure OpenAI Multi-Endpoint Support**: Support both Azure-specific and OpenAI-compatible endpoints
+  - Auto-detect endpoint format and use appropriate client (`AsyncAzureOpenAI` vs `AsyncOpenAI`)
+  - Conditionally disable `stream_options` for Ministral/Mistral models
+
+- **Environment Variable Expansion in Configs**: Use `${VAR}` syntax in YAML/JSON config files for flexible configuration
+
+### Fixed
+- **Azure OpenAI Workflow Tool Extraction**: Improved JSON parsing with fallback patterns for models outputting tool arguments without `tool_name` wrapper
+
+- **Persistent Memory Retrieval**: Fixed regression by enabling retrieval on first turn
+
+- **Backend Tool Registration**: Fixed tool registration and updated binary file extensions list
+
+### Documentations, Configurations and Resources
+- **OpenRouter Web Search Configs**: New `single_openrouter_web_search.yaml` and `openrouter_web_search.yaml`
+- **Azure Multi-Endpoint Config**: Updated `azure_openai_multi.yaml` with env var examples
+- **Diversity Documentation**: Updated `docs/source/user_guide/advanced/diversity.rst` with new diversity modes
+
+### Technical Details
+- **Major Focus**: OpenRouter web search, persona diversity modes, Azure OpenAI compatibility
+- **Contributors**: @ncrispino @shubham2345 @AbhimanyuAryan @maxim-saplin and the MassGen team
+
+## [0.1.29] - 2025-12-24
+
+### Added
+- **Subagent System**: Spawn parallel child MassGen processes for independent task execution
+  - New `spawn_subagents` tool for agents to delegate parallelizable work
+  - Process isolation with independent workspaces per subagent
+  - Automatic inheritance of parent agent's backend configuration
+  - Result aggregation with workspace paths and token usage tracking
+  - Configurable via `enable_subagents`, `subagent_default_timeout`, and `subagent_max_concurrent`
+
+### Changed
+- **Tool Metrics with Distribution Statistics**: Enhanced `get_tool_metrics_summary()` with per-call averages and output distribution stats (min/max/median)
+
+- **CLI Config Builder Per-Agent System Messages**: New mode in `massgen --quickstart` for assigning different system messages per agent ("Skip", "Same for all", "Different per agent")
+
+### Fixed
+- **OpenAI Responses API Duplicate Items**: Fixed duplicate item errors when using `previous_response_id` by skipping manual item addition when response ID is passed
+
+- **Response Formatter Function Call ID Preservation**: Preserved 'id' field in function_call messages for proper pairing with reasoning items (required by OpenAI Responses API)
+
+### Documentations, Configurations and Resources
+
+- **Subagent Documentation**: New `docs/source/user_guide/advanced/subagents.rst` with usage guide, configuration examples, and best practices
+- **Subagent Example Configs**: New `massgen/configs/features/test_subagent_orchestrator.yaml` and `test_subagent_orchestrator_code_mode.yaml`
+
+### Technical Details
+- **Major Focus**: Subagent parallel execution system, OpenAI Responses API compatibility
+- **Contributors**: @ncrispino and the MassGen team
 
 ## [0.1.28] - 2025-12-22
 
