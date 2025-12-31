@@ -27,7 +27,6 @@ from openai import AsyncOpenAI
 
 from ..api_params_handler import ChatCompletionsAPIParamsHandler
 from ..formatter import ChatCompletionsFormatter
-from ..llm_call_logger import get_llm_call_logger
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..stream_chunk import ChunkType
 from ..structured_logging import trace_llm_api_call
@@ -109,9 +108,14 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """Stream response using OpenAI Response API with unified MCP/non-MCP processing."""
         # Clear streaming buffer at start (mixin respects _compression_retry)
         self._clear_streaming_buffer(**kwargs)
+        agent_id = kwargs.get("agent_id", self.agent_id)
 
-        async for chunk in super().stream_with_tools(messages, tools, **kwargs):
-            yield chunk
+        try:
+            async for chunk in super().stream_with_tools(messages, tools, **kwargs):
+                yield chunk
+        finally:
+            # Save streaming buffer before cleanup
+            self._finalize_streaming_buffer(agent_id=agent_id)
 
     def _append_tool_result_message(
         self,
@@ -233,18 +237,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 api_params["tools"] = []
             api_params["tools"].extend(provider_tools)
 
-        # Start LLM call logging
-        llm_logger = get_llm_call_logger()
-        llm_call_id = ""
-        if llm_logger and llm_logger.enabled:
-            llm_call_id = llm_logger.start_call(
-                agent_id=all_params.get("agent_id", "unknown"),
-                backend_name=self.get_provider_name(),
-                model=all_params.get("model", self.config.get("model", "unknown")),
-                messages=current_messages,
-                tools=api_params.get("tools", tools),
-            )
-
         # Start API call timing
         model = api_params.get("model", "unknown")
         provider = self.get_provider_name().lower()
@@ -313,9 +305,38 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     if hasattr(choice, "delta") and choice.delta:
                         delta = choice.delta
 
-                        # Capture reasoning_details from delta
-                        if getattr(delta, "reasoning_details", None):
-                            reasoning_details.extend(delta.reasoning_details)
+                        # Capture reasoning_details from delta (OpenRouter models)
+                        # Check both direct attribute and model_extra (SDK may not parse custom fields)
+                        delta_reasoning_details = getattr(delta, "reasoning_details", None)
+                        if not delta_reasoning_details:
+                            delta_extra = getattr(delta, "model_extra", None) or {}
+                            delta_reasoning_details = delta_extra.get("reasoning_details")
+                        if delta_reasoning_details:
+                            reasoning_details.extend(delta_reasoning_details)
+                            # Buffer reasoning details for compression recovery
+                            for detail in delta_reasoning_details:
+                                # Handle both object and dict formats
+                                # OpenRouter uses "summary" field, others use "text"
+                                detail_text = None
+                                if hasattr(detail, "text") and detail.text:
+                                    detail_text = detail.text
+                                elif hasattr(detail, "summary") and detail.summary:
+                                    detail_text = detail.summary
+                                elif isinstance(detail, dict):
+                                    detail_text = detail.get("text") or detail.get("summary")
+                                if detail_text:
+                                    self._append_reasoning_to_buffer(detail_text)
+
+                        # Capture reasoning_content from delta (DeepSeek, Qwen, Grok models via OpenRouter)
+                        if getattr(delta, "reasoning_content", None):
+                            reasoning_chunk = delta.reasoning_content
+                            if reasoning_chunk:
+                                self._append_reasoning_to_buffer(reasoning_chunk)
+                                yield StreamChunk(
+                                    type="reasoning",
+                                    content=reasoning_chunk,
+                                    reasoning_delta=reasoning_chunk,
+                                )
 
                         # Plain text content
                         if getattr(delta, "content", None):
@@ -324,13 +345,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                             content += content_chunk
                             # Track content in streaming buffer for compression recovery
                             self._append_to_streaming_buffer(content_chunk)
-                            # Record chunk for LLM call logging
-                            if llm_logger and llm_call_id:
-                                llm_logger.record_chunk(
-                                    call_id=llm_call_id,
-                                    chunk_type="content",
-                                    content=content_chunk,
-                                )
                             yield StreamChunk(type="content", content=content_chunk)
 
                         # Tool calls streaming (OpenAI-style)
@@ -398,14 +412,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                     },
                                 )
 
-                            # Record tool_calls chunk for LLM call logging
-                            if llm_logger and llm_call_id:
-                                llm_logger.record_chunk(
-                                    call_id=llm_call_id,
-                                    chunk_type="tool_calls",
-                                    tool_calls=final_tool_calls,
-                                    finish_reason="tool_calls",
-                                )
                             self._append_tool_call_to_buffer(final_tool_calls)
                             yield StreamChunk(type="tool_calls", tool_calls=final_tool_calls)
 
@@ -413,13 +419,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                             # DON'T break yet - continue to capture usage chunk
 
                         elif choice.finish_reason in ["stop", "length"]:
-                            # Record finish for LLM call logging
-                            if llm_logger and llm_call_id:
-                                llm_logger.record_chunk(
-                                    call_id=llm_call_id,
-                                    chunk_type="done",
-                                    finish_reason=choice.finish_reason,
-                                )
                             response_completed = True
                             # DON'T return yet - continue to capture usage chunk
 
@@ -433,14 +432,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     )
                     # Now we can safely exit or continue based on finish reason
                     if finish_reason_received in ["stop", "length"]:
-                        # End LLM call logging before returning
-                        if llm_logger and llm_call_id:
-                            llm_logger.end_call(
-                                call_id=llm_call_id,
-                                input_tokens=self._last_call_input_tokens,
-                                output_tokens=self.token_usage.output_tokens,
-                                finish_reason=finish_reason_received,
-                            )
                         self.end_api_call_timing(success=True)
                         yield StreamChunk(type="done")
                         return
@@ -463,14 +454,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     content,
                     all_params.get("model", "unknown"),
                 )
-            # End LLM call logging before returning
-            if llm_logger and llm_call_id:
-                llm_logger.end_call(
-                    call_id=llm_call_id,
-                    input_tokens=self._last_call_input_tokens,
-                    output_tokens=self.token_usage.output_tokens,
-                    finish_reason=finish_reason_received,
-                )
             self.end_api_call_timing(success=True)
             yield StreamChunk(type="done")
             return
@@ -483,14 +466,6 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             # If there are provider calls (non-MCP, non-custom), let API handle them
             if provider_calls:
                 logger.info(f"Provider function calls detected: {[call['name'] for call in provider_calls]}. Ending local processing.")
-                # End LLM call logging before returning
-                if llm_logger and llm_call_id:
-                    llm_logger.end_call(
-                        call_id=llm_call_id,
-                        input_tokens=self._last_call_input_tokens,
-                        output_tokens=self.token_usage.output_tokens,
-                        finish_reason="tool_calls",
-                    )
                 yield StreamChunk(type="done")
                 return
 
@@ -706,41 +681,16 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if functions_executed:
                 updated_messages = self._trim_message_history(updated_messages)
 
-                # End LLM call logging before recursion (this call is complete, recursion starts a new one)
-                if llm_logger and llm_call_id:
-                    llm_logger.end_call(
-                        call_id=llm_call_id,
-                        input_tokens=self._last_call_input_tokens,
-                        output_tokens=self.token_usage.output_tokens,
-                        finish_reason="tool_calls",
-                    )
-
                 # Recursive call with updated messages
                 async for chunk in self._stream_with_custom_and_mcp_tools(updated_messages, tools, client, **kwargs):
                     yield chunk
             else:
                 # No functions were executed, we're done
-                # End LLM call logging before returning
-                if llm_logger and llm_call_id:
-                    llm_logger.end_call(
-                        call_id=llm_call_id,
-                        input_tokens=self._last_call_input_tokens,
-                        output_tokens=self.token_usage.output_tokens,
-                        finish_reason="tool_calls",
-                    )
                 yield StreamChunk(type="done")
                 return
 
         elif response_completed:
             # Response completed with no function calls - we're done (base case)
-            # End LLM call logging before returning
-            if llm_logger and llm_call_id:
-                llm_logger.end_call(
-                    call_id=llm_call_id,
-                    input_tokens=self._last_call_input_tokens,
-                    output_tokens=self.token_usage.output_tokens,
-                    finish_reason="stop",
-                )
             yield StreamChunk(
                 type="mcp_status",
                 status="mcp_session_complete",
@@ -776,9 +726,27 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     if hasattr(choice, "delta") and choice.delta:
                         delta = choice.delta
 
-                        # Capture reasoning_details from delta
-                        if getattr(delta, "reasoning_details", None):
-                            reasoning_details.extend(delta.reasoning_details)
+                        # Capture reasoning_details from delta (OpenRouter models)
+                        # Check both direct attribute and model_extra (SDK may not parse custom fields)
+                        delta_reasoning_details = getattr(delta, "reasoning_details", None)
+                        if not delta_reasoning_details:
+                            delta_extra = getattr(delta, "model_extra", None) or {}
+                            delta_reasoning_details = delta_extra.get("reasoning_details")
+                        if delta_reasoning_details:
+                            reasoning_details.extend(delta_reasoning_details)
+                            # Buffer reasoning details for compression recovery
+                            for detail in delta_reasoning_details:
+                                # Handle both object and dict formats
+                                # OpenRouter uses "summary" field, others use "text"
+                                detail_text = None
+                                if hasattr(detail, "text") and detail.text:
+                                    detail_text = detail.text
+                                elif hasattr(detail, "summary") and detail.summary:
+                                    detail_text = detail.summary
+                                elif isinstance(detail, dict):
+                                    detail_text = detail.get("text") or detail.get("summary")
+                                if detail_text:
+                                    self._append_reasoning_to_buffer(detail_text)
 
                         # Plain text content
                         if getattr(delta, "content", None):

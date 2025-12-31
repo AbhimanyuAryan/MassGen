@@ -6,7 +6,31 @@ to LLM backends. The buffer tracks accumulated content during streaming so
 it can be included in compression summaries when context limits are exceeded.
 """
 import json
+import time
 from typing import Any, Dict, List, Optional
+
+from loguru import logger
+
+# Global flag to enable buffer saving (set by CLI)
+_save_streaming_buffers: bool = False
+_buffer_save_counter: int = 0
+
+
+def set_save_streaming_buffers(enabled: bool) -> None:
+    """Enable or disable streaming buffer saving.
+
+    Args:
+        enabled: Whether to save streaming buffers to files
+    """
+    global _save_streaming_buffers
+    _save_streaming_buffers = enabled
+    if enabled:
+        logger.info("[StreamingBuffer] Buffer saving enabled")
+
+
+def get_save_streaming_buffers() -> bool:
+    """Check if streaming buffer saving is enabled."""
+    return _save_streaming_buffers
 
 
 class StreamingBufferMixin:
@@ -61,6 +85,18 @@ class StreamingBufferMixin:
         if not _compression_retry:
             self._streaming_buffer = ""
             self._in_reasoning_block = False
+
+    def _finalize_streaming_buffer(self, agent_id: Optional[str] = None) -> None:
+        """Finalize and optionally save the streaming buffer.
+
+        Call this at the end of streaming to save the buffer if enabled.
+
+        Args:
+            agent_id: Optional agent identifier for the filename
+        """
+        logger.debug(f"[StreamingBuffer] _finalize_streaming_buffer called, agent={agent_id}, buffer_len={len(self._streaming_buffer)}")
+        if self._streaming_buffer:
+            self._save_streaming_buffer(agent_id=agent_id)
 
     def _append_to_streaming_buffer(self, content: str) -> None:
         """Append content to the streaming buffer.
@@ -151,3 +187,55 @@ class StreamingBufferMixin:
             Buffer content string or None if empty
         """
         return self._streaming_buffer if self._streaming_buffer else None
+
+    def _save_streaming_buffer(self, agent_id: Optional[str] = None) -> None:
+        """Save the streaming buffer to a file if saving is enabled.
+
+        Args:
+            agent_id: Optional agent identifier for the filename
+        """
+        global _buffer_save_counter
+
+        if not _save_streaming_buffers:
+            logger.debug("[StreamingBuffer] Saving disabled, skipping")
+            return
+
+        buffer = self._get_streaming_buffer()
+        if not buffer:
+            logger.debug(f"[StreamingBuffer] Buffer empty for agent {agent_id}, skipping save")
+            return
+
+        logger.debug(f"[StreamingBuffer] Saving buffer for agent {agent_id}, size={len(buffer)}")
+
+        # Import here to avoid circular imports
+        from ..logger_config import get_log_session_dir
+
+        try:
+            log_dir = get_log_session_dir()
+            buffers_dir = log_dir / "streaming_buffers"
+            buffers_dir.mkdir(parents=True, exist_ok=True)
+
+            _buffer_save_counter += 1
+            timestamp = time.strftime("%H%M%S")
+
+            # Get backend name
+            backend_name = "unknown"
+            if hasattr(self, "get_provider_name"):
+                backend_name = self.get_provider_name()
+
+            agent_prefix = f"{agent_id}_" if agent_id else ""
+            filename = f"{agent_prefix}{backend_name}_{timestamp}_{_buffer_save_counter:03d}.txt"
+            filepath = buffers_dir / filename
+
+            with open(filepath, "w") as f:
+                f.write("# Streaming Buffer\n")
+                f.write(f"# Backend: {backend_name}\n")
+                f.write(f"# Agent: {agent_id or 'unknown'}\n")
+                f.write(f"# Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"# Buffer size: {len(buffer)} chars\n")
+                f.write(f"{'=' * 60}\n\n")
+                f.write(buffer)
+
+            logger.debug(f"[StreamingBuffer] Saved to {filepath}")
+        except Exception as e:
+            logger.warning(f"[StreamingBuffer] Failed to save buffer: {e}")

@@ -39,7 +39,6 @@ from ..filesystem_manager._constants import (
     TOOL_RESULT_EVICTION_PREVIEW_TOKENS,
     TOOL_RESULT_EVICTION_THRESHOLD_TOKENS,
 )
-from ..llm_call_logger import get_llm_call_logger
 from ..logger_config import log_backend_activity, logger
 from ..mcp_tools.server_registry import get_auto_discovery_servers, get_registry_info
 from ..nlip.schema import (
@@ -3189,6 +3188,9 @@ class CustomToolAndMCPBackend(LLMBackend):
                 logger.error(f"Streaming error during MCP setup fallback: {inner_e}")
                 yield StreamChunk(type="error", error=str(inner_e))
             finally:
+                # Save streaming buffer before cleanup
+                if hasattr(self, "_finalize_streaming_buffer"):
+                    self._finalize_streaming_buffer(agent_id=agent_id)
                 await self._cleanup_client(client)
 
     @abstractmethod
@@ -3240,18 +3242,6 @@ class CustomToolAndMCPBackend(LLMBackend):
                 non_mcp_tools.append(tool)
             api_params["tools"] = non_mcp_tools
 
-        # Start LLM call logging
-        llm_logger = get_llm_call_logger()
-        llm_call_id = ""
-        if llm_logger and llm_logger.enabled:
-            llm_call_id = llm_logger.start_call(
-                agent_id=all_params.get("agent_id", "unknown"),
-                backend_name=self.get_provider_name(),
-                model=all_params.get("model", self.config.get("model", "unknown")),
-                messages=processed_messages,
-                tools=api_params.get("tools", tools),
-            )
-
         # Start API call timing
         model = api_params.get("model", "unknown")
         provider = self.get_provider_name().lower()
@@ -3292,42 +3282,8 @@ class CustomToolAndMCPBackend(LLMBackend):
                 self.end_api_call_timing(success=False, error=str(e))
                 raise
 
-        finish_reason = "stop"
-        try:
-            async for chunk in self._process_stream(stream, all_params, agent_id):
-                # Record chunk for LLM call logging
-                if llm_logger and llm_call_id:
-                    # Get chunk type value (handle both enum and string types)
-                    chunk_type = chunk.type.value if hasattr(chunk.type, "value") else str(chunk.type)
-                    if chunk.content:
-                        llm_logger.record_chunk(
-                            call_id=llm_call_id,
-                            chunk_type="content",
-                            content=chunk.content,
-                        )
-                    if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                        finish_reason = "tool_calls"
-                        llm_logger.record_chunk(
-                            call_id=llm_call_id,
-                            chunk_type="tool_calls",
-                            tool_calls=chunk.tool_calls,
-                        )
-                    if chunk_type == "done":
-                        llm_logger.record_chunk(
-                            call_id=llm_call_id,
-                            chunk_type="done",
-                            finish_reason=finish_reason,
-                        )
-                yield chunk
-        finally:
-            # End LLM call logging
-            if llm_logger and llm_call_id:
-                llm_logger.end_call(
-                    call_id=llm_call_id,
-                    input_tokens=self._last_call_input_tokens,
-                    output_tokens=self.token_usage.output_tokens,
-                    finish_reason=finish_reason,
-                )
+        async for chunk in self._process_stream(stream, all_params, agent_id):
+            yield chunk
 
     async def _stream_handle_custom_and_mcp_exceptions(
         self,

@@ -5023,11 +5023,11 @@ async def main(args):
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
 
-    # Initialize LLM call logger if requested
-    if args.save_llm_calls:
-        from .llm_call_logger import LLMCallLogger, set_llm_call_logger
+    # Initialize streaming buffer saving if requested
+    if args.save_streaming_buffers:
+        from .backend._streaming_buffer_mixin import set_save_streaming_buffers
 
-        set_llm_call_logger(LLMCallLogger(enabled=True, save_chunks=args.save_llm_chunks))
+        set_save_streaming_buffers(True)
 
     # Check if bare `massgen` with no args - use default config if it exists
     if not args.backend and not args.model and not args.config:
@@ -5815,14 +5815,9 @@ Environment Variables:
         help="Enable debug mode with verbose logging",
     )
     parser.add_argument(
-        "--save-llm-calls",
+        "--save-streaming-buffers",
         action="store_true",
-        help="Save all LLM API calls to JSON files in llm_calls/ directory for debugging and training",
-    )
-    parser.add_argument(
-        "--save-llm-chunks",
-        action="store_true",
-        help="Include raw streaming chunks in LLM call logs (requires --save-llm-calls)",
+        help="Save streaming buffers to files in streaming_buffers/ directory (works with all backends)",
     )
     parser.add_argument(
         "--logfire",

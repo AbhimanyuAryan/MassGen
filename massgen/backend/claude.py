@@ -76,10 +76,13 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             logger.info(
                 f"[Claude] NLIP routing enabled for agent {kwargs.get('agent_id', self.agent_id)}",
             )
+        agent_id = kwargs.get("agent_id", self.agent_id)
         try:
             async for chunk in super().stream_with_tools(messages, tools, **kwargs):
                 yield chunk
         finally:
+            # Save streaming buffer before cleanup
+            self._finalize_streaming_buffer(agent_id=agent_id)
             await self._cleanup_files_api_resources(**kwargs)
 
     async def _process_upload_files(
@@ -954,6 +957,12 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                             )
                             log_stream_chunk("backend.claude", "content", text_chunk, agent_id)
                             yield StreamChunk(type="content", content=text_chunk)
+                        elif event.delta.type == "thinking_delta":
+                            # Handle extended thinking content from Claude models
+                            thinking_chunk = event.delta.thinking
+                            self._append_reasoning_to_buffer(thinking_chunk)
+                            log_stream_chunk("backend.claude", "reasoning", thinking_chunk, agent_id)
+                            yield StreamChunk(type="reasoning", content=thinking_chunk)
                         elif event.delta.type == "input_json_delta":
                             if hasattr(event, "index"):
                                 for tool_id, tool_data in current_tool_uses.items():
@@ -1438,6 +1447,12 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                 agent_id,
                             )
                             yield StreamChunk(type="content", content=text_chunk)
+                        elif chunk.delta.type == "thinking_delta":
+                            # Handle extended thinking content from Claude models
+                            thinking_chunk = chunk.delta.thinking
+                            self._append_reasoning_to_buffer(thinking_chunk)
+                            log_stream_chunk("backend.claude", "reasoning", thinking_chunk, agent_id)
+                            yield StreamChunk(type="reasoning", content=thinking_chunk)
                         elif chunk.delta.type == "input_json_delta":
                             if hasattr(chunk, "index"):
                                 for (

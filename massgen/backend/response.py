@@ -24,7 +24,6 @@ from ..api_params_handler import (
     ResponseAPIParamsHandler,
 )
 from ..formatter import ResponseFormatter
-from ..llm_call_logger import get_llm_call_logger
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..stream_chunk import ChunkType, TextStreamChunk
 from ._streaming_buffer_mixin import StreamingBufferMixin
@@ -77,11 +76,14 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """
         # Clear streaming buffer at start of new stream (mixin respects _compression_retry)
         self._clear_streaming_buffer(**kwargs)
+        agent_id = kwargs.get("agent_id", self.agent_id)
 
         try:
             async for chunk in super().stream_with_tools(messages, tools, **kwargs):
                 yield chunk
         finally:
+            # Save streaming buffer before cleanup
+            self._finalize_streaming_buffer(agent_id=agent_id)
             # Cleanup File Search resources after stream completes
             await self._cleanup_file_search_if_needed(**kwargs)
 
@@ -155,18 +157,6 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 non_mcp_tools.append(tool)
             api_params["tools"] = non_mcp_tools
 
-        # Start LLM call logging
-        llm_logger = get_llm_call_logger()
-        llm_call_id = ""
-        if llm_logger and llm_logger.enabled:
-            llm_call_id = llm_logger.start_call(
-                agent_id=all_params.get("agent_id", "unknown"),
-                backend_name=self.get_provider_name(),
-                model=all_params.get("model", self.config.get("model", "unknown")),
-                messages=processed_messages,
-                tools=api_params.get("tools", tools),
-            )
-
         # Check for compression retry flag to prevent infinite loops
         _compression_retry = kwargs.get("_compression_retry", False)
 
@@ -221,56 +211,8 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             else:
                 raise
 
-        finish_reason = "stop"
-        try:
-            async for chunk in self._process_stream(stream, all_params, agent_id):
-                # Record chunk for LLM call logging
-                if llm_logger and llm_call_id:
-                    # Get chunk type value (handle both enum and string types)
-                    chunk_type = chunk.type.value if hasattr(chunk.type, "value") else str(chunk.type)
-                    if chunk.content:
-                        llm_logger.record_chunk(
-                            call_id=llm_call_id,
-                            chunk_type="content",
-                            content=chunk.content,
-                        )
-                    # Check for tool_calls directly on chunk
-                    if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                        finish_reason = "tool_calls"
-                        llm_logger.record_chunk(
-                            call_id=llm_call_id,
-                            chunk_type="tool_calls",
-                            tool_calls=chunk.tool_calls,
-                        )
-                    # Check for tool_calls in complete_response chunks
-                    if chunk_type == "complete_response" and hasattr(chunk, "response") and chunk.response:
-                        resp = chunk.response
-                        # Extract tool calls from response output
-                        output = resp.get("output", [])
-                        tool_calls_from_response = [item for item in output if item.get("type") == "function_call"]
-                        if tool_calls_from_response:
-                            finish_reason = "tool_calls"
-                            llm_logger.record_chunk(
-                                call_id=llm_call_id,
-                                chunk_type="tool_calls",
-                                tool_calls=tool_calls_from_response,
-                            )
-                    if chunk_type == "done":
-                        llm_logger.record_chunk(
-                            call_id=llm_call_id,
-                            chunk_type="done",
-                            finish_reason=finish_reason,
-                        )
-                yield chunk
-        finally:
-            # End LLM call logging
-            if llm_logger and llm_call_id:
-                llm_logger.end_call(
-                    call_id=llm_call_id,
-                    input_tokens=self._last_call_input_tokens,
-                    output_tokens=self.token_usage.output_tokens,
-                    finish_reason=finish_reason,
-                )
+        async for chunk in self._process_stream(stream, all_params, agent_id):
+            yield chunk
 
     def _append_tool_result_message(
         self,
@@ -401,18 +343,6 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
         api_params = await self.api_params_handler.build_api_params(current_messages, tools, all_params)
 
-        # Start LLM call logging
-        llm_logger = get_llm_call_logger()
-        llm_call_id = ""
-        if llm_logger and llm_logger.enabled:
-            llm_call_id = llm_logger.start_call(
-                agent_id=all_params.get("agent_id", "unknown"),
-                backend_name=self.get_provider_name(),
-                model=all_params.get("model", self.config.get("model", "unknown")),
-                messages=current_messages,
-                tools=api_params.get("tools", tools),
-            )
-
         # Start API call timing
         model = api_params.get("model", "unknown")
         self.start_api_call_timing(model)
@@ -512,12 +442,6 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     # Track content in streaming buffer for compression recovery
                     self._append_to_streaming_buffer(delta)
                     # Record content chunk for LLM call logging
-                    if llm_logger and llm_call_id and delta:
-                        llm_logger.record_chunk(
-                            call_id=llm_call_id,
-                            chunk_type="content",
-                            content=delta,
-                        )
                     yield TextStreamChunk(
                         type=ChunkType.CONTENT,
                         content=delta,
@@ -554,14 +478,6 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         break  # Exit chunk loop to execute functions
                     else:
                         # No function calls, we're done (base case)
-                        # End LLM call logging
-                        if llm_logger and llm_call_id:
-                            llm_logger.end_call(
-                                call_id=llm_call_id,
-                                input_tokens=self._last_call_input_tokens,
-                                output_tokens=self.token_usage.output_tokens,
-                                finish_reason="stop",
-                            )
                         self.end_api_call_timing(success=True)
                         yield TextStreamChunk(type=ChunkType.DONE, source="response_api")
                         return
@@ -575,20 +491,6 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             # for the orchestrator to process (workflow tools like new_answer, vote)
             if provider_calls:
                 logger.info(f"Provider function calls detected: {[call['name'] for call in provider_calls]}. Emitting for orchestrator.")
-
-                # End LLM call logging with tool_calls finish reason
-                if llm_logger and llm_call_id:
-                    llm_logger.record_chunk(
-                        call_id=llm_call_id,
-                        chunk_type="tool_calls",
-                        tool_calls=captured_function_calls,
-                    )
-                    llm_logger.end_call(
-                        call_id=llm_call_id,
-                        input_tokens=self._last_call_input_tokens,
-                        output_tokens=self.token_usage.output_tokens,
-                        finish_reason="tool_calls",
-                    )
 
                 # Convert provider calls to tool_calls format for orchestrator
                 workflow_tool_calls = []
@@ -831,20 +733,6 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if functions_executed:
                 updated_messages = super()._trim_message_history(updated_messages)
 
-                # End LLM call logging before recursion (this call is complete, recursion starts a new one)
-                if llm_logger and llm_call_id:
-                    llm_logger.record_chunk(
-                        call_id=llm_call_id,
-                        chunk_type="tool_calls",
-                        tool_calls=captured_function_calls,
-                    )
-                    llm_logger.end_call(
-                        call_id=llm_call_id,
-                        input_tokens=self._last_call_input_tokens,
-                        output_tokens=self.token_usage.output_tokens,
-                        finish_reason="tool_calls",
-                    )
-
                 # Pass response_id for reasoning continuity in recursive call
                 recursive_kwargs = kwargs.copy()
                 if response_id:
@@ -855,32 +743,11 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     yield chunk
             else:
                 # No functions were executed, we're done
-                # End LLM call logging
-                if llm_logger and llm_call_id:
-                    llm_logger.record_chunk(
-                        call_id=llm_call_id,
-                        chunk_type="tool_calls",
-                        tool_calls=captured_function_calls,
-                    )
-                    llm_logger.end_call(
-                        call_id=llm_call_id,
-                        input_tokens=self._last_call_input_tokens,
-                        output_tokens=self.token_usage.output_tokens,
-                        finish_reason="tool_calls",
-                    )
                 yield TextStreamChunk(type=ChunkType.DONE, source="response_api")
                 return
 
         elif response_completed:
             # Response completed with no function calls - we're done (base case)
-            # End LLM call logging
-            if llm_logger and llm_call_id:
-                llm_logger.end_call(
-                    call_id=llm_call_id,
-                    input_tokens=self._last_call_input_tokens,
-                    output_tokens=self.token_usage.output_tokens,
-                    finish_reason="stop",
-                )
             yield TextStreamChunk(
                 type=ChunkType.MCP_STATUS,
                 status="mcp_session_complete",
@@ -1191,6 +1058,8 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
         elif chunk_type == "response.reasoning_summary_text.delta" and hasattr(chunk, "delta"):
             log_stream_chunk("backend.response", "reasoning_summary", chunk.delta, agent_id)
+            # Buffer reasoning summary for compression recovery (same as raw reasoning)
+            self._append_reasoning_to_buffer(chunk.delta)
             return TextStreamChunk(
                 type=ChunkType.REASONING_SUMMARY,
                 content=chunk.delta,

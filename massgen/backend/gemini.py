@@ -733,8 +733,24 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
                                                 logger.info(f"[Gemini] Function call detected: {tool_name}")
 
-                        # Process text content
-                        if hasattr(chunk, "text") and chunk.text:
+                        # Process text content - check for thinking parts first
+                        # Gemini 2.5+ thinking models return parts with thought=true
+                        has_thinking_content = False
+                        if hasattr(chunk, "candidates") and chunk.candidates:
+                            for candidate in chunk.candidates:
+                                if hasattr(candidate, "content") and candidate.content:
+                                    if hasattr(candidate.content, "parts") and candidate.content.parts:
+                                        for part in candidate.content.parts:
+                                            if hasattr(part, "thought") and part.thought and hasattr(part, "text") and part.text:
+                                                # This is thinking/reasoning content
+                                                has_thinking_content = True
+                                                thinking_text = part.text
+                                                self._append_reasoning_to_buffer(thinking_text)
+                                                log_stream_chunk("backend.gemini", "reasoning", thinking_text, agent_id)
+                                                yield StreamChunk(type="reasoning", content=thinking_text)
+
+                        # Process regular text content (if not thinking)
+                        if not has_thinking_content and hasattr(chunk, "text") and chunk.text:
                             # Record TTFT on first content
                             if not first_token_recorded:
                                 self.record_first_token()
@@ -1298,7 +1314,24 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
                                                         new_function_calls.append(call_record)
 
-                                if hasattr(chunk, "text") and chunk.text:
+                                # Process text content - check for thinking parts first
+                                # Gemini 2.5+ thinking models return parts with thought=true
+                                has_thinking_content = False
+                                if hasattr(chunk, "candidates") and chunk.candidates:
+                                    for candidate in chunk.candidates:
+                                        if hasattr(candidate, "content") and candidate.content:
+                                            if hasattr(candidate.content, "parts") and candidate.content.parts:
+                                                for part in candidate.content.parts:
+                                                    if hasattr(part, "thought") and part.thought and hasattr(part, "text") and part.text:
+                                                        # This is thinking/reasoning content
+                                                        has_thinking_content = True
+                                                        thinking_text = part.text
+                                                        self._append_reasoning_to_buffer(thinking_text)
+                                                        log_stream_chunk("backend.gemini", "reasoning", thinking_text, agent_id)
+                                                        yield StreamChunk(type="reasoning", content=thinking_text)
+
+                                # Process regular text content (if not thinking)
+                                if not has_thinking_content and hasattr(chunk, "text") and chunk.text:
                                     # Record TTFT on first content
                                     if not cont_first_token_recorded:
                                         self.record_first_token()
@@ -1913,6 +1946,8 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 raise
 
         finally:
+            # Save streaming buffer before cleanup
+            self._finalize_streaming_buffer(agent_id=agent_id)
             await self._cleanup_genai_resources(stream, client)
 
     async def _try_close_resource(
