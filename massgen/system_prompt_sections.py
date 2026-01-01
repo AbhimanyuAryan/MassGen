@@ -198,6 +198,58 @@ previous calls to inform dependent values like the parameters, do NOT call these
 and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls."""
 
 
+class GPT5GuidanceSection(SystemPromptSection):
+    """
+    GPT-5.x specific guidance for solution persistence and tool preambles.
+
+    Encourages autonomous, end-to-end task completion and structured tool
+    usage narration based on OpenAI's GPT-5 prompting guides.
+
+    Only included when the model is GPT-5.x (gpt-5, gpt-5.1, gpt-5.2, etc.)
+    Priority 4 places this alongside CoreBehaviorsSection.
+
+    References:
+        - https://cookbook.openai.com/examples/gpt-5/gpt-5-1_prompting_guide#encouraging-complete-solutions
+        - https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide#tool-preambles
+    """
+
+    def __init__(self):
+        super().__init__(
+            title="GPT-5 Guidance",
+            priority=4,  # Same priority as CoreBehaviorsSection
+            xml_tag=None,  # Uses internal XML tags for each subsection
+        )
+
+    def build_content(self) -> str:
+        return (
+            "<solution_persistence>\n"
+            "- Treat yourself as an autonomous senior pair-programmer: once the user gives a direction, "
+            "proactively gather context, plan, implement, test, and refine without waiting for additional "
+            "prompts at each step.\n"
+            "- Persist until the task is fully handled end-to-end within the current turn whenever feasible: "
+            "do not stop at analysis or partial fixes; carry changes through implementation, verification, "
+            "and a clear explanation of outcomes unless the user explicitly pauses or redirects you.\n"
+            "- Be extremely biased for action. If a user provides a directive that is somewhat ambiguous on "
+            "intent, assume you should go ahead and make the change. If the user asks a question like "
+            '"should we do x?" and your answer is "yes", you should also go ahead and perform the action. '
+            "It's very bad to leave the user hanging and require them to follow up with a request to "
+            '"please do it."\n'
+            "</solution_persistence>\n\n"
+            "<tool_preambles>\n"
+            "- Always begin by rephrasing the user's goal in a friendly, clear, and concise manner, "
+            "before calling any tools.\n"
+            "- Then, immediately outline a structured plan detailing each logical step you'll follow.\n"
+            "- As you execute your file edit(s) and other tool calls, narrate each step succinctly and "
+            "sequentially, marking progress clearly.\n"
+            "- CRITICAL: If your task requires creating or modifying files, you MUST use file tools to "
+            "actually write them to the filesystem. Do NOT just output file contents in the new_answer "
+            "text using markdown - the files will not exist unless you call the appropriate writing and "
+            "editing tools.\n"
+            "- Finish by summarizing completed work distinctly from your upfront plan.\n"
+            "</tool_preambles>"
+        )
+
+
 class SkillsSection(SystemPromptSection):
     """
     Available skills that agents can invoke.

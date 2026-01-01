@@ -654,6 +654,7 @@ class SingleAgent(ChatAgent):
         current_stage: CoordinationStage = None,
         orchestrator_turn: Optional[int] = None,
         previous_winners: Optional[List[Dict[str, Any]]] = None,
+        vote_only: bool = False,
     ) -> AsyncGenerator[StreamChunk, None]:
         """
         Process messages through single backend with tool support.
@@ -664,7 +665,11 @@ class SingleAgent(ChatAgent):
             orchestrator_turn: Current orchestrator turn number (for turn-aware memory)
             previous_winners: List of previous winning agents with turns
                              Format: [{"agent_id": "agent_b", "turn": 1}, ...]
+            vote_only: If True, agent is in vote-only mode (reached answer limit)
+                       Backends like Gemini will use a vote-only schema
         """
+        # Store vote_only for use in _get_backend_params
+        self._vote_only = vote_only
         # Update orchestrator turn if provided
         if orchestrator_turn is not None:
             logger.debug(f"🔍 [chat] Setting orchestrator_turn={orchestrator_turn} for {self.agent_id}")
@@ -865,7 +870,11 @@ class SingleAgent(ChatAgent):
 
     def _get_backend_params(self) -> Dict[str, Any]:
         """Get additional backend parameters. Override in subclasses."""
-        return {}
+        params = {}
+        # Include vote_only if set (for Gemini vote-only schema)
+        if hasattr(self, "_vote_only") and self._vote_only:
+            params["vote_only"] = True
+        return params
 
     def get_status(self) -> Dict[str, Any]:
         """Get current agent status."""
@@ -1001,7 +1010,11 @@ class ConfigurableAgent(SingleAgent):
 
     def _get_backend_params(self) -> Dict[str, Any]:
         """Get backend parameters from config."""
-        return self.config.get_backend_params()
+        params = self.config.get_backend_params()
+        # Include vote_only if set (for Gemini vote-only schema)
+        if hasattr(self, "_vote_only") and self._vote_only:
+            params["vote_only"] = True
+        return params
 
     def get_status(self) -> Dict[str, Any]:
         """Get current agent status with config details."""

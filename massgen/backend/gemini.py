@@ -45,7 +45,11 @@ from .base_with_custom_tool_and_mcp import (
     CustomToolChunk,
     ToolExecutionConfig,
 )
-from .gemini_utils import CoordinationResponse, PostEvaluationResponse
+from .gemini_utils import (
+    CoordinationResponse,
+    PostEvaluationResponse,
+    VoteOnlyCoordinationResponse,
+)
 from .rate_limiter import GlobalRateLimiter
 
 
@@ -664,7 +668,13 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if not tools_to_apply and not builtin_tools:
                 if is_coordination:
                     config["response_mime_type"] = "application/json"
-                    config["response_schema"] = CoordinationResponse.model_json_schema()
+                    # Use vote-only schema if agent has reached answer limit
+                    vote_only = kwargs.get("vote_only", False)
+                    if vote_only:
+                        config["response_schema"] = VoteOnlyCoordinationResponse.model_json_schema()
+                        logger.info(f"[Gemini] Using vote-only schema for agent {agent_id} (answer limit reached)")
+                    else:
+                        config["response_schema"] = CoordinationResponse.model_json_schema()
                 elif is_post_evaluation:
                     config["response_mime_type"] = "application/json"
                     config["response_schema"] = PostEvaluationResponse.model_json_schema()

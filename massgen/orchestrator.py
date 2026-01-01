@@ -3395,6 +3395,23 @@ Your answer:"""
 
         return (True, None)
 
+    def _is_vote_only_mode(self, agent_id: str) -> bool:
+        """Check if agent has exhausted their answer limit and must vote.
+
+        When an agent reaches max_new_answers_per_agent, they should only
+        have the vote tool available (no new_answer or broadcast tools).
+
+        Args:
+            agent_id: The agent to check
+
+        Returns:
+            True if agent must vote (has hit answer limit), False otherwise.
+        """
+        if self.config.max_new_answers_per_agent is None:
+            return False
+        answer_count = len(self.coordination_tracker.answers_by_agent.get(agent_id, []))
+        return answer_count >= self.config.max_new_answers_per_agent
+
     def _create_tool_error_messages(
         self,
         agent: "ChatAgent",
@@ -3961,6 +3978,21 @@ Your answer:"""
 
                 # Stream agent response with workflow tools
                 # TODO: Need to still log this redo enforcement msg in the context.txt, and this & others in the coordination tracker.
+
+                # Determine which workflow tools to use for this agent
+                # If agent has hit answer limit, only provide vote tool (no new_answer/broadcast)
+                vote_only = self._is_vote_only_mode(agent_id)
+                if vote_only:
+                    agent_workflow_tools = get_workflow_tools(
+                        valid_agent_ids=list(self.agents.keys()),
+                        template_overrides=getattr(self.message_templates, "_template_overrides", {}),
+                        api_format="chat_completions",
+                        vote_only=True,
+                    )
+                    logger.info(f"[Orchestrator] Agent {agent_id} in vote-only mode (answer limit reached)")
+                else:
+                    agent_workflow_tools = self.workflow_tools
+
                 if is_first_real_attempt:
                     # First attempt: orchestrator provides initial conversation
                     # But we need the agent to have this in its history for subsequent calls
@@ -3968,11 +4000,12 @@ Your answer:"""
                     # Pass current turn and previous winners for memory sharing
                     chat_stream = agent.chat(
                         conversation_messages,
-                        self.workflow_tools,
+                        agent_workflow_tools,  # Use per-agent tools (vote-only if at limit)
                         reset_chat=True,
                         current_stage=CoordinationStage.INITIAL_ANSWER,
                         orchestrator_turn=self._current_turn + 1,  # Next turn number
                         previous_winners=self._winning_agents_history.copy(),
+                        vote_only=vote_only,  # Pass vote-only flag for Gemini schema
                     )
                     is_first_real_attempt = False  # Only first LLM call uses this path
                 else:
@@ -3982,11 +4015,12 @@ Your answer:"""
                         # Tool message array
                         chat_stream = agent.chat(
                             enforcement_msg,
-                            self.workflow_tools,
+                            agent_workflow_tools,  # Use per-agent tools (vote-only if at limit)
                             reset_chat=False,
                             current_stage=CoordinationStage.ENFORCEMENT,
                             orchestrator_turn=self._current_turn + 1,
                             previous_winners=self._winning_agents_history.copy(),
+                            vote_only=vote_only,  # Pass vote-only flag for Gemini schema
                         )
                     else:
                         # Single user message
@@ -3996,11 +4030,12 @@ Your answer:"""
                         }
                         chat_stream = agent.chat(
                             [enforcement_message],
-                            self.workflow_tools,
+                            agent_workflow_tools,  # Use per-agent tools (vote-only if at limit)
                             reset_chat=False,
                             current_stage=CoordinationStage.ENFORCEMENT,
                             orchestrator_turn=self._current_turn + 1,
                             previous_winners=self._winning_agents_history.copy(),
+                            vote_only=vote_only,  # Pass vote-only flag for Gemini schema
                         )
                 response_text = ""
                 tool_calls = []
@@ -4407,7 +4442,11 @@ Your answer:"""
                         # If there were tool calls, we must provide tool results before continuing
                         # (Response API requires function_call + function_call_output pairs)
                         if tool_calls:
-                            error_msg = "You must use workflow tools (vote or new_answer) to complete the task."
+                            # Use vote-only enforcement message if agent has hit answer limit
+                            if vote_only:
+                                error_msg = "You have reached your answer limit. You MUST use the `vote` tool now to vote for the best existing answer. The `new_answer` tool is no longer available."
+                            else:
+                                error_msg = "You must use workflow tools (vote or new_answer) to complete the task."
                             enforcement_msg = self._create_tool_error_messages(agent, tool_calls, error_msg)
                         else:
                             # No tool calls, just a plain text response - use default enforcement

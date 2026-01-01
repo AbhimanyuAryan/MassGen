@@ -25,6 +25,7 @@ from massgen.system_prompt_sections import (
     FileSearchSection,
     FilesystemBestPracticesSection,
     FilesystemOperationsSection,
+    GPT5GuidanceSection,
     MemorySection,
     MultimodalToolsSection,
     OutputFirstVerificationSection,
@@ -121,6 +122,13 @@ class SystemMessageBuilder:
 
         # PRIORITY 1 (CRITICAL): Core Behaviors - HOW to act
         builder.add_section(CoreBehaviorsSection())
+
+        # PRIORITY 4: GPT-5.x Guidance (solution persistence + tool preambles)
+        # Only added for GPT-5.x models based on OpenAI's prompting guides
+        model_name = agent.backend.config.get("model", "").lower()
+        if model_name.startswith("gpt-5"):
+            builder.add_section(GPT5GuidanceSection())
+            logger.info(f"[SystemMessageBuilder] Added GPT-5 guidance section for {agent_id}")
 
         # PRIORITY 1 (HIGH): Output-First Verification - verify outcomes, not implementations
         builder.add_section(OutputFirstVerificationSection())
