@@ -163,6 +163,22 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         try:
             stream = await client.responses.create(**api_params)
         except Exception as e:
+            # Debug: Catch input[N].content format errors and print the problematic message
+            error_str = str(e)
+            if "input[" in error_str and "].content" in error_str:
+                import re
+
+                match = re.search(r"input\[(\d+)\]\.content", error_str)
+                if match:
+                    idx = int(match.group(1))
+                    input_messages = api_params.get("input", [])
+                    if idx < len(input_messages):
+                        problematic_msg = input_messages[idx]
+                        logger.error(f"[Response API] Message format error at input[{idx}]:")
+                        logger.error(f"[Response API] Full message:\n{json.dumps(problematic_msg, indent=2, default=str)}")
+                    else:
+                        logger.error(f"[Response API] Error at input[{idx}] but only {len(input_messages)} messages in input")
+
             # Check if this is a context length error and we haven't already retried
             from ._context_errors import is_context_length_error
 
@@ -354,6 +370,22 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         try:
             stream = await client.responses.create(**api_params)
         except Exception as e:
+            # Debug: Catch input[N].content format errors and print the problematic message
+            error_str = str(e)
+            if "input[" in error_str and "].content" in error_str:
+                import re
+
+                match = re.search(r"input\[(\d+)\]\.content", error_str)
+                if match:
+                    idx = int(match.group(1))
+                    input_messages = api_params.get("input", [])
+                    if idx < len(input_messages):
+                        problematic_msg = input_messages[idx]
+                        logger.error(f"[Response API] Message format error at input[{idx}]:")
+                        logger.error(f"[Response API] Full message:\n{json.dumps(problematic_msg, indent=2, default=str)}")
+                    else:
+                        logger.error(f"[Response API] Error at input[{idx}] but only {len(input_messages)} messages in input")
+
             # Check if this is a context length error and we haven't already retried
             from ._context_errors import is_context_length_error
 

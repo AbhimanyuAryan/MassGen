@@ -276,6 +276,8 @@ class LLMBackend(ABC):
             "session_storage_base",
             # MCP configuration (handled by base class for MCP backends)
             "mcp_servers",
+            # Coordination parameters (handled by orchestrator, not passed to API)
+            "vote_only",  # Vote-only mode flag for coordination
             # Multimodal tools configuration (handled by CustomToolAndMCPBackend)
             "enable_multimodal_tools",
             "multimodal_config",

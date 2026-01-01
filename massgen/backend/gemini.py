@@ -506,6 +506,9 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             # Store as instance variable so it's accessible in the except block
             self._compression_retry_flag = kwargs.pop("_compression_retry", False)
 
+            # Extract vote_only flag before merging (not a Gemini API param)
+            vote_only = kwargs.pop("vote_only", False)
+
             # Merge constructor config with stream kwargs
             all_params = {**self.config, **kwargs}
 
@@ -537,7 +540,15 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             full_content = self.formatter.format_messages(messages)
             # For coordination requests, modify the prompt to use structured output
             if is_coordination:
-                full_content = self.formatter.build_structured_output_prompt(full_content, valid_agent_ids, broadcast_enabled=broadcast_enabled)
+                # vote_only was extracted earlier from kwargs (before merging into all_params)
+                full_content = self.formatter.build_structured_output_prompt(
+                    full_content,
+                    valid_agent_ids,
+                    broadcast_enabled=broadcast_enabled,
+                    vote_only=vote_only,
+                )
+                if vote_only:
+                    logger.info(f"[Gemini] Using vote-only prompt for agent {agent_id} (answer limit reached)")
             elif is_post_evaluation:
                 # For post-evaluation, modify prompt to use structured output
                 full_content = self.formatter.build_post_evaluation_prompt(full_content)

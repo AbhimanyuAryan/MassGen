@@ -3864,6 +3864,13 @@ Your answer:"""
                 if not self._check_restart_pending(agent_id):
                     return None
 
+                # In vote-only mode, skip injection and force a full restart instead.
+                # Mid-stream injection can't update tool schemas, so agents in vote-only mode
+                # wouldn't be able to vote for newly discovered answers (the vote enum is fixed
+                # at stream start). A full restart gives them updated tool schemas.
+                if self._is_vote_only_mode(agent_id):
+                    return None  # Let restart happen instead
+
                 # Get CURRENT answers from agent_states
                 current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
 
@@ -3961,6 +3968,14 @@ Your answer:"""
 
                 if self._check_restart_pending(agent_id):
                     logger.info(f"[Orchestrator] Agent {agent_id} has restart_pending flag")
+
+                    # In vote-only mode, always restart to get updated tool schemas.
+                    # Mid-stream injection can't update the vote enum, so we need a full restart.
+                    if self._is_vote_only_mode(agent_id):
+                        logger.info(f"[Orchestrator] Agent {agent_id} in vote-only mode - forcing restart for updated vote options")
+                        self.agent_states[agent_id].restart_pending = False
+                        yield ("done", None)
+                        return
 
                     # Check if this is the first time agent sees a new answer
                     if self.agent_states[agent_id].injection_count == 0:

@@ -236,16 +236,12 @@ class GPT5GuidanceSection(SystemPromptSection):
             '"please do it."\n'
             "</solution_persistence>\n\n"
             "<tool_preambles>\n"
-            "- Always begin by rephrasing the user's goal in a friendly, clear, and concise manner, "
-            "before calling any tools.\n"
-            "- Then, immediately outline a structured plan detailing each logical step you'll follow.\n"
             "- As you execute your file edit(s) and other tool calls, narrate each step succinctly and "
             "sequentially, marking progress clearly.\n"
             "- CRITICAL: If your task requires creating or modifying files, you MUST use file tools to "
             "actually write them to the filesystem. Do NOT just output file contents in the new_answer "
             "text using markdown - the files will not exist unless you call the appropriate writing and "
             "editing tools.\n"
-            "- Finish by summarizing completed work distinctly from your upfront plan.\n"
             "</tool_preambles>"
         )
 
