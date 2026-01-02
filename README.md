@@ -163,7 +163,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 - **🔄 Reactive Context Compression** - Automatic conversation compression when context length errors occur, seamlessly recovering from token limit issues
 - **📦 Streaming Buffer System** - Tracks partial agent responses during streaming, enabling compression recovery
 - **🛡️ MCP Tool Protections** - `write_file` refuses to overwrite existing files; `create_task_plan` prevents duplicate task plans after recovery
-- **🔧 Model Behavior Fixes** - Grok MCP tools visibility, Gemini vote-only mode, GPT-5* coordination improvements
+- **🔧 Model Behavior Fixes** - Grok MCP tools visibility, Gemini vote-only mode, GPT-5 coordination improvements
 
 **Try v0.1.33 Features:**
 ```bash
@@ -1141,7 +1141,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 #### Model Behavior Fixes
 - **Grok MCP Tools**: Fixed MCP tool visibility for Grok backend by adjusting tool handling in chat completions
 - **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
-- **GPT-5* Model Behavior**: System prompt adjustments and default reasoning set for newer models
+- **GPT-5 Model Behavior**: System prompt adjustments and default reasoning set for newer models
 - **Circuit Breaker**: Improved debugging output with shorter ultimate timeout for faster failure detection
 
 ### Previous Achievements (v0.0.3 - v0.1.32)

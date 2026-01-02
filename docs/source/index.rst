@@ -159,7 +159,7 @@ Recent Releases
 
 **v0.1.33 (January 2, 2026)** - Reactive Context Compression & MCP Protections
 
-Automatic conversation compression when context length errors occur with streaming buffer system for recovery. MCP tool protections: ``write_file`` refuses to overwrite existing files, ``create_task_plan`` blocks duplicate plans. Model fixes for Grok MCP tools visibility, Gemini vote-only mode, and GPT-5* coordination.
+Automatic conversation compression when context length errors occur with streaming buffer system for recovery. MCP tool protections: ``write_file`` refuses to overwrite existing files, ``create_task_plan`` blocks duplicate plans. Model fixes for Grok MCP tools visibility, Gemini vote-only mode, and GPT-5 coordination.
 
 **v0.1.32 (December 31, 2025)** - Multi-Turn Export & Logfire Optional
 

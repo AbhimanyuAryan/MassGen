@@ -237,7 +237,7 @@ Most configurations use environment variables for API keys:so
 - **Task Plan Duplicate Prevention**: `create_task_plan` blocks duplicate plans after recovery
 - **Grok MCP Tools**: Fixed MCP tool visibility by adjusting tool handling in chat completions
 - **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
-- **GPT-5* Model Behavior**: System prompt adjustments and default reasoning set for newer models
+- **GPT-5 Model Behavior**: System prompt adjustments and default reasoning set for newer models
 
 **Try It:**
 ```bash

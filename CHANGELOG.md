@@ -47,7 +47,7 @@ Comprehensive structured logging via Logfire with automatic LLM instrumentation 
 - **Subagent Failure Handling**: Results now include both `workspace` and `log_path` for debugging failed/timed-out subagents
 
 ### Fixed
-- **GPT-5* Model Behavior**: System prompt adjustments ensure MassGen task planning is used over native model planning
+- **GPT-5 Model Behavior**: System prompt adjustments ensure MassGen task planning is used over native model planning
 
 - **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
 
