@@ -160,7 +160,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 **What's New in v0.1.33:**
 - **🔄 Reactive Context Compression** - Automatic conversation compression when context length errors occur, seamlessly recovering from token limit issues
-- **📦 Streaming Buffer System** - Tracks partial agent responses during streaming, enabling compression recovery without data loss
+- **📦 Streaming Buffer System** - Tracks partial agent responses during streaming, enabling compression recovery
 - **🛡️ MCP Tool Protections** - `write_file` refuses to overwrite existing files; `create_task_plan` prevents duplicate task plans after recovery
 - **🔧 Model Behavior Fixes** - Grok MCP tools visibility, Gemini vote-only mode, GPT-5* coordination improvements
 
@@ -1131,7 +1131,6 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 #### Streaming Buffer System
 - **Response Tracking**: Tracks partial agent responses during streaming for compression recovery
-- **Data Preservation**: No data loss when compression is triggered mid-stream
 - **Backend Integration**: Works across all supported backends
 
 #### MCP Tool Protections
@@ -1140,8 +1139,8 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 #### Model Behavior Fixes
 - **Grok MCP Tools**: Fixed MCP tool visibility for Grok backend by adjusting tool handling in chat completions
-- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter extraction and coordination detection to properly handle agents that reached their answer limit (can only vote, not submit new answers)
-- **GPT-5* Improvements**: Enhanced coordination behavior and system prompt handling to ensure proper task planning utilization
+- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
+- **GPT-5* Model Behavior**: System prompt adjustments and default reasoning set for newer models
 - **Circuit Breaker**: Improved debugging output with shorter ultimate timeout for faster failure detection
 
 ### Previous Achievements (v0.0.3 - v0.1.32)
@@ -1356,14 +1355,12 @@ We welcome community contributions to achieve these goals.
 
 ### v0.1.34 Roadmap
 
-Version 0.1.34 focuses on GPT-5.2 coordination fix and OpenAI-compatible chat server:
+Version 0.1.34 focuses on exposing MassGen as an OpenAI-compatible chat server:
 
 #### Planned Features
-- **GPT-5.2 Immediate New Answers Fix** (@ncrispino): Fix GPT-5.2 giving immediate new answers on default settings, ensuring proper coordination workflow
 - **OpenAI-Compatible Chat Server** (@ncrispino): Run MassGen as an OpenAI-compatible API server for integration with external tools like Cursor and Continue
 
 Key technical approach:
-- **GPT-5.2 Fix**: Ensure proper tool use sequence (work → evaluate → vote/new_answer) with default settings
 - **OpenAI-Compatible Server**: Implement `/v1/chat/completions` endpoint with streaming and tool calling support
 
 For detailed milestones and technical specifications, see the [full v0.1.34 roadmap](ROADMAP_v0.1.34.md).

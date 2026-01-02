@@ -232,12 +232,12 @@ Most configurations use environment variables for API keys:so
 
 **Key Features:**
 - **Reactive Context Compression**: Automatic conversation compression when context length errors occur
-- **Streaming Buffer System**: Tracks partial agent responses for compression recovery without data loss
+- **Streaming Buffer System**: Tracks partial agent responses for compression recovery
 - **File Overwrite Protection**: `write_file` tool refuses to overwrite existing files
 - **Task Plan Duplicate Prevention**: `create_task_plan` blocks duplicate plans after recovery
 - **Grok MCP Tools**: Fixed MCP tool visibility by adjusting tool handling in chat completions
-- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter extraction for agents that reached answer limit
-- **GPT-5* Improvements**: Enhanced coordination and system prompt handling for task planning
+- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
+- **GPT-5* Model Behavior**: System prompt adjustments and default reasoning set for newer models
 
 **Try It:**
 ```bash

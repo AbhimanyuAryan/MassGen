@@ -42,8 +42,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.34** | 01/06/26 | GPT-5.2 Immediate New Answers Fix | @ncrispino | Fix GPT-5.2 giving immediate new answers on default settings |
-| | | Expose MassGen as OpenAI-Compatible Chat Server | @ncrispino | Run MassGen as an OpenAI-compatible API server for integration with other tools |
+| **v0.1.34** | 01/06/26 | Expose MassGen as OpenAI-Compatible Chat Server | @ncrispino | Run MassGen as an OpenAI-compatible API server for integration with other tools |
 | **v0.1.35** | 01/08/26 | Test MassGen for PPTX Slides | @ncrispino | Verify and improve MassGen's ability to generate PowerPoint presentations |
 | | | OpenRouter Tool-Use Model Filtering | @shubham2345 | Restrict OpenRouter model list to only show models that support tool use |
 | **v0.1.36** | 01/10/26 | Code-Based Tools in Web UI | @ncrispino | Ensure code-based tools work in Web UI along with new features |
@@ -60,7 +59,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 ### Features
 
 - **Reactive Context Compression**: Automatic conversation compression when context length errors are detected, supporting all major backends (OpenAI, Claude, Gemini, OpenRouter, Grok)
-- **Streaming Buffer System**: Tracks accumulated streaming content for compression recovery, capturing text deltas, tool calls, and reasoning/thinking content
+- **Streaming Buffer System**: Tracks accumulated streaming content for compression recovery, capturing text deltas, tool calls, and reasoning/thinking content when available
 - **File Overwrite Protection**: `write_file` tool now refuses to overwrite existing files (use `edit_file` instead)
 - **Task Plan Duplicate Protection**: `create_task_plan` MCP tool prevents re-creating plans after recovery
 - **Grok Backend MCP Tools**: Fixed MCP tools visibility by removing incorrect stream method override
@@ -70,17 +69,11 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.34 - GPT-5.2 Fix & OpenAI-Compatible Server
+## 📋 v0.1.34 - OpenAI-Compatible Server
 
 ### Features
 
-**1. GPT-5.2 Immediate New Answers Fix** (@ncrispino)
-- Issue: [#725](https://github.com/massgen/MassGen/issues/725)
-- Fix GPT-5.2 giving immediate new answers on default settings
-- Ensure proper coordination behavior with GPT-5.2 models
-- **Use Case**: Enable reliable multi-agent coordination with GPT-5.2
-
-**2. Expose MassGen as OpenAI-Compatible Chat Server** (@ncrispino)
+**1. Expose MassGen as OpenAI-Compatible Chat Server** (@ncrispino)
 - Issue: [#628](https://github.com/massgen/MassGen/issues/628)
 - Run MassGen as an OpenAI-compatible API server
 - Enable integration with tools expecting OpenAI API format (Cursor, Continue, etc.)
@@ -88,7 +81,6 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - **Use Case**: Use MassGen multi-agent coordination as a drop-in replacement for OpenAI API in existing workflows
 
 ### Success Criteria
-- ✅ GPT-5.2 follows proper coordination workflow on default settings
 - ✅ MassGen server responds to OpenAI-compatible API calls
 - ✅ External tools can connect to MassGen as an OpenAI provider
 
@@ -601,12 +593,6 @@ These features are being actively developed on **separate parallel tracks** and 
 - Automatic context compression when context length errors are detected
 - Streaming buffer system for compression recovery
 - **Status:** ✅ Completed in v0.1.33
-
-### Track: GPT-5.2 Immediate New Answers Fix (@ncrispino, nickcrispino)
-- Issue: [#725](https://github.com/massgen/MassGen/issues/725)
-- Fix GPT-5.2 giving immediate new answers on default settings
-- Ensure proper coordination behavior with GPT-5.2 models
-- **Target:** v0.1.34
 
 ### Track: Backend Model List Auto-Update (@ncrispino, nickcrispino)
 - Issue: [#645](https://github.com/massgen/MassGen/issues/645)

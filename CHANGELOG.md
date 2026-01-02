@@ -51,8 +51,6 @@ Comprehensive structured logging via Logfire with automatic LLM instrumentation 
 
 - **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
 
-- **Vote Ignored Paths**: Fixed coordination tracker handling when agent votes are ignored
-
 - **Subagent Failed Paths**: Fixed subagent MCP server handling of failed subagent results
 
 - **Incomplete Response Recovery**: Added recovery mechanism when API streams end early, preserving partial content
