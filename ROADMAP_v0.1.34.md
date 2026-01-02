@@ -1,95 +1,54 @@
-# MassGen v0.1.33 Roadmap
+# MassGen v0.1.34 Roadmap
 
 ## Overview
 
-Version 0.1.33 focuses on backend model list auto-update and automatic context compression for enhanced provider support and longer conversations.
+Version 0.1.34 focuses on exposing MassGen as an OpenAI-compatible chat server.
 
-- **Backend Model List Auto-Update** (Required): Automatic model listing via provider APIs, third-party wrappers, or documented manual processes
-- **Automatic Context Compression** (Required): Automatic context compression to manage long conversations efficiently
+- **OpenAI-Compatible Chat Server** (Required): Run MassGen as an OpenAI-compatible API server for integration with other tools
 
 ## Key Technical Priorities
 
-1. **Backend Model List Auto-Update**: Implement native model listing APIs for providers that support it
-   **Use Case**: Reduce manual model registry maintenance; OpenRouter already auto-fetches, extend to other providers
-
-2. **Automatic Context Compression**: Automatic context compression to manage long conversations efficiently
-   **Use Case**: Enable longer multi-turn conversations without losing important context
+1. **OpenAI-Compatible Chat Server**: Run MassGen as an OpenAI-compatible API server
+   **Use Case**: Use MassGen multi-agent coordination as a drop-in replacement for OpenAI API in existing workflows
 
 ## Key Milestones
 
-### Milestone 1: Backend Model List Auto-Update (REQUIRED)
+### Milestone 1: OpenAI-Compatible Chat Server (REQUIRED)
 
-**Goal**: Implement automatic model listing for providers, reducing manual registry maintenance
-
-**Owner**: @ncrispino (nickcrispino on Discord)
-
-**Issue**: [#645](https://github.com/massgen/MassGen/issues/645)
-
-#### 1.1 Native API Implementation
-- [ ] Implement model listing API for OpenAI
-- [ ] Implement model listing API for Anthropic
-- [ ] Implement model listing API for Grok
-- [ ] Implement model listing API for Groq
-- [ ] Implement model listing API for Nebius
-
-#### 1.2 Third-Party Wrapper Research
-- [ ] Research third-party wrappers for providers without native APIs
-- [ ] Evaluate wrapper reliability and update frequency
-- [ ] Implement wrapper integration where beneficial
-
-#### 1.3 Documentation & Process
-- [ ] Document manual update process for providers requiring it
-- [ ] Create tracking system for new model releases
-- [ ] Backend documentation noting update requirements
-
-#### 1.4 Integration & Testing
-- [ ] Unit tests for model listing APIs
-- [ ] Integration tests with provider endpoints
-- [ ] Fallback handling for API failures
-- [ ] Documentation and configuration examples
-
-**Success Criteria**:
-- Providers with listing APIs auto-fetch available models
-- Third-party wrapper integration for providers without native APIs
-- Clear documentation for manually-updated providers
-- Model registry stays current with minimal manual intervention
-
----
-
-### Milestone 2: Automatic Context Compression (REQUIRED)
-
-**Goal**: Automatic context compression to manage long conversations efficiently
+**Goal**: Expose MassGen as an OpenAI-compatible API server for integration with external tools
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
-**Issue**: [#617](https://github.com/massgen/MassGen/issues/617)
+**Issue**: [#628](https://github.com/massgen/MassGen/issues/628)
 
-#### 2.1 Compression Framework Design
-- [ ] Design context compression architecture
-- [ ] Implement compression threshold detection
-- [ ] Support configurable compression strategies
+#### 1.1 Server Implementation
+- [ ] Implement OpenAI-compatible API endpoints
+- [ ] Support `/v1/chat/completions` endpoint
+- [ ] Handle streaming responses
+- [ ] Support tool calling format
 
-#### 2.2 Summarization Implementation
-- [ ] Implement intelligent conversation summarization
-- [ ] Preserve essential context during compression
-- [ ] Handle multi-agent conversation compression
+#### 1.2 Integration Features
+- [ ] Model mapping (MassGen configs → OpenAI model names)
+- [ ] Request/response format conversion
+- [ ] Error handling compatible with OpenAI format
 
-#### 2.3 Configuration & Control
-- [ ] Configurable compression thresholds
-- [ ] Strategy selection (aggressive, balanced, conservative)
-- [ ] Per-agent compression settings
+#### 1.3 Client Compatibility
+- [ ] Test with Cursor integration
+- [ ] Test with Continue integration
+- [ ] Test with other OpenAI-compatible clients
+- [ ] Document integration setup
 
-#### 2.4 Integration & Testing
-- [ ] Unit tests for compression logic
-- [ ] Integration tests with long conversations
-- [ ] Performance testing for compression overhead
-- [ ] Documentation and configuration examples
+#### 1.4 Documentation & Examples
+- [ ] Server startup documentation
+- [ ] Configuration options
+- [ ] Integration examples for popular tools
+- [ ] Troubleshooting guide
 
 **Success Criteria**:
-- Context compression activates automatically when approaching limits
-- Compressed context preserves essential conversation information
-- Configurable thresholds and strategies
-- Documentation covers compression configuration and usage
+- MassGen server responds to OpenAI-compatible API calls
+- External tools can connect to MassGen as an OpenAI provider
+- Streaming responses work correctly
+- Tool calling is properly translated
 
 ---
 
@@ -97,25 +56,15 @@ Version 0.1.33 focuses on backend model list auto-update and automatic context c
 
 ### Functional Requirements
 
-**Backend Model List Auto-Update:**
-- [ ] OpenAI models auto-fetched via API
-- [ ] Anthropic models auto-fetched via API
-- [ ] Grok models auto-fetched via API
-- [ ] Groq models auto-fetched via API
-- [ ] Nebius models auto-fetched via API
-- [ ] Third-party wrappers integrated where needed
-- [ ] Manual update documentation complete
-
-**Automatic Context Compression:**
-- [ ] Compression threshold detection works
-- [ ] Summarization preserves key context
-- [ ] Multi-agent compression handled correctly
-- [ ] Configuration options available
-- [ ] No loss of critical information
+**OpenAI-Compatible Chat Server:**
+- [ ] `/v1/chat/completions` endpoint works
+- [ ] Streaming responses supported
+- [ ] Tool calling format compatible
+- [ ] Multiple client integrations tested
 
 ### Performance Requirements
-- [ ] Model listing has minimal startup overhead
-- [ ] Compression is efficient and fast
+- [ ] Server response latency is acceptable
+- [ ] Streaming has minimal delay
 - [ ] Memory usage is reasonable
 - [ ] No degradation in coordination speed
 
@@ -131,26 +80,24 @@ Version 0.1.33 focuses on backend model list auto-update and automatic context c
 ## Dependencies & Risks
 
 ### Dependencies
-- **Backend Model List Auto-Update**: Provider API access, existing model registry, backend capabilities system
-- **Automatic Context Compression**: Existing conversation history system, summarization capabilities, token counting
+- **OpenAI-Compatible Server**: FastAPI/web server framework, response formatters, streaming infrastructure
 
 ### Risks & Mitigations
-1. **Provider API Changes**: *Mitigation*: Version detection, fallback to cached lists
-2. **API Rate Limits**: *Mitigation*: Caching, background refresh, exponential backoff
-3. **Compression Quality**: *Mitigation*: Configurable aggressiveness, preserve key markers
-4. **Context Loss**: *Mitigation*: Selective compression, user-controllable settings
+1. **API Compatibility**: *Mitigation*: Follow OpenAI spec closely, test with multiple clients
+2. **Streaming Complexity**: *Mitigation*: Reuse existing streaming infrastructure
+3. **Integration Issues**: *Mitigation*: Early testing with target tools (Cursor, Continue)
 
 ---
 
-## Future Enhancements (Post-v0.1.33)
-
-### v0.1.34 Plans
-- **OpenAI-Compatible Chat Server** (@ncrispino): Run MassGen as an OpenAI-compatible API server ([#628](https://github.com/massgen/MassGen/issues/628))
-- **Code-Based Tools in Web UI** (@ncrispino): Ensure code-based tools work in Web UI ([#612](https://github.com/massgen/MassGen/issues/612))
+## Future Enhancements (Post-v0.1.34)
 
 ### v0.1.35 Plans
 - **Test MassGen for PPTX Slides** (@ncrispino): Verify and improve PPTX generation capabilities ([#686](https://github.com/massgen/MassGen/issues/686))
 - **OpenRouter Tool-Use Model Filtering** (@shubham2345): Restrict OpenRouter model list to tool-capable models ([#647](https://github.com/massgen/MassGen/issues/647))
+
+### v0.1.36 Plans
+- **Code-Based Tools in Web UI** (@ncrispino): Ensure code-based tools work in Web UI ([#612](https://github.com/massgen/MassGen/issues/612))
+- **Backend Model List Auto-Update** (@ncrispino): Automatic model listing via provider APIs ([#645](https://github.com/massgen/MassGen/issues/645))
 
 ### Long-term Vision
 - **Advanced Agent Communication**: Sophisticated inter-agent protocols and negotiation
@@ -164,10 +111,9 @@ Version 0.1.33 focuses on backend model list auto-update and automatic context c
 
 | Phase | Focus | Key Deliverables | Owner | Priority |
 |-------|-------|------------------|-------|----------|
-| Phase 1 | Backend Model List Auto-Update | Native APIs, third-party wrappers, documentation | @ncrispino | **REQUIRED** |
-| Phase 2 | Automatic Context Compression | Compression framework, summarization, configuration | @ncrispino | **REQUIRED** |
+| Phase 1 | OpenAI-Compatible Server | API endpoints, streaming, client compatibility | @ncrispino | **REQUIRED** |
 
-**Target Release**: January 3, 2026 (Friday @ 9am PT)
+**Target Release**: January 6, 2026 (Monday @ 9am PT)
 
 ---
 
@@ -175,39 +121,22 @@ Version 0.1.33 focuses on backend model list auto-update and automatic context c
 
 ### For Contributors
 
-**Phase 1 - Backend Model List Auto-Update:**
-1. Review model listing design (Issue #645)
-2. Implement provider-specific listing APIs
-3. Research and integrate third-party wrappers
-4. Document manual update processes
-5. Add integration tests
-6. Document configuration and usage
-
-**Phase 2 - Automatic Context Compression:**
-1. Review compression design (Issue #617)
-2. Design compression threshold system
-3. Implement summarization logic
-4. Add configurable strategies
-5. Add integration tests
-6. Document compression configuration
+**OpenAI-Compatible Chat Server:**
+1. Review OpenAI API specification
+2. Implement server endpoints
+3. Add streaming support
+4. Test with Cursor/Continue
+5. Document integration setup
 
 ### For Users
 
-- v0.1.33 brings backend model auto-update and context compression:
+- v0.1.34 brings OpenAI-compatible server:
 
-  **Backend Model List Auto-Update:**
-  - Automatic model listing from provider APIs
-  - Extended coverage beyond OpenRouter
-  - Third-party wrapper support
-  - Clear documentation for manual updates
-  - Reduced maintenance burden
-
-  **Automatic Context Compression:**
-  - Automatic compression for long conversations
-  - Intelligent summarization preserving key context
-  - Configurable thresholds and strategies
-  - Multi-agent conversation support
-  - Longer conversations without context overflow
+  **OpenAI-Compatible Chat Server:**
+  - Run MassGen as an OpenAI API server
+  - Integrate with Cursor, Continue, and other tools
+  - Drop-in replacement for OpenAI API
+  - Full streaming and tool calling support
 
 ---
 
@@ -220,11 +149,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 - Documentation guidelines
 
 **Contact Track Owner:**
-- Backend Model List Auto-Update & Automatic Context Compression: @ncrispino on Discord (nickcrispino)
+- OpenAI-Compatible Server: @ncrispino on Discord (nickcrispino)
 
 ---
 
-*This roadmap reflects v0.1.33 priorities focusing on backend model auto-update and automatic context compression.*
+*This roadmap reflects v0.1.34 priorities focusing on OpenAI-compatible chat server.*
 
-**Last Updated:** December 31, 2025
+**Last Updated:** January 2, 2026
 **Maintained By:** MassGen Team
