@@ -30,7 +30,20 @@ from typing import (
 )
 
 import httpx
-import logfire
+
+try:
+    import logfire
+    LOGFIRE_AVAILABLE = True
+except ImportError:
+    LOGFIRE_AVAILABLE = False
+    # Create a no-op context manager when logfire is not available
+    class _NoOpLogfire:
+        @staticmethod
+        def span(*args, **kwargs):
+            from contextlib import nullcontext
+            return nullcontext()
+    logfire = _NoOpLogfire()
+
 from pydantic import BaseModel
 
 from ..filesystem_manager._constants import (
