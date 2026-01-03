@@ -1,0 +1,220 @@
+language: "en-US"
+
+reviews:
+  profile: "chill"
+  high_level_summary: true
+  collapse_walkthrough: true
+  poem: false
+  review_status: true
+  assess_linked_issues: true
+  related_prs: true
+  suggested_labels: true
+  suggested_reviewers: true
+
+  auto_title_instructions: |
+    Format: "<category>: <title>". Category must be one of: feat, fix,
+    docs, style, refactor, perf, test, build, ci, chore, revert.
+    Title should be concise (<= 80 chars).
+
+  path_filters:
+    - "!**/*.json"
+    - "!**/*.lock"
+    - "!**/node_modules/**"
+    - "!docs/_build/**"
+    - "!**/__pycache__/**"
+
+  path_instructions:
+    # Core Python code
+    - path: "massgen/**/*.py"
+      instructions: |
+        Review Python code for:
+        - PEP 8 compliance and Google-style docstrings
+        - Proper async/await patterns
+        - Type hints where appropriate
+        - No security vulnerabilities (command injection, etc.)
+        - Consistency with existing code patterns
+
+    # Backend implementations - check capabilities registry
+    - path: "massgen/backend/**/*.py"
+      instructions: |
+        Backend code review - CHECK FOR THESE UPDATES:
+        1. If adding new model support → ensure massgen/backend/capabilities.py is updated
+        2. If adding new capabilities → update supported_capabilities in capabilities.py
+        3. Verify inheritance from base classes is correct
+        4. Check streaming buffer usage where applicable
+        5. Ensure error handling follows existing patterns
+
+    # Token manager - check pricing updates
+    - path: "massgen/token_manager/**/*.py"
+      instructions: |
+        Token manager changes - VERIFY:
+        1. New models should check LiteLLM database first before adding to PROVIDER_PRICING
+        2. Pricing is in per-1K tokens format (not per-token)
+        3. Provider names use correct casing: "OpenAI", "Anthropic", "Google", "xAI"
+        4. Context windows and max output tokens are accurate
+
+    # Config validator - ensure schema is updated
+    - path: "massgen/config_validator.py"
+      instructions: |
+        Config validator changes - CHECK:
+        1. New parameters added here must also be added to:
+           - massgen/backend/base.py → get_base_excluded_config_params()
+           - massgen/api_params_handler/_api_params_handler_base.py → get_base_excluded_config_params()
+        2. Ensure validation error messages are helpful
+
+    # Tests
+    - path: "massgen/tests/**/*.py"
+      instructions: |
+        Verify tests use pytest best practices:
+        - @pytest.mark.expensive for API-calling tests
+        - @pytest.mark.docker for Docker-dependent tests
+        - @pytest.mark.asyncio for async tests
+        - Clear test descriptions and proper fixtures
+
+    # YAML configs - validate structure
+    - path: "massgen/configs/**/*.yaml"
+      instructions: |
+        Validate YAML configs follow MassGen conventions:
+        1. Property placement: cwd at BACKEND-level, context_paths at ORCHESTRATOR-level
+        2. Prefer cost-effective models (gpt-5-nano, gpt-5-mini, gemini-2.5-flash)
+        3. All agents should have identical system_message for multi-agent setups
+        4. Never reference legacy paths or massgen v1
+        5. Include "What happens" comments explaining execution flow
+
+    # Sphinx documentation
+    - path: "docs/source/**/*.rst"
+      instructions: |
+        RST documentation review:
+        1. Ensure proper RST syntax
+        2. Check cross-references are valid
+        3. Verify code examples are runnable and match current implementation
+        4. For new features, ensure docs/source/index.rst "Recent Releases" is updated
+
+        Documentation quality:
+        - Keep explanations concise - avoid bloated prose
+        - Remove redundant or duplicate information
+        - Ensure file paths and parameter names match actual code
+        - Flag any examples that may be outdated or inconsistent with implementation
+
+    # User guides - check completeness and accuracy
+    - path: "docs/source/user_guide/**/*.rst"
+      instructions: |
+        User guide documentation review:
+
+        Completeness:
+        - Clear explanations with working code examples
+        - Expected output where applicable
+        - Links to related configuration examples
+
+        Consistency with implementation:
+        - Parameter names must match actual code
+        - File paths must be accurate
+        - Behavior descriptions must match what the code does
+        - Flag any discrepancies between docs and implementation
+
+        Usability:
+        - Include runnable commands users can try immediately
+        - Provide architecture diagrams for complex features
+        - Show expected output so users know what to expect
+
+        Conciseness:
+        - Avoid over-documentation and bloated explanations
+        - One clear explanation is better than multiple redundant ones
+        - Remove filler text and unnecessary verbosity
+
+    # Case studies
+    - path: "docs/source/examples/case_studies/**/*.md"
+      instructions: |
+        Case study review:
+        1. Follow the template in case-study-template.md
+        2. Include real usage examples
+        3. Show configuration used
+        4. Document outcomes and results
+
+    # README updates (only required for release PRs)
+    - path: "README.md"
+      instructions: |
+        README changes are typically only required for release PRs (branches named dev/v0.1.X, e.g., dev/v0.1.33).
+        For release PRs, verify:
+        1. Recent Achievements section is updated for new features
+        2. Case study links are added if applicable
+        3. Configuration examples are accurate
+        Note: README_PYPI.md is auto-synced via pre-commit hook
+
+    # CHANGELOG (only required for release PRs)
+    - path: "CHANGELOG.md"
+      instructions: |
+        CHANGELOG updates are typically only required for release PRs (branches named dev/v0.1.X, e.g., dev/v0.1.33).
+        For release PRs, verify:
+        1. Follow Keep a Changelog format
+        2. Categories: Added, Changed, Fixed, Documentations/Configurations/Resources, Technical Details
+        3. Include file paths for all changes
+        4. Reference issue/PR numbers
+
+    # Skills
+    - path: "massgen/skills/**/*.md"
+      instructions: |
+        Skill documentation review:
+        - Verify SKILL.md frontmatter is complete (name, description)
+        - Check workflow steps are clear and actionable
+        - Ensure reference files are accurate
+
+  ignore_title_keywords:
+    - "WIP"
+    - "DO NOT MERGE"
+    - "[skip ci]"
+    - "[skip review]"
+
+  drafts: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+
+pre_merge_checks:
+  custom_checks:
+    - name: "Documentation Updated"
+      mode: "warning"
+      instructions: |
+        Verify appropriate documentation is included for the changes:
+
+        User-facing changes:
+        - New features → docs/source/user_guide/ RST updates
+        - New YAML params → docs/source/reference/yaml_schema.rst
+        - New models → massgen/backend/capabilities.py (and token_manager.py if pricing needed)
+        - Breaking changes → migration guide in docs
+
+        Internal/architectural changes:
+        - Complex features → design doc in docs/dev_notes/
+        - New/changed functions → Google-style docstrings
+        - New config options → example YAML in massgen/configs/
+
+        Note: README.md and CHANGELOG.md are only updated in release PRs (dev/v0.1.X branches).
+
+    - name: "Capabilities Registry Check"
+      mode: "warning"
+      instructions: |
+        If backend or model changes are detected:
+        1. Check massgen/backend/capabilities.py is updated with new models/capabilities
+        2. Check massgen/token_manager/token_manager.py if pricing needed
+        3. Run: uv run pytest massgen/tests/test_backend_capabilities.py -v
+
+    - name: "Config Parameter Sync"
+      mode: "warning"
+      instructions: |
+        If new YAML parameters are added, verify BOTH files are updated:
+        1. massgen/backend/base.py → get_base_excluded_config_params()
+        2. massgen/api_params_handler/_api_params_handler_base.py → get_base_excluded_config_params()
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
+      - "docs/dev_notes/release_checklist.md"
+      - "docs/source/development/writing_configs.rst"
+
+chat:
+  auto_reply: true
+
+early_access: false
