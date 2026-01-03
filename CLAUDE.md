@@ -21,6 +21,9 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
+## Planning
+When planning or creating specs, use AskUserQuestions to ensure you align with the user before creating full planning files.
+
 ## Project Overview
 
 MassGen is a multi-agent system that coordinates multiple AI agents to solve complex tasks through parallel processing, intelligence sharing, and consensus building. Agents work simultaneously, observe each other's progress, and vote to converge on the best solution.
