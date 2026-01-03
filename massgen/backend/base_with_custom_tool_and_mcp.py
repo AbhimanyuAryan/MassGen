@@ -137,6 +137,10 @@ class ExecutionContext(BaseModel):
     allowed_paths: Optional[List[str]] = None  # Allowed paths for file access
     multimodal_config: Optional[Dict[str, Any]] = None  # Multimodal generation config
 
+    # Task context for external API calls (multimodal tools, subagents)
+    # Loaded from CONTEXT.md in the workspace
+    task_context: Optional[str] = None
+
     # These will be computed after initialization
     system_messages: Optional[List[Dict[str, Any]]] = None
     user_messages: Optional[List[Dict[str, Any]]] = None
@@ -154,6 +158,7 @@ class ExecutionContext(BaseModel):
         agent_cwd: Optional[str] = None,
         allowed_paths: Optional[List[str]] = None,
         multimodal_config: Optional[Dict[str, Any]] = None,
+        task_context: Optional[str] = None,
     ):
         """Initialize execution context."""
         super().__init__(
@@ -167,6 +172,7 @@ class ExecutionContext(BaseModel):
             agent_cwd=agent_cwd,
             allowed_paths=allowed_paths,
             multimodal_config=multimodal_config,
+            task_context=task_context,
         )
         # Now you can process messages after Pydantic initialization
         self._process_messages()
@@ -2927,6 +2933,17 @@ class CustomToolAndMCPBackend(LLMBackend):
 
         agent_id = kwargs.get("agent_id", None)
 
+        # Load task context from CONTEXT.md if it exists (for multimodal tools and subagents)
+        task_context = None
+        if self.filesystem_manager and self.filesystem_manager.cwd:
+            from massgen.context.task_context import load_task_context
+
+            # Load context if available, but don't require it here (tools will require it)
+            task_context = load_task_context(
+                str(self.filesystem_manager.cwd),
+                required=False,
+            )
+
         # Build execution context for tools (generic, not tool-specific)
         self._execution_context = ExecutionContext(
             messages=messages,
@@ -2947,6 +2964,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 else None
             ),
             multimodal_config=self._multimodal_config if hasattr(self, "_multimodal_config") else None,
+            task_context=task_context,
         )
 
         log_backend_activity(

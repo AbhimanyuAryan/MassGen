@@ -105,7 +105,7 @@ When adding new YAML parameters, update **both**:
 ## Workflow Guidelines
 
 1. **Prioritize specs and TDD** - Write tests before implementation for complex features
-2. **Keep PR_DRAFT.md updated** - Create a PR_DRAFT.md that references each new feature with corresponding Linear (e.g., MAS-XXX) and GitHub issue numbers. Keep this updated as new features are added. You may need to ask the user whether to overwrite or append to this file.
+2. **Keep PR_DRAFT.md updated** - Create a PR_DRAFT.md that references each new feature with corresponding Linear (e.g., `Closes MAS-XXX`) and GitHub issue numbers. Keep this updated as new features are added. You may need to ask the user whether to overwrite or append to this file.
 3. **Review PRs** with `pr-review-toolkit:review-pr` and `/pr-comments`
 4. **Git staging**: Use `git add -u .` for modified tracked files
 

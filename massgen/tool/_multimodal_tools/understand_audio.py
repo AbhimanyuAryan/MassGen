@@ -163,6 +163,7 @@ async def understand_audio(
     backend_type: Optional[str] = None,
     allowed_paths: Optional[List[str]] = None,
     agent_cwd: Optional[str] = None,
+    task_context: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Transcribe/analyze audio file(s) using the best available backend.
@@ -306,18 +307,23 @@ async def understand_audio(
         transcriptions = []
         default_prompt = prompt or "Transcribe this audio file. Include speaker identification if multiple speakers are present."
 
+        # Inject task context into prompt if available
+        from massgen.context.task_context import format_prompt_with_context
+
+        augmented_prompt = format_prompt_with_context(default_prompt, task_context)
+
         for audio_path in validated_audio_paths:
             try:
                 if selected_backend == "gemini":
                     transcription = await _process_with_gemini(
                         audio_path=audio_path,
-                        prompt=default_prompt,
+                        prompt=augmented_prompt,
                         model=selected_model,
                     )
                 else:  # openai
                     transcription = await _process_with_openai(
                         audio_path=audio_path,
-                        prompt=default_prompt,
+                        prompt=augmented_prompt,
                         model=selected_model,
                     )
 

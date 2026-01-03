@@ -230,6 +230,9 @@ class SubagentManager:
         """
         Copy context files from parent workspace to subagent workspace.
 
+        Also automatically copies CONTEXT.md if it exists in parent workspace,
+        ensuring subagents have task context for external API calls.
+
         Args:
             subagent_id: Subagent identifier
             context_files: List of relative paths to copy
@@ -239,6 +242,18 @@ class SubagentManager:
             List of successfully copied files
         """
         copied = []
+
+        # Auto-copy CONTEXT.md if it exists (for task context)
+        context_md = self.parent_workspace / "CONTEXT.md"
+        if context_md.exists() and context_md.is_file():
+            dst = workspace / "CONTEXT.md"
+            try:
+                shutil.copy2(context_md, dst)
+                copied.append("CONTEXT.md")
+                logger.info(f"[SubagentManager] Auto-copied CONTEXT.md for {subagent_id}")
+            except Exception as e:
+                logger.warning(f"[SubagentManager] Failed to copy CONTEXT.md: {e}")
+
         for rel_path in context_files:
             src = self.parent_workspace / rel_path
             if not src.exists():
@@ -265,7 +280,7 @@ class SubagentManager:
         logger.info(f"[SubagentManager] Copied {len(copied)} context files for {subagent_id}")
         return copied
 
-    def _build_subagent_system_prompt(self, config: SubagentConfig) -> str:
+    def _build_subagent_system_prompt(self, config: SubagentConfig, workspace: Optional[Path] = None) -> str:
         """
         Build system prompt for subagent.
 
@@ -274,18 +289,35 @@ class SubagentManager:
 
         Args:
             config: Subagent configuration
+            workspace: Optional workspace path to read CONTEXT.md from
 
         Returns:
             System prompt string
         """
         base_prompt = config.system_prompt
 
-        # Build context section if provided
+        # Build context section - prefer CONTEXT.md if available, fall back to config.context
         context_section = ""
-        if config.context:
+        task_context = None
+
+        # Try to read CONTEXT.md from workspace
+        if workspace:
+            context_md = workspace / "CONTEXT.md"
+            if context_md.exists() and context_md.is_file():
+                try:
+                    task_context = context_md.read_text().strip()
+                    if len(task_context) > 10000:
+                        task_context = task_context[:10000]
+                        logger.warning("[SubagentManager] CONTEXT.md truncated to 10000 chars")
+                except Exception as e:
+                    logger.warning(f"[SubagentManager] Failed to read CONTEXT.md: {e}")
+
+        # Use CONTEXT.md content if available, otherwise fall back to config.context
+        context_content = task_context or config.context
+        if context_content:
             context_section = f"""
-**Project Context:**
-{config.context}
+**Task Context:**
+{context_content}
 
 """
 
@@ -406,7 +438,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         )
 
         # Build the task - system prompt already includes the task at the end
-        system_prompt = self._build_subagent_system_prompt(config)
+        # Pass workspace to read CONTEXT.md for task context
+        system_prompt = self._build_subagent_system_prompt(config, workspace)
         full_task = system_prompt
 
         # Build command to run MassGen as subprocess

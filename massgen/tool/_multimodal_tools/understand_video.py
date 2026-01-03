@@ -447,6 +447,7 @@ async def understand_video(
     backend_type: Optional[str] = None,
     allowed_paths: Optional[List[str]] = None,
     agent_cwd: Optional[str] = None,
+    task_context: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Understand and analyze a video using the best available backend.
@@ -574,39 +575,44 @@ async def understand_video(
                 output_blocks=[TextContent(data=json.dumps(result, indent=2))],
             )
 
+        # Inject task context into prompt if available
+        from massgen.context.task_context import format_prompt_with_context
+
+        augmented_prompt = format_prompt_with_context(prompt, task_context)
+
         # Process video with the selected backend
         try:
             if selected_backend == "gemini":
                 response_text = await _process_with_gemini(
                     video_path=vid_path,
-                    prompt=prompt,
+                    prompt=augmented_prompt,
                     model=selected_model,
                 )
             elif selected_backend == "claude":
                 response_text = await _process_with_anthropic(
                     video_path=vid_path,
-                    prompt=prompt,
+                    prompt=augmented_prompt,
                     model=selected_model,
                     num_frames=num_frames,
                 )
             elif selected_backend == "grok":
                 response_text = await _process_with_grok(
                     video_path=vid_path,
-                    prompt=prompt,
+                    prompt=augmented_prompt,
                     model=selected_model,
                     num_frames=num_frames,
                 )
             elif selected_backend == "openrouter":
                 response_text = await _process_with_openrouter(
                     video_path=vid_path,
-                    prompt=prompt,
+                    prompt=augmented_prompt,
                     model=selected_model,
                     num_frames=num_frames,
                 )
             else:  # openai (default)
                 response_text = await _process_with_openai(
                     video_path=vid_path,
-                    prompt=prompt,
+                    prompt=augmented_prompt,
                     model=selected_model,
                     num_frames=num_frames,
                 )
