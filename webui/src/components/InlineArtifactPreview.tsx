@@ -33,6 +33,8 @@ interface InlineArtifactPreviewProps {
   // Optional: Enable live HTML preview with working relative links
   sessionId?: string;
   agentId?: string;
+  // Optional: Called when file is not found (404) - parent can clear selection
+  onFileNotFound?: () => void;
 }
 
 type ViewMode = 'preview' | 'source';
@@ -121,6 +123,7 @@ export function InlineArtifactPreview({
   onFullscreen,
   sessionId,
   agentId,
+  onFileNotFound,
 }: InlineArtifactPreviewProps) {
   const { content, isLoading, error, fetchFile, clearContent } = useFileContent();
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -407,12 +410,30 @@ export function InlineArtifactPreview({
     );
   }
 
-  // Error state
+  // Error state - silently recover from 404s, show error for other failures
   if (error) {
+    const is404 = error.toLowerCase().includes('not found') || error.includes('404');
+
+    // For 404s: silently clear selection and show empty state
+    // This handles race conditions where file was deleted after appearing in list
+    if (is404 && onFileNotFound) {
+      // Call the callback to clear selection in parent
+      // Use setTimeout to avoid state update during render
+      setTimeout(() => onFileNotFound(), 0);
+      // Return empty state while parent updates
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-gray-500">
+          <Eye className="w-12 h-12 mb-4 opacity-50" />
+          <span>Select a file to preview</span>
+        </div>
+      );
+    }
+
+    // For other errors, show error UI
     return (
-      <div className="flex flex-col items-center justify-center h-full text-red-400">
-        <AlertCircle className="w-8 h-8 mb-3" />
-        <span className="font-medium">Failed to load file</span>
+      <div className="flex flex-col items-center justify-center h-full text-gray-400">
+        <AlertCircle className="w-8 h-8 mb-3 text-red-400" />
+        <span className="font-medium text-red-400">Failed to load file</span>
         <span className="text-sm text-gray-500 mt-1">{error}</span>
       </div>
     );

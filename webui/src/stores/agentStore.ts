@@ -20,6 +20,7 @@ import type {
   WSEvent,
 } from '../types';
 import { useNotificationStore } from './notificationStore';
+import { useWorkspaceStore } from './workspaceStore';
 
 interface AgentStore extends SessionState {
   // Actions
@@ -247,7 +248,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       let agentsWithClearedVotes = state.agents;
 
       if (isNewRound) {
-        console.log('[DEBUG] Starting new voting round - resetting vote distribution');
         baseDistribution = {};
         // Clear voteTarget for all agents so we can track who has voted in this new round
         agentsWithClearedVotes = { ...state.agents };
@@ -310,7 +310,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       if (currentRound && currentRound.label === 'current') {
         // Current round is still "current" (not finalized) - just rename it to 'final'
         // This preserves any content that's already streaming
-        console.log('[DEBUG] setConsensus: Renaming current round to final');
         set((state) => {
           const agentState = state.agents[winnerId];
           if (!agentState) return state;
@@ -331,7 +330,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       } else {
         // Current round is already finalized (e.g., 'vote1.1')
         // Create a new 'final' round for the final answer content
-        console.log('[DEBUG] setConsensus: Creating new final round (current is finalized)');
         store.startNewRound(winnerId, 'final', 'final');
       }
     }
@@ -341,7 +339,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
     // ALWAYS switch to finalStreaming view to show winner generating their final answer
     // The transition to finalComplete happens after fetchCleanFinalAnswer succeeds
-    console.log('[DEBUG] setConsensus: Switching to finalStreaming');
     set({ viewMode: 'finalStreaming' });
   },
 
@@ -481,7 +478,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       // This is the right time because the answer file has been written to disk
       // The transition to finalComplete will happen AFTER the answer is fetched
       if (currentState.selectedAgent) {
-        console.log('[DEBUG] setComplete: Fetching clean final answer');
         get().fetchCleanFinalAnswer();
       }
     } else {
@@ -506,7 +502,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       if (response.ok) {
         const data = await response.json();
         if (data.answer) {
-          console.log('[DEBUG] Fetched clean final answer from API');
           // Update the final answer with the clean version
           set({ finalAnswer: data.answer });
 
@@ -522,16 +517,13 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             }));
           }
         }
-      } else {
-        console.log('[DEBUG] API returned non-OK status, using streamed content');
       }
     } catch (err) {
-      console.error('[DEBUG] Failed to fetch clean final answer:', err);
+      console.error('Failed to fetch clean final answer:', err);
     }
 
     // ALWAYS transition to finalComplete when coordination is done
     // Even if the API call failed, we have the streamed content
-    console.log('[DEBUG] Transitioning to finalComplete');
     set({ viewMode: 'finalComplete' });
   },
 
@@ -539,15 +531,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     set((state) => {
       const agent = state.agents[agentId];
       if (!agent) return state;
-
-      // DEBUG: Log the start of new round creation
-      console.log(`[DEBUG] startNewRound called:`, {
-        agentId,
-        roundType,
-        customLabel,
-        currentRoundId: agent.currentRoundId,
-        currentRounds: agent.rounds.map(r => ({ id: r.id, label: r.label, hasEndTimestamp: !!r.endTimestamp })),
-      });
 
       const agentIndex = state.agentOrder.indexOf(agentId) + 1;
 
@@ -602,13 +585,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       // For "final" rounds: winner will stream their final answer here
       // For other rounds: agent continues working, content streams here
 
-      // DEBUG: Log what we're creating
-      console.log(`[DEBUG] startNewRound creating:`, {
-        newRoundId,
-        newRoundLabel,
-        totalRoundsAfter: updatedRounds.length + 1,
-      });
-
       return {
         agents: {
           ...state.agents,
@@ -631,18 +607,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       if (!agent) return state;
 
       const now = Date.now();
-
-      // DEBUG: Log the finalization
       const currentRound = agent.rounds.find(r => r.id === agent.currentRoundId);
-      console.log(`[DEBUG] finalizeRoundWithLabel called:`, {
-        agentId,
-        label,
-        createNewRound,
-        currentRoundId: agent.currentRoundId,
-        currentRoundLabel: currentRound?.label,
-        currentRoundContentPreview: currentRound?.content?.substring(0, 100),
-        allRounds: agent.rounds.map(r => ({ id: r.id, label: r.label, contentLen: r.content?.length })),
-      });
 
       // Close current round with the provided label
       const updatedRounds = agent.rounds.map((round) => {
@@ -829,11 +794,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   processWSEvent: (event) => {
     const store = get();
 
-    // DEBUG: Log all WebSocket events (except high-frequency ones)
-    if (event.type !== 'agent_content' && event.type !== 'keepalive') {
-      console.log(`[DEBUG] WebSocket event:`, event.type, event);
-    }
-
     switch (event.type) {
       case 'preparation_status':
         if ('status' in event) {
@@ -897,7 +857,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         break;
 
       case 'vote_cast':
-        console.log(`[DEBUG] vote_cast event received:`, event);
         if ('voter_id' in event && 'target_id' in event) {
           // Get the agent to calculate vote number and agent index for label
           const votingAgent = get().agents[event.voter_id];
@@ -906,8 +865,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
           // Format vote label like answers: vote{agentIndex}.{voteNumber}
           const voteLabel = `vote${agentIndex}.${voteNumber}`;
-
-          console.log(`[DEBUG] Processing vote_cast for ${event.voter_id}, label=${voteLabel}`);
 
           // Finalize current round as a vote round - don't create new round since voting is done
           store.finalizeRoundWithLabel(event.voter_id, voteLabel, false);
@@ -957,7 +914,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         break;
 
       case 'new_answer':
-        console.log(`[DEBUG] new_answer event received:`, event);
         if ('agent_id' in event && 'content' in event) {
           const newAnswerEvent = event as {
             agent_id: string;
@@ -973,7 +929,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           // which will be handled by consensus_reached, so skip creating a new round
           const agentState = get().agents[newAnswerEvent.agent_id];
           if (agentState && agentState.voteCount > 0) {
-            console.log(`[DEBUG] Skipping new_answer for ${newAnswerEvent.agent_id} - agent has already voted (voteCount=${agentState.voteCount}), final answer handled by consensus_reached`);
             break;
           }
 
@@ -984,8 +939,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           // Use backend label if provided, otherwise generate one
           const answerLabel = newAnswerEvent.answer_label
             || `answer${agentIndex}.${answerNumber}`;
-
-          console.log(`[DEBUG] Processing new_answer for ${newAnswerEvent.agent_id}, label=${answerLabel}, answerNumber=${answerNumber}`);
 
           // Finalize the current round with the proper answer label
           store.finalizeRoundWithLabel(newAnswerEvent.agent_id, answerLabel);
@@ -1000,6 +953,18 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             votes: 0,
             workspacePath: newAnswerEvent.workspace_path,
           });
+
+          // Add historical snapshot to workspace store for this answer
+          if (newAnswerEvent.workspace_path) {
+            const timestamp = newAnswerEvent.timestamp < 1e12
+              ? newAnswerEvent.timestamp * 1000
+              : newAnswerEvent.timestamp;
+            useWorkspaceStore.getState().addHistoricalSnapshot(
+              answerLabel,
+              newAnswerEvent.workspace_path,
+              timestamp
+            );
+          }
 
           // Show notification for new answer
           const agent = get().agents[newAnswerEvent.agent_id];
@@ -1175,11 +1140,20 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             // If we have a selected agent but no final answer yet,
             // fetch the final answer from the API (it may have been saved to disk)
             set({ restoredFromSnapshot: true });
-            fetch(`/api/sessions/${snapshot.session_id}/final-answer`)
+            // Capture session ID to check for staleness when response arrives
+            const fetchSessionId = snapshot.session_id;
+            const fetchSelectedAgent = snapshot.selected_agent;
+            fetch(`/api/sessions/${fetchSessionId}/final-answer`)
               .then(res => res.json())
               .then(data => {
+                // Check if we're still on the same session before updating state
+                const currentState = get();
+                if (currentState.sessionId !== fetchSessionId) {
+                  // Session changed while fetch was in-flight, ignore stale response
+                  return;
+                }
                 if (data.answer) {
-                  store.setFinalAnswer(data.answer, {}, snapshot.selected_agent!);
+                  store.setFinalAnswer(data.answer, {}, fetchSelectedAgent);
                   store.setComplete(true);
                 }
               })

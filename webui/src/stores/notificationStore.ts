@@ -29,6 +29,9 @@ interface NotificationStore {
   clearAll: () => void;
 }
 
+// Track auto-remove timers so they can be cancelled when notification is manually removed
+const notificationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export const useNotificationStore = create<NotificationStore>((set) => ({
   notifications: [],
 
@@ -44,21 +47,32 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
       notifications: [...state.notifications, newNotification],
     }));
 
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
+    // Auto-remove after 5 seconds, but track the timer so it can be cancelled
+    const timerId = setTimeout(() => {
+      notificationTimers.delete(id);
       set((state) => ({
         notifications: state.notifications.filter((n) => n.id !== id),
       }));
     }, 5000);
+    notificationTimers.set(id, timerId);
   },
 
   removeNotification: (id) => {
+    // Cancel the auto-remove timer if it exists
+    const timerId = notificationTimers.get(id);
+    if (timerId) {
+      clearTimeout(timerId);
+      notificationTimers.delete(id);
+    }
     set((state) => ({
       notifications: state.notifications.filter((n) => n.id !== id),
     }));
   },
 
   clearAll: () => {
+    // Cancel all pending timers
+    notificationTimers.forEach((timerId) => clearTimeout(timerId));
+    notificationTimers.clear();
     set({ notifications: [] });
   },
 }));

@@ -24,7 +24,9 @@ import { ConversationHistory } from './components/ConversationHistory';
 import { AutomationView } from './components/AutomationView';
 import { ConfigEditorModal } from './components/ConfigEditorModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useWorkspaceConnection } from './hooks/useWorkspaceConnection';
 import { useWizardStore } from './stores/wizardStore';
+import { debugLog } from './utils/debugLogger';
 import type { Notification } from './stores/notificationStore';
 
 function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
@@ -89,6 +91,15 @@ export function App() {
 
   // Wizard store - for auto-opening wizard via URL param
   const openWizard = useWizardStore((s) => s.openWizard);
+
+  // Always-on workspace WebSocket connection
+  // Connects when session exists, keeps file lists updated in background
+  useWorkspaceConnection();
+
+  // Sync session ID to debug logger for routing logs to session log_dir
+  useEffect(() => {
+    debugLog.setSessionId(sessionId);
+  }, [sessionId]);
 
   useEffect(() => {
     const effectiveTheme = getEffectiveTheme();

@@ -16,6 +16,7 @@ SKIP_DIRS_FOR_LOGGING = frozenset(
         # Package managers / dependencies
         "node_modules",
         ".pnpm",
+        ".pnpm-store",  # pnpm content-addressable store
         "vendor",  # PHP, Go
         "pkg",  # Go
         "target",  # Rust

@@ -22,6 +22,7 @@ export function ImagePreview({ content, fileName, mimeType }: ImagePreviewProps)
   // Create image source URL
   const imageSrc = useMemo(() => {
     if (!content) {
+      console.warn('ImagePreview: No content provided');
       return '';
     }
 
@@ -30,12 +31,29 @@ export function ImagePreview({ content, fileName, mimeType }: ImagePreviewProps)
       return content;
     }
 
+    // Validate base64 format before constructing data URL
+    // Remove whitespace first
+    const cleanContent = content.replace(/\s/g, '');
+
+    // Check if it looks like base64 (only contains valid chars)
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(cleanContent)) {
+      console.error('ImagePreview: Content does not look like valid base64:', {
+        contentLength: content.length,
+        firstChars: content.substring(0, 50),
+      });
+      return '';
+    }
+
     // Otherwise, assume it's base64 and construct data URL
     const type = mimeType || 'image/png';
-    return `data:${type};base64,${content}`;
+    return `data:${type};base64,${cleanContent}`;
   }, [content, mimeType]);
 
   const handleImageError = () => {
+    console.error('ImagePreview: Image failed to load', {
+      contentLength: content?.length,
+      mimeType,
+    });
     setLoadError('Failed to load image');
   };
 

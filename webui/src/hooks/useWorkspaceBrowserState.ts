@@ -192,6 +192,15 @@ function workspaceBrowserReducer(
           case 'delete':
             // Remove file from list
             newFiles = state.files.filter((f) => f.path !== file.path);
+            // If the deleted file was selected, clear the selection
+            if (state.selectedFilePath === file.path) {
+              return {
+                ...state,
+                files: newFiles,
+                selectedFilePath: null,
+                lastRefreshed: Date.now(),
+              };
+            }
             break;
 
           default:

@@ -27,6 +27,7 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
+from massgen.filesystem_manager._constants import SKIP_DIRS_FOR_LOGGING
 from massgen.frontend.displays.web_display import WebDisplay
 
 # Set up logging for workspace browser debugging
@@ -67,124 +68,75 @@ if not workspace_logger.handlers:
 
     workspace_logger.info(f"WebUI logs writing to: {_webui_log_file}")
 
-# Import watchdog for filesystem monitoring (optional - graceful fallback if not available)
-try:
-    from watchdog.events import FileSystemEventHandler
-    from watchdog.observers import Observer
-
-    WATCHDOG_AVAILABLE = True
-    workspace_logger.info("Watchdog available for filesystem monitoring")
-except ImportError:
-    WATCHDOG_AVAILABLE = False
-    Observer = None
-    FileSystemEventHandler = object
-    workspace_logger.warning("Watchdog not available - filesystem monitoring disabled")
+# Note: Watchdog/live file monitoring was removed for simplicity.
+# File lists are now pre-fetched on connect and refreshed on-demand.
+# See: specs/001-fix-workspace-browser/data-model.md
 
 
-class WorkspaceFileHandler(FileSystemEventHandler if WATCHDOG_AVAILABLE else object):
-    """Handler for filesystem events in workspace directories."""
+def _normalize_workspace_path(path: str) -> str:
+    """Normalize a workspace path for consistent storage and lookup.
 
-    def __init__(self, workspace_manager: "WorkspaceConnectionManager", workspace_path: str, session_id: str, loop: asyncio.AbstractEventLoop):
-        if WATCHDOG_AVAILABLE:
-            super().__init__()
-        self.workspace_manager = workspace_manager
-        self.workspace_path = Path(workspace_path)
-        self.session_id = session_id
-        self.loop = loop  # Store reference to the main event loop
-        self._event_count = 0
-        workspace_logger.info(
-            f"FileHandler CREATED for workspace={workspace_path}, session={session_id}",
-        )
+    Ensures paths are in a consistent format across HTTP API and WebSocket responses.
+    This fixes path mismatch issues where paths may differ in:
+    - Trailing slashes: "/path/to/workspace/" vs "/path/to/workspace"
+    - Multiple slashes: "/path//to///workspace" vs "/path/to/workspace"
 
-    def _get_relative_path(self, src_path: str) -> str:
-        """Get the relative path from workspace root."""
-        try:
-            return str(Path(src_path).relative_to(self.workspace_path))
-        except ValueError:
-            return src_path
+    Args:
+        path: The workspace path to normalize
 
-    def _get_file_info(self, src_path: str) -> dict:
-        """Get file info (size, modified time) for a file."""
-        try:
-            stat = Path(src_path).stat()
-            return {"size": stat.st_size, "modified": stat.st_mtime}
-        except Exception as e:
-            workspace_logger.warning(f"Could not get file info for {src_path}: {e}")
-            return None
+    Returns:
+        Normalized path string without trailing slashes
+    """
+    import re
 
-    def _schedule_broadcast(self, operation: str, src_path: str):
-        """Schedule a broadcast coroutine from the watchdog thread."""
-        import time as time_module
+    if not path:
+        return ""
+    # Remove trailing slashes
+    normalized = path.rstrip("/")
+    # Collapse multiple consecutive slashes into single slash
+    normalized = re.sub(r"/+", "/", normalized)
+    return normalized
 
-        schedule_time = time_module.time()
 
-        self._event_count += 1
-        rel_path = self._get_relative_path(src_path)
-        file_info = self._get_file_info(src_path) if operation != "delete" else None
+def _should_skip_workspace_path(file_path: Path) -> bool:
+    """Check if a file path should be skipped based on excluded directory patterns.
 
-        workspace_logger.debug(
-            f"[Event #{self._event_count}] {operation.upper()} detected: " f"file={rel_path}, session={self.session_id}, workspace={self.workspace_path.name}",
-        )
+    Uses SKIP_DIRS_FOR_LOGGING from _constants.py which includes node_modules,
+    .venv, __pycache__, and other large/irrelevant directories.
+    """
+    import fnmatch
 
-        coro = self.workspace_manager.broadcast_file_change(
-            self.session_id,
-            str(self.workspace_path),
-            rel_path,
-            operation,
-            file_info,
-        )
-        # Use run_coroutine_threadsafe to schedule from non-async thread
-        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
-
-        # Log completion and any delays
-        def on_done(f):
-            try:
-                f.result()
-                done_time = time_module.time()
-                delay_ms = (done_time - schedule_time) * 1000
-                if delay_ms > 100:  # Log if more than 100ms delay
-                    workspace_logger.warning(
-                        f"[Event #{self._event_count}] SLOW broadcast: {operation} {rel_path} " f"took {delay_ms:.0f}ms from schedule to completion",
-                    )
-            except Exception as e:
-                workspace_logger.error(f"Broadcast failed for {operation} {rel_path}: {e}")
-
-        future.add_done_callback(on_done)
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-        self._schedule_broadcast("create", event.src_path)
-
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        self._schedule_broadcast("modify", event.src_path)
-
-    def on_deleted(self, event):
-        if event.is_directory:
-            return
-        self._schedule_broadcast("delete", event.src_path)
+    for part in file_path.parts:
+        if part in SKIP_DIRS_FOR_LOGGING:
+            return True
+        # Also check glob patterns like *.egg-info
+        for pattern in SKIP_DIRS_FOR_LOGGING:
+            if "*" in pattern and fnmatch.fnmatch(part, pattern):
+                return True
+    return False
 
 
 class WorkspaceConnectionManager:
-    """Manages WebSocket connections for workspace file monitoring."""
+    """Manages WebSocket connections for workspace file listing.
+
+    Note: Live file monitoring via watchdog was removed for simplicity.
+    File lists are pre-fetched on connect and refreshed on-demand via
+    explicit refresh requests from the frontend.
+    """
 
     def __init__(self):
         # session_id -> set of WebSocket connections for workspace updates
         self.workspace_connections: Dict[str, Set[WebSocket]] = {}
-        # workspace_path -> Observer instance
-        self.observers: Dict[str, Any] = {}
-        # workspace_path -> set of session_ids watching it
-        self.watched_paths: Dict[str, Set[str]] = {}
-        # Store reference to the event loop for thread-safe scheduling
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Connection counter for logging
         self._connection_count = 0
         workspace_logger.info("WorkspaceConnectionManager initialized")
 
     async def connect(self, websocket: WebSocket, session_id: str, workspace_paths: list[str]) -> None:
-        """Accept and register a WebSocket connection for workspace monitoring."""
+        """Accept and register a WebSocket connection for workspace file listing.
+
+        Scans workspace directories and sends initial file list on connect.
+        No live file watching - frontend can request refresh when needed.
+        """
         self._connection_count += 1
         conn_id = self._connection_count
 
@@ -195,30 +147,26 @@ class WorkspaceConnectionManager:
         await websocket.accept()
         workspace_logger.debug(f"[Conn #{conn_id}] WebSocket accepted")
 
-        # Store reference to the event loop for thread-safe scheduling from watchdog
-        if self._loop is None:
-            self._loop = asyncio.get_running_loop()
-            workspace_logger.debug(f"[Conn #{conn_id}] Event loop captured")
-
         if session_id not in self.workspace_connections:
             self.workspace_connections[session_id] = set()
         self.workspace_connections[session_id].add(websocket)
 
-        # Start watching requested workspace paths and collect initial file lists
+        # Collect initial file lists from workspace paths
         watched = []
         initial_files: dict[str, list[dict]] = {}
         for path in workspace_paths:
+            # Normalize path for consistent key format across HTTP and WebSocket
+            normalized_path = _normalize_workspace_path(path)
             workspace_path = Path(path)
             if workspace_path.exists():
-                self._start_watching(path, session_id)
-                watched.append(path)
-                workspace_logger.debug(f"[Conn #{conn_id}] Path exists and watching: {path}")
+                watched.append(normalized_path)
+                workspace_logger.debug(f"[Conn #{conn_id}] Path exists: {normalized_path}")
 
                 # Collect initial file list for this workspace (non-blocking)
                 try:
                     files = []
                     for file_path in workspace_path.rglob("*"):
-                        if file_path.is_file():
+                        if file_path.is_file() and not _should_skip_workspace_path(file_path):
                             rel_path = file_path.relative_to(workspace_path)
                             stat = file_path.stat()
                             files.append(
@@ -228,13 +176,13 @@ class WorkspaceConnectionManager:
                                     "modified": stat.st_mtime,
                                 },
                             )
-                    initial_files[path] = files
+                    initial_files[normalized_path] = files
                     workspace_logger.debug(
                         f"[Conn #{conn_id}] Initial files for {workspace_path.name}: {len(files)} files",
                     )
                 except Exception as e:
-                    workspace_logger.warning(f"[Conn #{conn_id}] Failed to scan {path}: {e}")
-                    initial_files[path] = []
+                    workspace_logger.warning(f"[Conn #{conn_id}] Failed to scan {normalized_path}: {e}")
+                    initial_files[normalized_path] = []
             else:
                 workspace_logger.warning(f"[Conn #{conn_id}] Path does not exist, skipping: {path}")
 
@@ -256,162 +204,22 @@ class WorkspaceConnectionManager:
         )
 
     def disconnect(self, websocket: WebSocket, session_id: str) -> None:
-        """Remove a WebSocket connection and stop watching if no more clients."""
+        """Remove a WebSocket connection."""
         workspace_logger.info(f"WebSocket DISCONNECT: session={session_id}")
 
         if session_id in self.workspace_connections:
             self.workspace_connections[session_id].discard(websocket)
 
-            # If no more connections for this session, stop watching
+            # Clean up empty session entries
             if not self.workspace_connections[session_id]:
                 del self.workspace_connections[session_id]
-                workspace_logger.info(f"No more connections for session={session_id}, stopping watchers")
-                self._stop_watching_session(session_id)
+                workspace_logger.info(f"No more connections for session={session_id}")
         else:
             workspace_logger.warning(f"Disconnect called but session not found: {session_id}")
 
         workspace_logger.debug(
-            f"After disconnect: total_connections=" f"{sum(len(conns) for conns in self.workspace_connections.values())}, " f"total_observers={len(self.observers)}",
+            f"After disconnect: total_connections=" f"{sum(len(conns) for conns in self.workspace_connections.values())}",
         )
-
-    def _start_watching(self, workspace_path: str, session_id: str) -> None:
-        """Start watching a workspace directory for file changes."""
-        if not WATCHDOG_AVAILABLE:
-            workspace_logger.warning(f"Cannot watch {workspace_path}: watchdog not available")
-            return
-
-        if workspace_path not in self.watched_paths:
-            self.watched_paths[workspace_path] = set()
-
-        self.watched_paths[workspace_path].add(session_id)
-
-        # If already watching this path, no need to create new observer
-        if workspace_path in self.observers:
-            workspace_logger.debug(f"Already watching {workspace_path}, adding session {session_id}")
-            return
-
-        # Ensure we have an event loop reference
-        if self._loop is None:
-            workspace_logger.error(f"No event loop available for watching {workspace_path}")
-            return
-
-        # Create and start observer
-        try:
-            handler = WorkspaceFileHandler(self, workspace_path, session_id, self._loop)
-            observer = Observer()
-            observer.schedule(handler, workspace_path, recursive=True)
-            observer.start()
-            self.observers[workspace_path] = observer
-            workspace_logger.info(
-                f"Observer STARTED for {workspace_path} (session={session_id}), " f"total_observers={len(self.observers)}",
-            )
-        except Exception as e:
-            workspace_logger.error(f"Failed to start observer for {workspace_path}: {e}")
-
-    def _stop_watching_session(self, session_id: str) -> None:
-        """Stop watching paths that are no longer needed by any session."""
-        paths_to_remove = []
-
-        for workspace_path, sessions in self.watched_paths.items():
-            sessions.discard(session_id)
-            if not sessions:
-                paths_to_remove.append(workspace_path)
-
-        for path in paths_to_remove:
-            del self.watched_paths[path]
-            if path in self.observers:
-                try:
-                    self.observers[path].stop()
-                    self.observers[path].join(timeout=1)
-                    workspace_logger.info(f"Observer STOPPED for {path}")
-                except Exception as e:
-                    workspace_logger.error(f"Error stopping observer for {path}: {e}")
-                del self.observers[path]
-
-        workspace_logger.debug(
-            f"After cleanup: watched_paths={len(self.watched_paths)}, observers={len(self.observers)}",
-        )
-
-    async def broadcast_file_change(
-        self,
-        session_id: str,
-        workspace_path: str,
-        file_path: str,
-        operation: str,
-        file_info: Optional[dict],
-    ) -> None:
-        """Broadcast file change event to all connected clients for a session."""
-        import time as time_module
-
-        broadcast_start = time_module.time()
-
-        if session_id not in self.workspace_connections:
-            workspace_logger.warning(
-                f"BROADCAST skipped: session={session_id} has no connections, " f"file={file_path}, operation={operation}",
-            )
-            return
-
-        num_clients = len(self.workspace_connections[session_id])
-        workspace_logger.debug(
-            f"BROADCAST starting: {operation} {file_path} to {num_clients} client(s), " f"session={session_id}",
-        )
-
-        message = {
-            "type": "workspace_file_change",
-            "session_id": session_id,
-            "timestamp": time_module.time(),
-            "workspace_path": workspace_path,
-            "file_path": file_path,
-            "operation": operation,
-            "file_info": file_info,
-        }
-
-        disconnected = set()
-        sent_count = 0
-        # FIX: Copy the set to avoid "Set changed size during iteration" error
-        # This can happen when a client disconnects while we're broadcasting
-        connections_snapshot = list(self.workspace_connections.get(session_id, set()))
-        for websocket in connections_snapshot:
-            try:
-                await websocket.send_json(message)
-                sent_count += 1
-            except Exception as e:
-                workspace_logger.warning(f"BROADCAST failed to client: {e}")
-                disconnected.add(websocket)
-
-        # Clean up disconnected clients
-        if disconnected and session_id in self.workspace_connections:
-            self.workspace_connections[session_id] -= disconnected
-            workspace_logger.info(f"Removed {len(disconnected)} disconnected client(s)")
-
-        broadcast_duration = (time_module.time() - broadcast_start) * 1000
-        workspace_logger.info(
-            f"BROADCAST complete: {operation} {file_path} -> {sent_count}/{num_clients} clients, " f"duration={broadcast_duration:.1f}ms",
-        )
-
-    def add_workspace_path(self, session_id: str, workspace_path: str) -> None:
-        """Add a new workspace path to watch for an existing session."""
-        if session_id in self.workspace_connections and Path(workspace_path).exists():
-            workspace_logger.info(f"Adding workspace path: {workspace_path} for session={session_id}")
-            self._start_watching(workspace_path, session_id)
-        else:
-            workspace_logger.warning(
-                f"Cannot add workspace path: session={session_id} not connected or " f"path={workspace_path} does not exist",
-            )
-
-    def stop_all(self) -> None:
-        """Stop all observers (for shutdown)."""
-        workspace_logger.info(f"Stopping all observers ({len(self.observers)} total)")
-        for path, observer in self.observers.items():
-            try:
-                observer.stop()
-                observer.join(timeout=1)
-                workspace_logger.debug(f"Stopped observer for {path}")
-            except Exception as e:
-                workspace_logger.error(f"Error stopping observer for {path}: {e}")
-        self.observers.clear()
-        self.watched_paths.clear()
-        workspace_logger.info("All observers stopped")
 
 
 # Global workspace connection manager
@@ -475,14 +283,18 @@ class ConnectionManager:
             return
 
         disconnected = set()
-        for websocket in self.active_connections[session_id]:
+        # Take a snapshot to avoid "Set changed size during iteration" error
+        # This can happen if disconnect() is called while we're broadcasting
+        connections_snapshot = list(self.active_connections.get(session_id, set()))
+        for websocket in connections_snapshot:
             try:
                 await websocket.send_json(message)
             except Exception:
                 disconnected.add(websocket)
 
         # Clean up disconnected clients
-        self.active_connections[session_id] -= disconnected
+        if disconnected and session_id in self.active_connections:
+            self.active_connections[session_id] -= disconnected
 
     def get_display(self, session_id: str) -> Optional[WebDisplay]:
         """Get the WebDisplay for a session."""
@@ -1866,10 +1678,12 @@ def create_app(
                 workspace_paths = agent_info.get("workspace_paths", {})
                 workspace_path = workspace_paths.get("workspace")
                 if workspace_path and Path(workspace_path).exists():
+                    # Normalize path for consistent format across HTTP and WebSocket
+                    normalized_path = _normalize_workspace_path(workspace_path)
                     workspaces["current"].append(
                         {
                             "name": Path(workspace_path).name,
-                            "path": workspace_path,
+                            "path": normalized_path,
                             "type": "current",
                             "agentId": agent_id,
                         },
@@ -1928,7 +1742,7 @@ def create_app(
         workspace_mtime = workspace_path.stat().st_mtime
         try:
             for file_path in workspace_path.rglob("*"):
-                if file_path.is_file():
+                if file_path.is_file() and not _should_skip_workspace_path(file_path):
                     rel_path = file_path.relative_to(workspace_path)
                     stat = file_path.stat()
                     files.append(
@@ -1953,7 +1767,8 @@ def create_app(
 
         return {
             "files": files,
-            "workspace_path": str(workspace_path),
+            # Normalize path for consistent format across HTTP and WebSocket
+            "workspace_path": _normalize_workspace_path(str(workspace_path)),
             "workspace_mtime": workspace_mtime,
         }
 
@@ -2162,13 +1977,30 @@ def create_app(
             }
         """
         import mimetypes
+        import re
         import time as time_module
+        from urllib.parse import unquote
 
         request_start = time_module.time()
 
-        workspace_logger.info(f"FILE request: path={path}, workspace={Path(workspace).name}")
+        # Normalize paths to fix 404 issues from path format inconsistencies
+        # Handle URL encoding, trailing slashes, and multiple slashes
+        workspace = unquote(workspace).rstrip("/")
+        workspace = re.sub(r"/+", "/", workspace)
+        path = unquote(path).lstrip("/")
+        path = re.sub(r"/+", "/", path)
 
-        workspace_path = Path(workspace).resolve()
+        workspace_logger.info(f"FILE request: path={path}, workspace={workspace}")
+
+        # Handle both absolute and relative workspace paths
+        workspace_path = Path(workspace)
+        if not workspace_path.is_absolute():
+            # Relative paths are relative to the MassGen project root
+            massgen_root = Path(__file__).parent.parent.parent.parent
+            workspace_path = massgen_root / workspace
+        workspace_path = workspace_path.resolve()
+
+        workspace_logger.debug(f"FILE resolved workspace: {workspace_path}")
         file_path = (workspace_path / path).resolve()
 
         # Security: Ensure file is within workspace (prevent directory traversal)
@@ -2199,9 +2031,26 @@ def create_app(
         stat = file_path.stat()
         size = stat.st_size
 
-        # Detect MIME type
+        # Get file extension for MIME type and language detection
+        suffix = file_path.suffix.lower()
+
+        # Detect MIME type with fallbacks for common types that mimetypes may not know
         mime_type, _ = mimetypes.guess_type(str(file_path))
-        mime_type = mime_type or "application/octet-stream"
+        if mime_type is None:
+            # Fallback mappings for types that Python's mimetypes may not recognize
+            mime_fallbacks = {
+                ".md": "text/markdown",
+                ".markdown": "text/markdown",
+                ".mmd": "text/plain",  # Mermaid diagrams
+                ".mermaid": "text/plain",
+                ".yaml": "text/yaml",
+                ".yml": "text/yaml",
+                ".toml": "text/plain",
+                ".env": "text/plain",
+                ".tsx": "text/typescript",
+                ".jsx": "text/javascript",
+            }
+            mime_type = mime_fallbacks.get(suffix, "application/octet-stream")
 
         # Map extensions to syntax highlighting languages
         extension_to_language = {
@@ -2251,20 +2100,33 @@ def create_app(
             ".log": "plaintext",
         }
 
-        suffix = file_path.suffix.lower()
         language = extension_to_language.get(suffix, "plaintext")
 
         # Special case for Dockerfile without extension
         if file_path.name.lower() == "dockerfile":
             language = "dockerfile"
 
-        # Check if binary by reading first chunk
+        # Check if binary by mime type first, then by content
+        # Known binary mime type prefixes
+        binary_mime_prefixes = (
+            "image/",
+            "audio/",
+            "video/",
+            "application/pdf",
+            "application/zip",
+            "application/x-tar",
+            "application/gzip",
+            "application/octet-stream",
+            "application/vnd.",  # Office documents, etc.
+        )
+
         try:
             with open(file_path, "rb") as f:
                 chunk = f.read(8192)
 
-            # Check for null bytes (binary indicator)
-            is_binary = b"\x00" in chunk
+            # Check for null bytes OR known binary mime types
+            # PNG files don't have null bytes in header, so we need mime check
+            is_binary = b"\x00" in chunk or any(mime_type.startswith(prefix) for prefix in binary_mime_prefixes)
 
             if is_binary:
                 # For binary files, read and base64 encode the content
@@ -2835,6 +2697,54 @@ def create_app(
         except Exception as e:
             return JSONResponse(
                 {"error": f"Failed to open workspace: {str(e)}"},
+                status_code=500,
+            )
+
+    # Frontend debug logging endpoint - writes to webui_debug.log
+    # When session_id is provided and active, writes to the session's log_dir
+    # Otherwise falls back to the MassGen root directory
+    _fallback_log_file = Path(__file__).parent.parent.parent.parent / "webui_debug.log"
+
+    @app.post("/api/debug/log")
+    async def frontend_debug_log(request: Request):
+        """Log frontend debug messages to file for easier debugging.
+
+        Request body:
+        {
+            "level": "debug" | "info" | "warn" | "error",
+            "message": str,
+            "data": dict (optional),
+            "sessionId": str (optional - routes logs to session log_dir)
+        }
+        """
+        import datetime
+
+        try:
+            body = await request.json()
+            level = body.get("level", "info").upper()
+            message = body.get("message", "")
+            data = body.get("data")
+            session_id = body.get("sessionId")
+
+            # Determine log file location
+            log_file = _fallback_log_file
+            if session_id and session_id in manager.session_log_dirs:
+                session_dir = manager.session_log_dirs[session_id]
+                log_file = session_dir / "webui_debug.log"
+
+            timestamp = datetime.datetime.now().isoformat()
+            log_line = f"[{timestamp}] [{level}] {message}"
+            if data:
+                log_line += f" | {json.dumps(data)}"
+            log_line += "\n"
+
+            with open(log_file, "a") as f:
+                f.write(log_line)
+
+            return {"success": True}
+        except Exception as e:
+            return JSONResponse(
+                {"error": str(e)},
                 status_code=500,
             )
 
@@ -3673,22 +3583,37 @@ def create_app(
                 action = data.get("action")
                 workspace_logger.debug(f"WS message received: action={action}, session={session_id}")
 
-                if action == "watch":
-                    # Start watching additional paths
-                    # Support both "paths" and "workspace_paths" keys for compatibility
-                    paths = data.get("paths", []) or data.get("workspace_paths", [])
-                    workspace_logger.info(f"WS watch request: {len(paths)} paths for session={session_id}")
+                if action == "watch_session":
+                    # Watch all workspaces for this session (reads from status.json)
+                    # Frontend uses this on initial connect to get all workspace files
+                    workspace_logger.info(f"WS watch_session request for session={session_id}")
 
-                    # Collect initial files for each watched path
+                    # Re-read status.json to get current workspace paths
+                    session_paths: list[str] = []
+                    try:
+                        if log_session_dir:
+                            status_file = Path(log_session_dir) / "status.json"
+                            if status_file.exists():
+                                with open(status_file) as f:
+                                    status_data = json.load(f)
+                                agents_data = status_data.get("agents", {})
+                                for agent_id_key, agent_info in agents_data.items():
+                                    workspace_paths = agent_info.get("workspace_paths", {})
+                                    workspace_path = workspace_paths.get("workspace")
+                                    if workspace_path and Path(workspace_path).exists():
+                                        session_paths.append(workspace_path)
+                    except Exception as e:
+                        workspace_logger.warning(f"WS watch_session: failed to read status.json: {e}")
+
+                    # Collect initial files for each workspace
                     initial_files: dict[str, list[dict]] = {}
-                    for path in paths:
-                        workspace_manager.add_workspace_path(session_id, path)
+                    for path in session_paths:
                         workspace_path = Path(path)
                         if workspace_path.exists() and workspace_path.is_dir():
                             try:
                                 files = []
                                 for file_path in workspace_path.rglob("*"):
-                                    if file_path.is_file():
+                                    if file_path.is_file() and not _should_skip_workspace_path(file_path):
                                         rel_path = file_path.relative_to(workspace_path)
                                         stat = file_path.stat()
                                         files.append(
@@ -3698,13 +3623,65 @@ def create_app(
                                                 "modified": stat.st_mtime,
                                             },
                                         )
-                                initial_files[path] = files
+                                # Normalize path for consistent key format
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = files
+                                workspace_logger.debug(
+                                    f"WS watch_session: scanned {len(files)} files for {workspace_path.name}",
+                                )
+                            except Exception as e:
+                                workspace_logger.warning(f"WS watch_session: failed to scan {path}: {e}")
+                                # Use normalized path for error case too
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = []
+
+                    # Normalize watched_paths for consistency
+                    normalized_watched_paths = [_normalize_workspace_path(p) for p in session_paths]
+                    await websocket.send_json(
+                        {
+                            "type": "workspace_connected",
+                            "session_id": session_id,
+                            "timestamp": asyncio.get_event_loop().time(),
+                            "watched_paths": normalized_watched_paths,
+                            "initial_files": initial_files,
+                        },
+                    )
+                    workspace_logger.info(f"WS watch_session: sent {len(session_paths)} workspaces with files")
+
+                elif action == "watch":
+                    # Start watching additional paths
+                    # Support both "paths" and "workspace_paths" keys for compatibility
+                    paths = data.get("paths", []) or data.get("workspace_paths", [])
+                    workspace_logger.info(f"WS watch request: {len(paths)} paths for session={session_id}")
+
+                    # Collect initial files for each watched path
+                    initial_files: dict[str, list[dict]] = {}
+                    for path in paths:
+                        workspace_path = Path(path)
+                        if workspace_path.exists() and workspace_path.is_dir():
+                            try:
+                                files = []
+                                for file_path in workspace_path.rglob("*"):
+                                    if file_path.is_file() and not _should_skip_workspace_path(file_path):
+                                        rel_path = file_path.relative_to(workspace_path)
+                                        stat = file_path.stat()
+                                        files.append(
+                                            {
+                                                "path": str(rel_path),
+                                                "size": stat.st_size,
+                                                "modified": stat.st_mtime,
+                                            },
+                                        )
+                                # FIX: Normalize path for consistency with broadcasts
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = files
                                 workspace_logger.debug(
                                     f"WS watch: scanned {len(files)} files for {workspace_path.name}",
                                 )
                             except Exception as e:
                                 workspace_logger.warning(f"WS watch: failed to scan {path}: {e}")
-                                initial_files[path] = []
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = []
 
                     await websocket.send_json(
                         {
@@ -3719,13 +3696,15 @@ def create_app(
                 elif action == "refresh":
                     # Request a full file list for a workspace path
                     path = data.get("path")
-                    workspace_logger.info(f"WS refresh request: path={path}, session={session_id}")
-                    if path and Path(path).exists():
-                        workspace_path = Path(path)
+                    # FIX: Normalize path for consistency with broadcasts and initial_files
+                    normalized_path = _normalize_workspace_path(path) if path else None
+                    workspace_logger.info(f"WS refresh request: path={path}, normalized={normalized_path}, session={session_id}")
+                    if normalized_path and Path(normalized_path).exists():
+                        workspace_path = Path(normalized_path)
                         files = []
                         try:
                             for file_path in workspace_path.rglob("*"):
-                                if file_path.is_file():
+                                if file_path.is_file() and not _should_skip_workspace_path(file_path):
                                     rel_path = file_path.relative_to(workspace_path)
                                     stat = file_path.stat()
                                     files.append(
@@ -3742,7 +3721,7 @@ def create_app(
                                     "session_id": session_id,
                                     "timestamp": asyncio.get_event_loop().time(),
                                     "error": str(e),
-                                    "workspace_path": path,
+                                    "workspace_path": normalized_path,
                                 },
                             )
                             continue
@@ -3752,7 +3731,7 @@ def create_app(
                                 "type": "workspace_refresh",
                                 "session_id": session_id,
                                 "timestamp": asyncio.get_event_loop().time(),
-                                "workspace_path": path,
+                                "workspace_path": normalized_path,
                                 "files": files,
                             },
                         )
@@ -3763,7 +3742,7 @@ def create_app(
                                 "session_id": session_id,
                                 "timestamp": asyncio.get_event_loop().time(),
                                 "error": "Workspace path not found",
-                                "workspace_path": path,
+                                "workspace_path": normalized_path or path,
                             },
                         )
 

@@ -9,14 +9,15 @@ import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell, Wifi, WifiOff } from 'lucide-react';
 import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
-import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType, WorkspaceFileInfo, WorkspaceFileChangeEvent } from '../types';
+import { useWorkspaceStore, selectWsStatus, selectWsError } from '../stores/workspaceStore';
+import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType } from '../types';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { InlineArtifactPreview } from './InlineArtifactPreview';
 import { TimelineView } from './timeline';
 import { canPreviewFile } from '../utils/artifactTypes';
-import { clearFileCache, clearFileNotFound } from '../hooks/useFileContent';
-import { useWorkspaceWebSocket } from '../hooks/useWorkspaceWebSocket';
+import { clearFileCache } from '../hooks/useFileContent';
 import { createAbortableFetch, isAbortError } from '../utils/fetchWithAbort';
+import { debugLog } from '../utils/debugLogger';
 
 // Types for workspace API responses
 interface WorkspaceInfo {
@@ -95,6 +96,36 @@ interface FileTreeNode {
   children: FileTreeNode[];
   size?: number;
   modified?: number;
+}
+
+// Patterns for files/directories to hide in the workspace browser
+const HIDDEN_FILE_PATTERNS = [
+  /^\.mcp\//,           // MCP server config
+  /^\.mcp$/,
+  /^server\//,          // Backend server code
+  /^servers\//,         // MCP servers directory
+  /^servers$/,
+  /^custom_tools\//,    // Custom tools directory
+  /^custom_tools$/,
+  /^massgen\//,         // MassGen internal directory
+  /^massgen$/,
+  /^node_modules\//,    // Node dependencies
+  /^__pycache__\//,     // Python cache
+  /^\.git\//,           // Git internals
+  /^\.venv\//,          // Python virtual env
+  /^venv\//,
+  /^\.env$/,            // Environment files
+  /^\.env\./,
+  /\.pyc$/,             // Compiled Python
+  /\.tmp$/,             // Temporary files
+  /\.tmp\./,            // Temp files with extensions
+];
+
+// Filter out hidden/internal files from workspace
+function filterHiddenFiles(files: FileInfo[]): FileInfo[] {
+  return files.filter(file => {
+    return !HIDDEN_FILE_PATTERNS.some(pattern => pattern.test(file.path));
+  });
 }
 
 function buildFileTree(files: FileInfo[]): FileTreeNode[] {
@@ -245,6 +276,17 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const voteDistribution = useAgentStore(selectVoteDistribution);
   const sessionId = useAgentStore((s) => s.sessionId);
 
+  // Workspace store - always-on WebSocket provides real-time file updates
+  const wsStatus = useWorkspaceStore(selectWsStatus);
+  const wsError = useWorkspaceStore(selectWsError);
+  const wsReconnectAttempts = useWorkspaceStore((s) => s.reconnectAttempts);
+  const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
+  const historicalSnapshots = useWorkspaceStore((s) => s.historicalSnapshots);
+  const getWorkspaceFiles = useWorkspaceStore((s) => s.getWorkspaceFiles);
+  const getHistoricalFiles = useWorkspaceStore((s) => s.getHistoricalFiles);
+  const setSnapshotFiles = useWorkspaceStore((s) => s.setSnapshotFiles);
+  const refreshSessionFn = useWorkspaceStore((s) => s.refreshSessionFn);
+
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
 
   // Update active tab when initialTab changes (e.g., opening from notification)
@@ -267,11 +309,10 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [isOpen, activeTab, answers, expandedAnswerId]);
 
-  // Workspace state - now fetched from API
+  // Workspace state - API provides workspace info, store provides files
   const [workspaces, setWorkspaces] = useState<WorkspacesResponse>({ current: [], historical: [] });
-  const [workspaceFiles, setWorkspaceFiles] = useState<FileInfo[]>([]);
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
-  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [isLoadingHistoricalFiles, setIsLoadingHistoricalFiles] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [missingVersion, setMissingVersion] = useState<string | null>(null);
   const [logDirOverride, setLogDirOverride] = useState<string | null>(null);
@@ -292,8 +333,6 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const hasAutoPreviewedRef = useRef<string | null>(null);
   // Track previous workspace path to detect changes
   const prevWorkspacePathRef = useRef<string | null>(null);
-  // Track last browsed workspace path to avoid repeated empty fetch loops
-  const lastBrowsedPathRef = useRef<string | null>(null);
 
   // New answer notification state
   const [newAnswerNotification, setNewAnswerNotification] = useState<{
@@ -302,35 +341,30 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     agentId: string;
   } | null>(null);
   // Track per-agent answer counts for new answer detection
+  // Value of -1 means "not yet initialized" (different from 0 answers)
   const lastKnownAgentAnswerCountRef = useRef<Record<string, number>>({});
   // Track previous selected agent to detect agent switches
   const prevSelectedAgentRef = useRef<string | null>(null);
 
-  // AbortController ref for cancelling in-flight fetch requests
+  // AbortController ref for cancelling in-flight fetch requests (historical workspaces)
   const fetchAbortRef = useRef<(() => void) | null>(null);
   // Request ID to prevent stale finally blocks from clearing loading state
   const fetchRequestIdRef = useRef<number>(0);
   // Debounce ref to coalesce rapid new_answer events into single fetch
   const debouncedNewAnswerFetchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Cache initial files from WebSocket by workspace path (avoids HTTP fetch)
-  const initialFilesCacheRef = useRef<Record<string, FileInfo[]>>({});
-  // Track which workspace paths we've already prefetched to avoid duplicates
-  const prefetchedPathsRef = useRef<Set<string>>(new Set());
 
   // Clear workspace/browser state when session changes to avoid stale paths/files
+  // Note: workspaceStore is cleared by useWorkspaceConnection when session changes
   useEffect(() => {
     setWorkspaces({ current: [], historical: [] });
-    setWorkspaceFiles([]);
     setSelectedAgentWorkspace(null);
     setSelectedFilePath('');
     setSelectedAnswerLabel('current');
     setWorkspaceError(null);
-    setIsLoadingFiles(false);
+    setIsLoadingHistoricalFiles(false);
     setIsLoadingWorkspaces(false);
     hasAutoPreviewedRef.current = null;
     prevWorkspacePathRef.current = null;
-    initialFilesCacheRef.current = {};
-    prefetchedPathsRef.current = new Set();
     clearFileCache();
     setMissingVersion(null);
   }, [sessionId]);
@@ -369,10 +403,13 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
 
       // Filter answers to only the currently viewed agent
       const agentAnswers = answers.filter(a => a.agentId === selectedAgentWorkspace);
-      const lastKnownCount = lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace] || 0;
+      const lastKnownCount = lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace];
+      const hasBaseline = lastKnownCount !== undefined && lastKnownCount >= 0;
 
       // Check if this agent has NEW answers since we started viewing
-      if (agentAnswers.length > lastKnownCount && lastKnownCount > 0) {
+      // A baseline count of >= 0 means we've been tracking, so we should notify on increase
+      // This handles first answer (0 -> 1) as well as subsequent answers
+      if (hasBaseline && agentAnswers.length > lastKnownCount) {
         // Set flag to trigger workspace refresh in later effect
         setPendingNewAnswerRefresh(true);
 
@@ -523,9 +560,11 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [selectedAgentWorkspace, agentOrder, sessionId]);
 
-  // Fetch files for selected workspace with AbortController support (T012)
-  // For historical workspaces, results are cached since they never change
-  const fetchWorkspaceFiles = useCallback(async (workspace: WorkspaceInfo) => {
+  // Fetch files for historical workspace (current workspaces use WebSocket via store)
+  // Historical workspace files are static - fetch once and store in snapshot
+  const fetchHistoricalFiles = useCallback(async (answerLabel: string, workspacePath: string) => {
+    debugLog.info('[Modal] fetchHistoricalFiles called', { answerLabel, workspacePath });
+
     // Cancel any in-flight request before starting a new one
     if (fetchAbortRef.current) {
       fetchAbortRef.current();
@@ -535,12 +574,11 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     // Increment request ID to track this specific request
     const requestId = ++fetchRequestIdRef.current;
 
-    lastBrowsedPathRef.current = workspace.path;
-    setIsLoadingFiles(true);
+    setIsLoadingHistoricalFiles(true);
     setWorkspaceError(null);
 
     const { promise, abort } = createAbortableFetch<BrowseResponse>(
-      `/api/workspace/browse?path=${encodeURIComponent(workspace.path)}`,
+      `/api/workspace/browse?path=${encodeURIComponent(workspacePath)}`,
       { timeout: 30000 }
     );
 
@@ -548,68 +586,48 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
 
     try {
       const data = await promise;
+      debugLog.info('[Modal] fetchHistoricalFiles response', {
+        answerLabel,
+        workspacePath,
+        responseWorkspacePath: data.workspace_path,
+        fileCount: data.files?.length ?? 0,
+      });
       // Verify this response is for the currently requested workspace
-      if (data.workspace_path !== workspace.path) {
-        // Response is for a different workspace - ignore (stale response)
+      if (data.workspace_path !== workspacePath) {
+        debugLog.warn('[Modal] fetchHistoricalFiles path mismatch', {
+          expected: workspacePath,
+          got: data.workspace_path,
+        });
         return;
       }
       // Only update state if this is still the current request
       if (requestId === fetchRequestIdRef.current) {
-        setWorkspaceFiles(data.files || []);
-      }
-      // Cache historical workspace files - they never change
-      if (workspace.type === 'historical' && data.files) {
-        initialFilesCacheRef.current[workspace.path] = data.files;
+        // Store files in the workspace store's historical snapshot
+        setSnapshotFiles(answerLabel, data.files || []);
+        debugLog.info('[Modal] fetchHistoricalFiles stored files', {
+          answerLabel,
+          fileCount: data.files?.length ?? 0,
+        });
       }
     } catch (err) {
       if (isAbortError(err)) {
-        // Request was cancelled - don't update state
+        debugLog.info('[Modal] fetchHistoricalFiles aborted', { answerLabel });
         return;
       }
-      // Only update error state if this is still the current request
+      debugLog.error('[Modal] fetchHistoricalFiles error', {
+        answerLabel,
+        error: err instanceof Error ? err.message : String(err),
+      });
       if (requestId === fetchRequestIdRef.current) {
         setWorkspaceError(err instanceof Error ? err.message : 'Failed to load files');
       }
-      // T025: Don't clear files on error - preserve last known files for graceful degradation
     } finally {
-      // Only clear loading state if this is still the current request
-      // This prevents a cancelled request's finally block from clearing loading for the new request
       if (requestId === fetchRequestIdRef.current) {
-        setIsLoadingFiles(false);
+        setIsLoadingHistoricalFiles(false);
         fetchAbortRef.current = null;
       }
     }
-  }, []);
-
-  // Background prefetch workspace files (doesn't update UI state, just caches)
-  const prefetchWorkspaceFiles = useCallback(async (workspacePath: string) => {
-    // Skip if already cached
-    if (initialFilesCacheRef.current[workspacePath]) {
-      return;
-    }
-    try {
-      const response = await fetch(`/api/workspace/browse?path=${encodeURIComponent(workspacePath)}`);
-      if (response.ok) {
-        const data: BrowseResponse = await response.json();
-        if (data.files) {
-          initialFilesCacheRef.current[workspacePath] = data.files;
-        }
-      }
-    } catch {
-      // Silent fail for background prefetch
-    }
-  }, []);
-
-  // Background prefetch: when new answers arrive with workspace_path, prefetch files immediately
-  // This ensures clicking "Stay Here" or selecting a historical version is instant
-  useEffect(() => {
-    answers.forEach(answer => {
-      if (answer.workspacePath && !prefetchedPathsRef.current.has(answer.workspacePath)) {
-        prefetchedPathsRef.current.add(answer.workspacePath);
-        prefetchWorkspaceFiles(answer.workspacePath);
-      }
-    });
-  }, [answers, prefetchWorkspaceFiles]);
+  }, [setSnapshotFiles]);
 
   // Fetch answer-linked workspaces from API
   const fetchAnswerWorkspaces = useCallback(async () => {
@@ -700,9 +718,22 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const activeWorkspace = useMemo(() => {
     if (!selectedAgentWorkspace) return null;
 
-    // If a historical answer version is selected, get workspace path from answers (instant via WebSocket)
+    // If a historical answer version is selected, get workspace path
     if (selectedAnswerLabel !== 'current') {
-      // First check answers from agentStore (has workspace_path from new_answer event)
+      // Check answerWorkspaces FIRST (from HTTP API via status.json, always has correct absolute paths)
+      const answerWs = answerWorkspaces.find(
+        (w) => w.agentId === selectedAgentWorkspace && w.answerLabel === selectedAnswerLabel
+      );
+      if (answerWs) {
+        setMissingVersion(null);
+        return {
+          name: answerWs.answerLabel,
+          path: answerWs.workspacePath,
+          type: 'historical' as const,
+        };
+      }
+
+      // Fallback to answers from agentStore (has workspace_path from new_answer WebSocket event)
       const agentIdx = agentOrder.indexOf(selectedAgentWorkspace) + 1;
       const matchingAnswer = answers.find(a => {
         const expectedLabel = `agent${agentIdx}.${a.answerNumber}`;
@@ -718,19 +749,6 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
         };
       }
 
-      // Fallback to answerWorkspaces (HTTP-fetched, for older answers without workspace_path)
-      const answerWs = answerWorkspaces.find(
-        (w) => w.agentId === selectedAgentWorkspace && w.answerLabel === selectedAnswerLabel
-      );
-      if (answerWs) {
-        setMissingVersion(null);
-        return {
-          name: answerWs.answerLabel,
-          path: answerWs.workspacePath,
-          type: 'historical' as const,
-        };
-      }
-
       // Selected a version but no mapping yet; avoid falling back to current
       setMissingVersion(`Workspace for version "${selectedAnswerLabel}" not available yet`);
       return null;
@@ -741,134 +759,63 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     return workspacesByAgent[selectedAgentWorkspace]?.current || null;
   }, [selectedAgentWorkspace, selectedAnswerLabel, answers, answerWorkspaces, workspacesByAgent, agentOrder]);
 
-  // Compute workspace paths to watch via WebSocket
-  // CRITICAL: Use stable dependency to prevent infinite re-render loop (FR-013)
-  // workspaces.current is an array that gets a new reference on every setWorkspaces() call,
-  // causing the useMemo to recalculate and trigger useWorkspaceWebSocket effects repeatedly.
-  // Solution: Serialize paths to a string for stable comparison.
-  const workspacePathsKey = useMemo(
-    () => JSON.stringify(workspaces.current.map((ws) => ws.path).filter(Boolean).sort()),
-    [workspaces]
-  );
-
-  const workspacePaths = useMemo(() => {
-    if (!activeTab || activeTab !== 'workspace') return [];
-    return workspaces.current.map((ws) => ws.path).filter(Boolean);
-  }, [activeTab, workspacePathsKey]);
-
-  // WebSocket hook for real-time file updates (T011, T013, T014)
-  const handleWebSocketFileChange = useCallback((event: WorkspaceFileChangeEvent) => {
-    // Only update if the change is for the currently active workspace
-    if (!activeWorkspace || event.workspace_path !== activeWorkspace.path) {
-      return;
-    }
-
-    const fileInfo: FileInfo = {
-      path: event.file_path,
-      size: event.file_info?.size || 0,
-      modified: event.file_info?.modified || Date.now(),
-      operation: event.operation,
-    };
-
-    // Clear 404 cache when file is created/modified so we can fetch it again
-    if (event.operation === 'create' || event.operation === 'modify') {
-      clearFileNotFound(event.file_path, event.workspace_path);
-    }
-
-    setWorkspaceFiles((prevFiles) => {
-      switch (event.operation) {
-        case 'create':
-          // Add file if not already present
-          if (!prevFiles.some((f) => f.path === fileInfo.path)) {
-            return [...prevFiles, fileInfo];
-          }
-          // Update if it exists (rapid create/modify)
-          return prevFiles.map((f) =>
-            f.path === fileInfo.path ? { ...f, ...fileInfo } : f
-          );
-
-        case 'modify':
-          return prevFiles.map((f) =>
-            f.path === fileInfo.path ? { ...f, ...fileInfo } : f
-          );
-
-        case 'delete':
-          return prevFiles.filter((f) => f.path !== fileInfo.path);
-
-        default:
-          return prevFiles;
-      }
-    });
-  }, [activeWorkspace]);
-
-  // Handle full workspace refresh on WebSocket reconnect (FR-012)
-  const handleWebSocketRefreshNeeded = useCallback((workspacePath: string, files: WorkspaceFileInfo[]) => {
-    if (activeWorkspace && activeWorkspace.path === workspacePath) {
-      setWorkspaceFiles(files);
-      setIsLoadingFiles(false);
-    }
-  }, [activeWorkspace]);
-
-  // Handle initial files from WebSocket connect - eliminates need for HTTP fetch
-  // Caches files by path so they're available when user switches workspaces
-  const handleWebSocketInitialFiles = useCallback((workspacePath: string, files: WorkspaceFileInfo[]) => {
-    // Cache the files for this workspace path
-    initialFilesCacheRef.current[workspacePath] = files;
-
-    // If this is the workspace we're currently viewing, update state immediately
-    if (activeWorkspace && activeWorkspace.path === workspacePath) {
-      setWorkspaceFiles(files);
-      setIsLoadingFiles(false);
-    }
-  }, [activeWorkspace]);
-
-  const {
-    status: wsStatus,
-    reconnectAttempts: wsReconnectAttempts,
-    error: wsError,
-    requestRefresh: wsRequestRefresh,
-  } = useWorkspaceWebSocket({
-    sessionId: sessionId || '',
-    workspacePaths,
-    onFileChange: handleWebSocketFileChange,
-    onInitialFiles: handleWebSocketInitialFiles,
-    onRefreshNeeded: handleWebSocketRefreshNeeded,
-    autoConnect: isOpen && activeTab === 'workspace' && !!sessionId,
-  });
-
-  // Request full refresh on WebSocket reconnect (FR-012)
-  useEffect(() => {
-    if (wsStatus === 'connected' && activeWorkspace && wsReconnectAttempts > 0) {
-      // We just reconnected - request full refresh
-      wsRequestRefresh(activeWorkspace.path);
-    }
-  }, [wsStatus, activeWorkspace, wsReconnectAttempts, wsRequestRefresh]);
-
   // Fetch workspaces when modal opens or tab switches to workspace
   // Note: fetchWorkspaces excluded from deps to prevent refetch cascade
-  // Answer workspaces are NOT fetched eagerly - they come via WebSocket (new_answer event)
+  // FIX: Also fetch answerWorkspaces eagerly - WebSocket new_answer events may not always include workspace_path
+  // The HTTP API reads from status.json which always has correct absolute paths
   useEffect(() => {
     if (isOpen && activeTab === 'workspace') {
       fetchWorkspaces();
+      fetchAnswerWorkspaces(); // Always fetch historical workspace mappings from status.json
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeTab, sessionId]);
 
-  // Lazy fetch answer workspaces only when needed (historical version selected without workspace_path)
-  // Track if we've already fetched to avoid repeated calls
-  const hasFetchedAnswerWorkspacesRef = useRef(false);
+  // Check if current workspace files are missing from store and trigger refresh ONCE
+  // This handles the case where WebSocket connected before status.json was ready
+  const hasRefreshedForMissingRef = useRef(false);
   useEffect(() => {
-    if (missingVersion && !hasFetchedAnswerWorkspacesRef.current && answerWorkspaces.length === 0) {
-      hasFetchedAnswerWorkspacesRef.current = true;
+    // Reset the guard when modal closes
+    if (!isOpen) {
+      hasRefreshedForMissingRef.current = false;
+      return;
+    }
+
+    if (activeTab !== 'workspace') {
+      return;
+    }
+
+    // Only check once per modal open to prevent infinite loops
+    if (hasRefreshedForMissingRef.current) {
+      return;
+    }
+
+    // Check if any current workspace paths are missing from the store
+    const missingPaths = workspaces.current.filter(
+      (ws) => {
+        const storeData = allWorkspaces[ws.path];
+        return !storeData || storeData.files.length === 0;
+      }
+    );
+
+    if (missingPaths.length > 0 && refreshSessionFn) {
+      hasRefreshedForMissingRef.current = true;
+      refreshSessionFn();
+    }
+  }, [isOpen, activeTab, workspaces.current, allWorkspaces, refreshSessionFn]);
+
+  // FIX: Removed hasFetchedAnswerWorkspacesRef guard - answerWorkspaces is now fetched eagerly on tab open
+  // This fallback effect triggers refetch if a version is selected but not found in answerWorkspaces
+  // This handles edge cases where the initial fetch didn't include this version (e.g., answer created after fetch)
+  useEffect(() => {
+    if (missingVersion && answerWorkspaces.length === 0) {
       fetchAnswerWorkspaces();
     }
   }, [missingVersion, answerWorkspaces.length, fetchAnswerWorkspaces]);
 
 
   // Track previous workspace path to detect actual changes
-  // Strategy differs for current vs historical workspaces:
-  // - Historical: fetch immediately via HTTP (they never change, no WebSocket)
-  // - Current: use WebSocket cache/initial_files, HTTP as fallback
+  // For historical workspaces, fetch files if not already cached in store
   useEffect(() => {
     const currentPath = activeWorkspace?.path || null;
     const pathChanged = prevWorkspacePathRef.current !== currentPath;
@@ -879,53 +826,94 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       setSelectedFilePath('');
       // Reset auto-preview tracking for this new workspace
       hasAutoPreviewedRef.current = null;
-
-      // Check if we have cached files from WebSocket initial_files
-      const cachedFiles = initialFilesCacheRef.current[activeWorkspace.path];
-      if (cachedFiles && cachedFiles.length > 0) {
-        // Use cached files immediately - no loading state needed
-        setWorkspaceFiles(cachedFiles);
-        setIsLoadingFiles(false);
-        return;
-      }
-
-      // No cached files - fetch immediately via HTTP
-      // WebSocket will provide real-time updates after initial load
-      setWorkspaceFiles([]);
-      setIsLoadingFiles(true);
-      fetchWorkspaceFiles(activeWorkspace);
     } else if (!activeWorkspace && prevWorkspacePathRef.current !== null) {
-      // Clear stale files when workspace disappears (e.g., new session)
       prevWorkspacePathRef.current = null;
-      setWorkspaceFiles([]);
       setSelectedFilePath('');
     }
-  }, [activeWorkspace, fetchWorkspaceFiles]);
 
-  // REMOVED: The "fetch if empty" effect was causing infinite loops when WebSocket
-  // delete events cleared the workspace (e.g., during answer snapshot).
-  // The workspace is legitimately empty in this case - no need to refetch.
-  // The above effect already handles initial fetch when workspace path changes.
+    // For historical workspaces, always check if we need to fetch files
+    // This runs on every render where we have an activeWorkspace + historical label
+    // because the answer label might change without the path changing
+    if (activeWorkspace && selectedAnswerLabel !== 'current') {
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      debugLog.info('[HistoricalLoad] Decision point in useEffect', {
+        selectedAnswerLabel,
+        historicalFilesIsNull: historicalFiles === null,
+        willFetch: historicalFiles === null,
+      });
+      if (historicalFiles === null) {
+        // Need to fetch - files not in store yet
+        fetchHistoricalFiles(selectedAnswerLabel, activeWorkspace.path);
+      }
+    }
+  }, [activeWorkspace, selectedAnswerLabel, getHistoricalFiles, fetchHistoricalFiles]);
 
-  // Clear selected file when workspace files become empty (prevents stale preview)
+  // FIX: Eagerly fetch historical files when answerWorkspaces arrives and we have a pending historical selection
+  // This handles the race condition where the version dropdown is selected before answerWorkspaces is fetched
   useEffect(() => {
-    if (workspaceFiles.length === 0 && selectedFilePath && !isLoadingFiles) {
-      setSelectedFilePath('');
+    if (selectedAnswerLabel === 'current' || !selectedAgentWorkspace) return;
+
+    // Check if we can now find the workspace in answerWorkspaces
+    const answerWs = answerWorkspaces.find(
+      (w) => w.agentId === selectedAgentWorkspace && w.answerLabel === selectedAnswerLabel
+    );
+
+    if (answerWs) {
+      // answerWorkspaces now has this version - fetch files if not already cached
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      if (historicalFiles === null) {
+        fetchHistoricalFiles(selectedAnswerLabel, answerWs.workspacePath);
+      }
     }
-  }, [workspaceFiles.length, selectedFilePath, isLoadingFiles]);
+  }, [answerWorkspaces, selectedAnswerLabel, selectedAgentWorkspace, getHistoricalFiles, fetchHistoricalFiles]);
+
+  // Compute workspace files from store (replaces local state)
+  // - Current workspaces: files come from WebSocket via workspaceStore
+  // - Historical workspaces: files come from HTTP fetch, stored in historicalSnapshots
+  const workspaceFiles = useMemo((): FileInfo[] => {
+    if (!activeWorkspace) return [];
+
+    if (selectedAnswerLabel !== 'current') {
+      // Historical workspace - get from snapshot store
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      return historicalFiles || [];
+    } else {
+      // Current workspace - get from live workspace store
+      return getWorkspaceFiles(activeWorkspace.path);
+    }
+  }, [activeWorkspace, selectedAnswerLabel, getHistoricalFiles, getWorkspaceFiles, allWorkspaces, historicalSnapshots, wsStatus]);
+
+  // Determine loading state
+  const isLoadingFiles = useMemo(() => {
+    if (!activeWorkspace) return false;
+
+    if (selectedAnswerLabel !== 'current') {
+      // Historical: loading if we're fetching OR if files are null (not yet loaded)
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      return isLoadingHistoricalFiles || historicalFiles === null;
+    } else {
+      // Current: WebSocket always provides files - check if workspace exists in store
+      const wsData = allWorkspaces[activeWorkspace.path];
+      // Loading if connected but no workspace data yet
+      return wsStatus === 'connecting' || (wsStatus === 'connected' && !wsData);
+    }
+  }, [activeWorkspace, selectedAnswerLabel, getHistoricalFiles, isLoadingHistoricalFiles, allWorkspaces, wsStatus]);
 
   // NOTE: Polling removed - now using WebSocket for real-time updates (T030)
   // WebSocket provides <2s update latency vs 8s polling
 
   // Auto-preview: Select first previewable file when workspace files are loaded
+  // Use filtered files to avoid selecting hidden/temp files
   useEffect(() => {
     // Only auto-preview when:
     // 1. We have files
     // 2. No file is already selected
     // 3. We haven't auto-previewed this workspace yet
     const workspaceKey = activeWorkspace?.path || '';
+    const visibleFiles = filterHiddenFiles(workspaceFiles);
+
     if (
-      workspaceFiles.length > 0 &&
+      visibleFiles.length > 0 &&
       !selectedFilePath &&
       activeTab === 'workspace' &&
       hasAutoPreviewedRef.current !== workspaceKey
@@ -939,7 +927,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       // 6. Images
       // 7. Any other previewable file
       const findMainPreviewable = (): string | null => {
-        const previewableFiles = workspaceFiles.filter(f => canPreviewFile(f.path));
+        const previewableFiles = visibleFiles.filter(f => canPreviewFile(f.path));
         if (previewableFiles.length === 0) return null;
 
         // Priority 1: PDF
@@ -1078,8 +1066,11 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       });
   }, [voteDistribution, agents, agentOrder, selectedAgent]);
 
-  // Build file tree from workspace files
-  const fileTree = useMemo(() => buildFileTree(workspaceFiles), [workspaceFiles]);
+  // Filter out hidden/internal directories from workspace files
+  const filteredWorkspaceFiles = useMemo(() => filterHiddenFiles(workspaceFiles), [workspaceFiles]);
+
+  // Build file tree from filtered workspace files
+  const fileTree = useMemo(() => buildFileTree(filteredWorkspaceFiles), [filteredWorkspaceFiles]);
 
   // Count total workspaces
   const totalWorkspaces = workspaces.current.length + answerWorkspaces.length;
@@ -1458,11 +1449,17 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                           value={selectedAnswerLabel}
                           onChange={(e) => {
                             const label = e.target.value;
+                            // FIX: Clear file content caches when switching versions
+                            // This prevents stale 404s from persisting across version switches
+                            clearFileCache();
                             setSelectedAnswerLabel(label);
 
-                            if (label !== 'current') {
-                              // Active workspace memo will pick up the historical path; clear stale file selection
-                              setSelectedFilePath('');
+                            // Always clear file selection when switching versions
+                            setSelectedFilePath('');
+
+                            // When switching to "current", trigger a refresh to get latest files
+                            if (label === 'current' && refreshSessionFn) {
+                              refreshSessionFn();
                             }
                           }}
                           className="appearance-none bg-gray-700 border border-gray-600 rounded-lg px-3 py-1 pr-8 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1540,7 +1537,10 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   <button
                     onClick={() => {
                       fetchWorkspaces();
-                      if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
+                      // For historical workspaces, refetch files; current workspaces auto-update via WebSocket
+                      if (activeWorkspace && selectedAnswerLabel !== 'current') {
+                        fetchHistoricalFiles(selectedAnswerLabel, activeWorkspace.path);
+                      }
                     }}
                     disabled={isLoadingWorkspaces || isLoadingFiles}
                     className={`${!activeWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-gray-200`}
@@ -1557,7 +1557,9 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     <button
                       onClick={() => {
                         fetchWorkspaces();
-                        if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
+                        if (activeWorkspace && selectedAnswerLabel !== 'current') {
+                          fetchHistoricalFiles(selectedAnswerLabel, activeWorkspace.path);
+                        }
                       }}
                       className="ml-4 px-3 py-1 bg-red-800/50 hover:bg-red-700/50 rounded text-red-200 text-xs transition-colors"
                     >
@@ -1671,12 +1673,12 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                         <Folder className="w-10 h-10 mb-3 opacity-50" />
                         <p className="text-sm text-center">Select an agent to browse their workspace</p>
                       </div>
-                    ) : isLoadingFiles && workspaceFiles.length === 0 ? (
+                    ) : isLoadingFiles && filteredWorkspaceFiles.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-gray-500">
                         <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
                         <p className="text-sm">Loading files...</p>
                       </div>
-                    ) : workspaceFiles.length === 0 ? (
+                    ) : filteredWorkspaceFiles.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-gray-500">
                         <Folder className="w-10 h-10 mb-3 opacity-50" />
                         <p className="text-sm">No files</p>
@@ -1684,7 +1686,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     ) : (
                       <div>
                         <div className="mb-2 text-xs text-gray-500 flex items-center gap-2">
-                          <span>{workspaceFiles.length} files</span>
+                          <span>{filteredWorkspaceFiles.length} files</span>
                           {selectedAnswerLabel !== 'current' && (
                             <span className="text-amber-400">(historical)</span>
                           )}
@@ -1709,6 +1711,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                         onFullscreen={() => setIsPreviewFullscreen(true)}
                         sessionId={sessionId}
                         agentId={selectedAgentWorkspace || undefined}
+                        onFileNotFound={() => setSelectedFilePath('')}
                       />
                     ) : (
                       <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-800/30 rounded-lg border border-gray-700">
@@ -1721,10 +1724,10 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 </div>
 
                 {/* Workspace Summary */}
-                {activeWorkspace && workspaceFiles.length > 0 && (
+                {activeWorkspace && filteredWorkspaceFiles.length > 0 && (
                   <div className="border-t border-gray-700 px-6 py-3 text-sm text-gray-400 flex items-center justify-between">
                     <span>
-                      {workspaceFiles.length} files in {activeWorkspace.name}
+                      {filteredWorkspaceFiles.length} files in {activeWorkspace.name}
                     </span>
                     <span className="text-xs text-gray-500">
                       {activeWorkspace.path}
@@ -1801,6 +1804,10 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 onClose={() => setIsPreviewFullscreen(false)}
                 sessionId={sessionId}
                 agentId={selectedAgentWorkspace || undefined}
+                onFileNotFound={() => {
+                  setSelectedFilePath('');
+                  setIsPreviewFullscreen(false);
+                }}
               />
             </div>
           </motion.div>

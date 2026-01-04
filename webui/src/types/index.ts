@@ -377,15 +377,15 @@ export interface FileContentResponse {
 }
 
 // ============================================================================
-// Workspace Browser WebSocket Types (for real-time workspace updates)
+// Workspace Browser WebSocket Types (for pre-fetched workspace file lists)
 // ============================================================================
 
 /**
- * WebSocket event types for workspace file changes.
- * These events are pushed from the backend when files are created/modified/deleted.
+ * WebSocket event types for workspace file listing.
+ * File lists are pre-fetched on connect and refreshed on-demand.
+ * No live file monitoring - uses simple pre-fetch + cache pattern.
  */
 export type WorkspaceWSEventType =
-  | 'workspace_file_change'
   | 'workspace_connected'
   | 'workspace_error'
   | 'workspace_refresh';
@@ -400,32 +400,18 @@ export interface WorkspaceWSMessage {
 }
 
 /**
- * Event sent when a file in the workspace is created, modified, or deleted.
- */
-export interface WorkspaceFileChangeEvent extends WorkspaceWSMessage {
-  type: 'workspace_file_change';
-  workspace_path: string;
-  file_path: string;  // Relative path within workspace
-  operation: 'create' | 'modify' | 'delete';
-  file_info?: {
-    size: number;
-    modified: number;
-  };
-}
-
-/**
  * Event sent when WebSocket connection is established.
- * Includes initial file lists for each watched workspace to avoid separate HTTP fetch.
+ * Includes initial file lists for each workspace to enable instant modal open.
  */
 export interface WorkspaceConnectedEvent extends WorkspaceWSMessage {
   type: 'workspace_connected';
   watched_paths: string[];
-  /** Initial file lists keyed by workspace path - sent on connect to avoid HTTP fetch */
+  /** Initial file lists keyed by workspace path - sent on connect for instant display */
   initial_files?: Record<string, WorkspaceFileInfo[]>;
 }
 
 /**
- * Event sent when an error occurs in workspace monitoring.
+ * Event sent when an error occurs in workspace operations.
  */
 export interface WorkspaceErrorEvent extends WorkspaceWSMessage {
   type: 'workspace_error';
@@ -434,7 +420,7 @@ export interface WorkspaceErrorEvent extends WorkspaceWSMessage {
 }
 
 /**
- * Event sent to request a full workspace refresh (e.g., after reconnect).
+ * Event sent in response to a refresh request with updated file list.
  */
 export interface WorkspaceRefreshEvent extends WorkspaceWSMessage {
   type: 'workspace_refresh';
@@ -449,14 +435,12 @@ export interface WorkspaceFileInfo {
   path: string;
   size: number;
   modified: number;
-  operation?: 'create' | 'modify' | 'delete';
 }
 
 /**
  * Union type for all workspace WebSocket events.
  */
 export type WorkspaceWSEvent =
-  | WorkspaceFileChangeEvent
   | WorkspaceConnectedEvent
   | WorkspaceErrorEvent
   | WorkspaceRefreshEvent;
