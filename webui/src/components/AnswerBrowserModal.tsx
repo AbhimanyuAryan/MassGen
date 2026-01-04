@@ -711,6 +711,10 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       // Reset the flag first to prevent loops
       setPendingNewAnswerRefresh(false);
 
+      // Clear selected file to prevent showing stale "file not found" errors
+      // The file list will update shortly and user can select a new file
+      setSelectedFilePath('');
+
       // Debounce to coalesce rapid new_answer events into single fetch
       if (debouncedNewAnswerFetchRef.current) {
         clearTimeout(debouncedNewAnswerFetchRef.current);
@@ -718,6 +722,10 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       debouncedNewAnswerFetchRef.current = setTimeout(() => {
         // Refresh the current workspaces in case they changed
         fetchWorkspaces();
+        // Also refresh file list via WebSocket to get updated files immediately
+        if (refreshSessionFn) {
+          refreshSessionFn();
+        }
       }, 100);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -857,6 +865,26 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       refreshSessionFn();
     }
   }, [isOpen, activeTab, workspaces.current, allWorkspaces, refreshSessionFn]);
+
+  // Poll for file updates every 3 seconds when viewing CURRENT workspace
+  // Historical workspaces are snapshots and don't need polling
+  useEffect(() => {
+    // Only poll when modal is open, workspace tab is active, and we have refresh function
+    if (!isOpen || activeTab !== 'workspace' || !refreshSessionFn || !activeWorkspace) {
+      return;
+    }
+
+    // Skip polling for historical workspaces - they don't change
+    if (activeWorkspace.type === 'historical') {
+      return;
+    }
+
+    const pollInterval = setInterval(() => {
+      refreshSessionFn();
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [isOpen, activeTab, refreshSessionFn, activeWorkspace]);
 
   // FIX: Removed hasFetchedAnswerWorkspacesRef guard - answerWorkspaces is now fetched eagerly on tab open
   // This fallback effect triggers refetch if a version is selected but not found in answerWorkspaces

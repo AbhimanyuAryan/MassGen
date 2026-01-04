@@ -13,6 +13,7 @@ import base64
 import json
 import logging
 import logging.handlers
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
@@ -116,6 +117,59 @@ def _should_skip_workspace_path(file_path: Path) -> bool:
     return False
 
 
+def _should_skip_dir(dir_name: str) -> bool:
+    """Check if a directory should be skipped entirely during workspace scanning.
+
+    This is used with os.walk to skip directories BEFORE entering them,
+    which is much faster than rglob + filter for large directories like node_modules.
+    """
+    import fnmatch
+
+    if dir_name.startswith("."):
+        return True
+    if dir_name in SKIP_DIRS_FOR_LOGGING:
+        return True
+    # Check glob patterns like *.egg-info
+    for pattern in SKIP_DIRS_FOR_LOGGING:
+        if "*" in pattern and fnmatch.fnmatch(dir_name, pattern):
+            return True
+    return False
+
+
+def _scan_workspace_files(workspace_path: Path) -> list[dict]:
+    """Scan workspace for files, skipping large directories entirely.
+
+    Uses os.walk with in-place directory filtering to avoid entering
+    node_modules, .venv, and other large directories at all.
+    This is much faster than rglob("*") + filter for workspaces with packages.
+    """
+    files = []
+
+    for root, dirs, filenames in os.walk(workspace_path):
+        # Modify dirs in-place to skip excluded directories BEFORE entering them
+        dirs[:] = [d for d in dirs if not _should_skip_dir(d)]
+
+        for filename in filenames:
+            # Skip hidden files
+            if filename.startswith("."):
+                continue
+            file_path = Path(root) / filename
+            try:
+                rel_path = file_path.relative_to(workspace_path)
+                stat = file_path.stat()
+                files.append(
+                    {
+                        "path": str(rel_path),
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                    },
+                )
+            except (OSError, ValueError):
+                continue
+
+    return files
+
+
 class WorkspaceConnectionManager:
     """Manages WebSocket connections for workspace file listing.
 
@@ -164,18 +218,7 @@ class WorkspaceConnectionManager:
 
                 # Collect initial file list for this workspace (non-blocking)
                 try:
-                    files = []
-                    for file_path in workspace_path.rglob("*"):
-                        if file_path.is_file() and not _should_skip_workspace_path(file_path):
-                            rel_path = file_path.relative_to(workspace_path)
-                            stat = file_path.stat()
-                            files.append(
-                                {
-                                    "path": str(rel_path),
-                                    "size": stat.st_size,
-                                    "modified": stat.st_mtime,
-                                },
-                            )
+                    files = _scan_workspace_files(workspace_path)
                     initial_files[normalized_path] = files
                     workspace_logger.debug(
                         f"[Conn #{conn_id}] Initial files for {workspace_path.name}: {len(files)} files",
@@ -1738,21 +1781,12 @@ def create_app(
                 status_code=400,
             )
 
-        files = []
         workspace_mtime = workspace_path.stat().st_mtime
         try:
-            for file_path in workspace_path.rglob("*"):
-                if file_path.is_file() and not _should_skip_workspace_path(file_path):
-                    rel_path = file_path.relative_to(workspace_path)
-                    stat = file_path.stat()
-                    files.append(
-                        {
-                            "path": str(rel_path),
-                            "size": stat.st_size,
-                            "modified": stat.st_mtime,
-                            "operation": "create",
-                        },
-                    )
+            files = _scan_workspace_files(workspace_path)
+            # Add operation field for browse endpoint
+            for f in files:
+                f["operation"] = "create"
         except Exception as e:
             workspace_logger.error(f"BROWSE 500: error scanning {path}: {e}")
             return JSONResponse(
@@ -3650,18 +3684,7 @@ def create_app(
                         workspace_path = Path(path)
                         if workspace_path.exists() and workspace_path.is_dir():
                             try:
-                                files = []
-                                for file_path in workspace_path.rglob("*"):
-                                    if file_path.is_file() and not _should_skip_workspace_path(file_path):
-                                        rel_path = file_path.relative_to(workspace_path)
-                                        stat = file_path.stat()
-                                        files.append(
-                                            {
-                                                "path": str(rel_path),
-                                                "size": stat.st_size,
-                                                "modified": stat.st_mtime,
-                                            },
-                                        )
+                                files = _scan_workspace_files(workspace_path)
                                 # Normalize path for consistent key format
                                 normalized_path = _normalize_workspace_path(path)
                                 initial_files[normalized_path] = files
@@ -3699,18 +3722,7 @@ def create_app(
                         workspace_path = Path(path)
                         if workspace_path.exists() and workspace_path.is_dir():
                             try:
-                                files = []
-                                for file_path in workspace_path.rglob("*"):
-                                    if file_path.is_file() and not _should_skip_workspace_path(file_path):
-                                        rel_path = file_path.relative_to(workspace_path)
-                                        stat = file_path.stat()
-                                        files.append(
-                                            {
-                                                "path": str(rel_path),
-                                                "size": stat.st_size,
-                                                "modified": stat.st_mtime,
-                                            },
-                                        )
+                                files = _scan_workspace_files(workspace_path)
                                 # FIX: Normalize path for consistency with broadcasts
                                 normalized_path = _normalize_workspace_path(path)
                                 initial_files[normalized_path] = files
@@ -3740,19 +3752,8 @@ def create_app(
                     workspace_logger.info(f"WS refresh request: path={path}, normalized={normalized_path}, session={session_id}")
                     if normalized_path and Path(normalized_path).exists():
                         workspace_path = Path(normalized_path)
-                        files = []
                         try:
-                            for file_path in workspace_path.rglob("*"):
-                                if file_path.is_file() and not _should_skip_workspace_path(file_path):
-                                    rel_path = file_path.relative_to(workspace_path)
-                                    stat = file_path.stat()
-                                    files.append(
-                                        {
-                                            "path": str(rel_path),
-                                            "size": stat.st_size,
-                                            "modified": stat.st_mtime,
-                                        },
-                                    )
+                            files = _scan_workspace_files(workspace_path)
                         except Exception as e:
                             await websocket.send_json(
                                 {
