@@ -7,11 +7,12 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus, ExternalLink, Share2, X, Eye } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus, ExternalLink, Share2, X, Eye, Columns } from 'lucide-react';
 import { useAgentStore, selectSelectedAgent, selectAgents, selectResolvedFinalAnswer, selectAgentOrder } from '../stores/agentStore';
 import type { AnswerWorkspace } from '../types';
 import { InlineArtifactPreview } from './InlineArtifactPreview';
 import { ConversationHistory } from './ConversationHistory';
+import { ComparisonView } from './ComparisonView';
 import { canPreviewFile } from '../utils/artifactTypes';
 import { clearFileCache } from '../hooks/useFileContent';
 
@@ -249,6 +250,9 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
   const [selectedFilePath, setSelectedFilePath] = useState<string>('');
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
 
+  // Comparison view state
+  const [isComparisonOpen, setIsComparisonOpen] = useState(false);
+
   // Track auto-preview per workspace
   const hasAutoPreviewedRef = useRef<string | null>(null);
   // Track previous workspace path for change detection
@@ -412,6 +416,48 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
     const targetAgent = selectedAgentWorkspace || selectedAgent;
     return answerWorkspaces.filter(w => w.agentId === targetAgent);
   }, [answerWorkspaces, selectedAgentWorkspace, selectedAgent]);
+
+  // Map workspaces by agent for ComparisonView
+  const workspacesByAgent = useMemo(() => {
+    const map: Record<string, { current?: WorkspaceInfo; historical: WorkspaceInfo[] }> = {};
+
+    // Initialize for all agents
+    agentOrder.forEach((agentId) => {
+      map[agentId] = { historical: [] };
+    });
+
+    // Map current workspaces
+    workspaces.current.forEach((ws) => {
+      const agentId = ws.agentId || getAgentIdFromWorkspace(ws.name, agentOrder);
+      if (agentId && map[agentId]) {
+        map[agentId].current = ws;
+      }
+    });
+
+    // Map historical workspaces from answer workspaces
+    answerWorkspaces.forEach((aw) => {
+      if (map[aw.agentId]) {
+        map[aw.agentId].historical.push({
+          name: aw.answerLabel,
+          path: aw.workspacePath,
+          type: 'historical',
+          agentId: aw.agentId,
+        });
+      }
+    });
+
+    return map;
+  }, [workspaces, answerWorkspaces, agentOrder]);
+
+  // Count total workspaces for compare button visibility
+  const totalWorkspaces = useMemo(() => {
+    let count = 0;
+    Object.values(workspacesByAgent).forEach(({ current, historical }) => {
+      if (current) count++;
+      count += historical.length;
+    });
+    return count;
+  }, [workspacesByAgent]);
 
   // Fetch workspaces when workspace tab is active
   useEffect(() => {
@@ -772,12 +818,25 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                   </div>
                 )}
 
+                {/* Compare button - show when there are 2+ workspaces */}
+                {totalWorkspaces >= 2 && (
+                  <button
+                    onClick={() => setIsComparisonOpen(true)}
+                    className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-500
+                               rounded-lg transition-colors text-white text-sm"
+                    title="Compare workspaces side-by-side"
+                  >
+                    <Columns className="w-4 h-4" />
+                    <span>Compare</span>
+                  </button>
+                )}
+
                 {/* Open Folder button */}
                 {activeWorkspace && (
                   <button
                     onClick={() => openWorkspaceInFinder(activeWorkspace.path)}
-                    className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500
-                               rounded-lg transition-colors text-white text-sm"
+                    className={`${totalWorkspaces < 2 ? 'ml-auto' : ''} flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500
+                               rounded-lg transition-colors text-white text-sm`}
                     title="Open workspace in file browser"
                   >
                     <ExternalLink className="w-4 h-4" />
@@ -1041,6 +1100,17 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Comparison View Modal */}
+      <ComparisonView
+        isOpen={isComparisonOpen}
+        onClose={() => setIsComparisonOpen(false)}
+        agentWorkspaces={workspacesByAgent}
+        answerWorkspaces={answerWorkspaces}
+        agentOrder={agentOrder}
+        sessionId={sessionId}
+        initialFile={selectedFilePath}
+      />
     </motion.div>
   );
 }

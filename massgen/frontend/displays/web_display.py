@@ -458,6 +458,8 @@ class WebDisplay(BaseDisplay):
             target_id: Agent who received the vote
             reason: Reason for the vote
         """
+        # Update voter status to completed when vote is cast
+        self.update_agent_status(voter_id, "completed")
         self._vote_targets[voter_id] = target_id
         self._emit(
             "vote_cast",
@@ -684,6 +686,8 @@ class WebDisplay(BaseDisplay):
             answer_label: Label for this answer (e.g., "agent1.1")
             workspace_path: Absolute path to the workspace snapshot for this answer
         """
+        # Update agent status to completed when answer is submitted
+        self.update_agent_status(agent_id, "completed")
         self._emit(
             "new_answer",
             {

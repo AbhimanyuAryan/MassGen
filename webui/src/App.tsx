@@ -8,7 +8,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Wifi, WifiOff, AlertCircle, XCircle, ArrowLeft, Loader2, Trophy } from 'lucide-react';
 import { useWebSocket, ConnectionStatus } from './hooks/useWebSocket';
-import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents, selectFinalAnswer, selectSelectingWinner, selectVoteDistribution, selectAutomationMode, selectInitStatus } from './stores/agentStore';
+import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents, selectFinalAnswer, selectSelectingWinner, selectVoteDistribution, selectAutomationMode, selectInitStatus, selectPreparationStatus } from './stores/agentStore';
 import { useThemeStore } from './stores/themeStore';
 import { AgentCarousel } from './components/AgentCarousel';
 import { AgentCard } from './components/AgentCard';
@@ -73,6 +73,7 @@ export function App() {
   const voteDistribution = useAgentStore(selectVoteDistribution);
   const automationMode = useAgentStore(selectAutomationMode);
   const initStatus = useAgentStore(selectInitStatus);
+  const preparationStatus = useAgentStore(selectPreparationStatus);
   const reset = useAgentStore((s) => s.reset);
   const backToCoordination = useAgentStore((s) => s.backToCoordination);
   const setViewMode = useAgentStore((s) => s.setViewMode);
@@ -610,10 +611,12 @@ export function App() {
                 </button>
               </form>
             </div>
-          ) : question ? (
-            /* Cancel button during coordination */
+          ) : (question || initStatus || preparationStatus) ? (
+            /* Cancel button during coordination or preparation */
             <div className="flex items-center justify-center gap-4">
-              <span className="text-gray-600 dark:text-gray-400">Coordination in progress...</span>
+              <span className="text-gray-600 dark:text-gray-400">
+                {preparationStatus || 'Coordination in progress...'}
+              </span>
               <button
                 onClick={handleCancel}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg transition-colors text-white"

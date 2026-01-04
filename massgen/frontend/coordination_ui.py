@@ -1432,9 +1432,9 @@ class CoordinationUI:
             content_type = "tool" if "🔧" in content else "status"
             self.display.update_agent_content(agent_id, content, content_type)
 
-            # Update status on completion
-            if "new_answer" in content or "vote" in content:
-                self.display.update_agent_status(agent_id, "completed")
+            # Note: Status updates to "completed" are handled by the authoritative
+            # send_new_answer() and update_vote_target() methods in web_display.py,
+            # not by string matching here (which caused false positives with MCP tools)
 
             # Log to detailed logger
             if self.logger:
