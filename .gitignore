@@ -229,3 +229,5 @@ shared_tools/
 webui/node_modules/
 webui/dist/
 webui/mockups/
+
+node_modules/
