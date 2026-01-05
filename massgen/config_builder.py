@@ -311,7 +311,7 @@ class ConfigBuilder:
 
         if use_text_input:
             console.print(
-                "\n[dim]Type to search models (e.g., 'sonnet', 'gpt-5', 'gemini')[/dim]",
+                "\n[dim]Type to search models (e.g., 'gpt-5.2', 'gpt-5-mini', 'gpt-5-nano')[/dim]",
             )
             console.print(
                 f"[dim]Searching through {len(fuzzy_match_models)} models...[/dim]",

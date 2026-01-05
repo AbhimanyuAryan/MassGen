@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 """
 Message templates for MassGen framework following input_cases_reference.md
 Implements proven binary decision framework that eliminates perfectionism loops.

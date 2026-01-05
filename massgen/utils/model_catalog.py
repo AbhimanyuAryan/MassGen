@@ -110,12 +110,156 @@ async def fetch_poe_models() -> List[str]:
         return []
 
 
-async def fetch_openai_compatible_models(base_url: str, api_key: Optional[str] = None) -> List[str]:
+async def fetch_together_models(
+    api_key: Optional[str] = None,
+    default_model: str = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+) -> List[str]:
+    """Fetch model list from Together AI API.
+
+    Filters to only chat/language models, sorted by creation date (newest first).
+
+    Args:
+        api_key: Together API key
+        default_model: Model to put at the top of the list
+
+    Returns:
+        List of model IDs
+    """
+    if not api_key:
+        return []
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.together.xyz/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Together returns list directly or in data field
+            models_data = data if isinstance(data, list) else data.get("data", [])
+
+            # Filter to chat and language models only (exclude image, embedding, moderation, rerank)
+            chat_types = {"chat", "language", "code"}
+            models_data = [m for m in models_data if m.get("type") in chat_types]
+
+            # Sort by created timestamp descending (newest first)
+            models_data.sort(key=lambda m: m.get("created", 0), reverse=True)
+
+            models = [model["id"] for model in models_data]
+
+            # Move default model to top if present
+            if default_model and default_model in models:
+                models.remove(default_model)
+                models.insert(0, default_model)
+
+            return models
+    except (httpx.HTTPError, KeyError, ValueError):
+        return []
+
+
+def _is_chat_model(model_id: str, provider: str = "openai") -> bool:
+    """Check if a model is a chat/text model (not specialized).
+
+    Filters out across all providers:
+    - Audio/speech models (whisper, tts, *-audio*, orpheus)
+    - Image/video models (dall-e, sora, *-image*)
+    - Embedding models (text-embedding-*, embed)
+    - Moderation/safety models (*-guard*, *-safeguard*, *-moderation*)
+    - Fine-tuned models (ft:*)
+
+    Provider-specific filtering is also applied.
+    """
+    model_lower = model_id.lower()
+
+    # Universal exclude patterns (apply to all providers)
+    universal_exclude_prefixes = [
+        "whisper",  # speech recognition
+        "tts-",  # text-to-speech
+        "text-embedding",  # embeddings
+        "dall-e",  # image generation
+        "sora",  # video generation
+        "ft:",  # fine-tuned
+    ]
+
+    universal_exclude_contains = [
+        "-guard-",  # safety models
+        "-guard",  # safety models (at end)
+        "-safeguard",  # safety models
+        "-moderation",  # moderation
+        "-audio-",  # audio
+        "-transcribe",  # transcription
+        "-tts",  # text-to-speech
+        "-embed",  # embeddings
+        "orpheus",  # speech synthesis (Groq)
+    ]
+
+    # Check universal excludes
+    for prefix in universal_exclude_prefixes:
+        if model_lower.startswith(prefix):
+            return False
+
+    for pattern in universal_exclude_contains:
+        if pattern in model_lower:
+            return False
+
+    # Provider-specific filtering
+    if provider == "openai":
+        # OpenAI-specific excludes
+        openai_exclude_prefixes = [
+            "babbage",  # legacy
+            "davinci",  # legacy
+            "computer-use",  # computer use
+            "codex-mini-latest",  # standalone codex
+            "gpt-image",  # image generation
+            "gpt-audio",  # audio
+            "gpt-realtime",  # realtime
+            "chatgpt-image",  # image generation
+        ]
+
+        openai_exclude_contains = [
+            "-audio",  # audio models
+            "-realtime",  # realtime models
+            "-image-",  # image models
+            "-search-api",  # search API (not chat)
+            "-deep-research",  # deep research (not standard chat)
+            "-instruct",  # instruct models (legacy)
+        ]
+
+        for prefix in openai_exclude_prefixes:
+            if model_lower.startswith(prefix):
+                return False
+
+        for pattern in openai_exclude_contains:
+            if pattern in model_lower:
+                return False
+
+        # OpenAI: only keep known chat model prefixes
+        valid_prefixes = ["gpt-", "o1", "o3", "o4", "chatgpt-4o"]
+        return any(model_lower.startswith(p) for p in valid_prefixes)
+
+    # For other providers, if it passed universal filters, it's likely a chat model
+    return True
+
+
+async def fetch_openai_compatible_models(
+    base_url: str,
+    api_key: Optional[str] = None,
+    sort_by_created: bool = False,
+    default_model: Optional[str] = None,
+    filter_chat_models: bool = False,
+    provider: str = "openai",
+) -> List[str]:
     """Fetch model list from OpenAI-compatible API endpoint.
 
     Args:
         base_url: Base URL of the API (e.g., "https://api.groq.com/openai/v1")
         api_key: API key for authentication
+        sort_by_created: Sort by creation date (newest first)
+        default_model: Model to put at the top of the list
+        filter_chat_models: Filter to only chat models
+        provider: Provider name for provider-specific filtering
 
     Returns:
         List of model IDs
@@ -131,7 +275,24 @@ async def fetch_openai_compatible_models(base_url: str, api_key: Optional[str] =
             )
             response.raise_for_status()
             data = response.json()
-            return [model["id"] for model in data.get("data", [])]
+            models_data = data.get("data", [])
+
+            # Filter to chat models if requested
+            if filter_chat_models:
+                models_data = [m for m in models_data if _is_chat_model(m["id"], provider)]
+
+            if sort_by_created:
+                # Sort by created timestamp descending (newest first)
+                models_data.sort(key=lambda m: m.get("created", 0), reverse=True)
+
+            models = [model["id"] for model in models_data]
+
+            # Move default model to top if specified
+            if default_model and default_model in models:
+                models.remove(default_model)
+                models.insert(0, default_model)
+
+            return models
     except (httpx.HTTPError, KeyError, ValueError):
         return []
 
@@ -162,11 +323,19 @@ async def get_models_for_provider(provider: str, use_cache: bool = True) -> List
     elif provider == "poe":
         models = await fetch_poe_models()
     elif provider == "groq":
-        models = await fetch_openai_compatible_models("https://api.groq.com/openai/v1", os.getenv("GROQ_API_KEY"))
+        # Filter out whisper, guard, and orpheus models
+        models = await fetch_openai_compatible_models(
+            "https://api.groq.com/openai/v1",
+            os.getenv("GROQ_API_KEY"),
+            sort_by_created=True,
+            filter_chat_models=True,
+            provider="groq",
+        )
     elif provider == "cerebras":
         models = await fetch_openai_compatible_models("https://api.cerebras.ai/v1", os.getenv("CEREBRAS_API_KEY"))
     elif provider == "together":
-        models = await fetch_openai_compatible_models("https://api.together.xyz/v1", os.getenv("TOGETHER_API_KEY"))
+        # Use dedicated fetcher that filters by type field
+        models = await fetch_together_models(os.getenv("TOGETHER_API_KEY"))
     elif provider == "nebius":
         models = await fetch_openai_compatible_models(
             "https://api.studio.nebius.com/v1",
@@ -186,6 +355,16 @@ async def get_models_for_provider(provider: str, use_cache: bool = True) -> List
         models = await fetch_openai_compatible_models(
             "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             os.getenv("QWEN_API_KEY"),
+        )
+    elif provider == "openai":
+        # Filter to chat models, sort by created date (newest first), recommended model at top
+        models = await fetch_openai_compatible_models(
+            "https://api.openai.com/v1",
+            os.getenv("OPENAI_API_KEY"),
+            sort_by_created=True,
+            default_model="gpt-5.2",
+            filter_chat_models=True,
+            provider="openai",
         )
 
     # Cache the results

@@ -788,6 +788,7 @@ def create_app(
             "moonshot",
             "qwen",
             "poe",
+            "openai",
         ]
 
         if provider_id in dynamic_providers:

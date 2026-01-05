@@ -447,11 +447,12 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         builtin_tools=[],
         filesystem_support="mcp",
         models=[
+            "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
             "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
             "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
             "mistralai/Mixtral-8x7B-Instruct-v0.1",
         ],
-        default_model="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+        default_model="Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
         env_var="TOGETHER_API_KEY",
         notes="OpenAI-compatible API. Access to open-source models at scale.",
         base_url="https://api.together.xyz/v1",

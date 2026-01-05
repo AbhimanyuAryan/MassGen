@@ -114,6 +114,7 @@ COMMON_MODELS_BY_PROVIDER = {
         "qwen-3-coder-480b",
     ],
     "together": [
+        "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
         "meta-llama/Llama-Vision-Free",
         "meta-llama/Llama-3-3-70b",
         "meta-llama/Llama-3.1-405B-Instruct-Turbo",
@@ -206,6 +207,7 @@ def get_all_models_for_provider(provider_type: str, use_api: bool = True) -> Lis
         "fireworks",
         "moonshot",
         "qwen",
+        "openai",
     ]
 
     # Try API first for chatcompletion providers
