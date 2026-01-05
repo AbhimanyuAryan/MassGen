@@ -57,6 +57,7 @@ from ..filesystem_manager._constants import (
     TOOL_RESULT_EVICTION_THRESHOLD_TOKENS,
 )
 from ..logger_config import log_backend_activity, logger
+from ..mcp_tools.hooks import GeneralHookManager, HookType
 from ..mcp_tools.server_registry import get_auto_discovery_servers, get_registry_info
 from ..nlip.schema import (
     NLIPControlField,
@@ -475,6 +476,23 @@ class CustomToolAndMCPBackend(LLMBackend):
         # Initialize backend name and agent ID for MCP operations
         self.backend_name = self.get_provider_name()
         self.agent_id = kwargs.get("agent_id", None)
+
+        # Initialize General Hook Manager for Pre/PostToolUse hooks
+        self._general_hook_manager: Optional[GeneralHookManager] = None
+        hooks_config = self.config.get("hooks") or kwargs.get("hooks")
+        if hooks_config:
+            self._general_hook_manager = GeneralHookManager()
+            self._general_hook_manager.register_hooks_from_config(
+                hooks_config,
+                agent_id=self.agent_id,
+            )
+            logger.info(
+                f"[{self.backend_name}] Hook framework initialized for agent {self.agent_id}",
+            )
+
+    def set_general_hook_manager(self, manager: GeneralHookManager) -> None:
+        """Set the GeneralHookManager (used by orchestrator for global hooks)."""
+        self._general_hook_manager = manager
 
     def _build_multimodal_config_from_params(self) -> Dict[str, Any]:
         """Build multimodal_config from individual generation config variables.
@@ -1450,6 +1468,47 @@ class CustomToolAndMCPBackend(LLMBackend):
             return
 
         try:
+            # Execute PreToolUse hooks if hook manager is available
+            if self._general_hook_manager:
+                hook_context = {
+                    "hook_type": "PreToolUse",
+                    "session_id": getattr(self, "session_id", ""),
+                    "orchestrator_id": getattr(self, "orchestrator_id", ""),
+                    "agent_id": self.agent_id,
+                }
+                pre_result = await self._general_hook_manager.execute_hooks(
+                    HookType.PRE_TOOL_USE,
+                    tool_name,
+                    arguments_str,
+                    hook_context,
+                )
+
+                # Handle deny decision
+                if not pre_result.allowed or pre_result.decision == "deny":
+                    error_msg = f"Hook denied tool execution: {pre_result.reason or 'No reason provided'}"
+                    logger.warning(f"[PreToolUse] {error_msg}")
+                    yield StreamChunk(
+                        type=config.chunk_type,
+                        status=config.status_error,
+                        content=f"{config.error_emoji} {error_msg}",
+                        source=f"{config.source_prefix}{tool_name}",
+                    )
+                    # Still need to add error result to messages
+                    self._append_tool_error_message(
+                        updated_messages,
+                        call,
+                        error_msg,
+                        config.tool_type,
+                    )
+                    processed_call_ids.add(call.get("call_id", ""))
+                    return
+
+                # Use modified arguments if provided
+                if pre_result.modified_args is not None:
+                    arguments_str = pre_result.modified_args
+                    # Update the call dict too for downstream processing
+                    call["arguments"] = arguments_str
+
             # Yield tool called status
             yield StreamChunk(
                 type=config.chunk_type,
@@ -1593,8 +1652,50 @@ class CustomToolAndMCPBackend(LLMBackend):
                 call_id,
             )
 
+            # Execute PostToolUse hooks if hook manager is available
+            post_hook_injection = None
+            post_hook_reminder = None
+            if self._general_hook_manager:
+                hook_context = {
+                    "hook_type": "PostToolUse",
+                    "session_id": getattr(self, "session_id", ""),
+                    "orchestrator_id": getattr(self, "orchestrator_id", ""),
+                    "agent_id": self.agent_id,
+                }
+                post_result = await self._general_hook_manager.execute_hooks(
+                    HookType.POST_TOOL_USE,
+                    tool_name,
+                    arguments_str,
+                    hook_context,
+                    tool_output=result_text_for_eviction,
+                )
+
+                # Handle injection content from PostToolUse hooks
+                if post_result.inject:
+                    inject_data = post_result.inject
+                    inject_content = inject_data.get("content", "")
+                    inject_strategy = inject_data.get("strategy", "tool_result")
+
+                    if inject_strategy == "user_message":
+                        # Will be injected as a user message after tool result
+                        post_hook_reminder = inject_content
+                    else:
+                        # Default: append to tool result
+                        post_hook_injection = inject_content
+
+                    logger.debug(
+                        f"[PostToolUse] Hook injection for {tool_name}: " f"strategy={inject_strategy}, content_len={len(inject_content)}",
+                    )
+
             # Check for mid-stream injection content (updates from other agents)
             injection_content = self.get_mid_stream_injection()
+
+            # Combine hook injection with mid-stream injection
+            if post_hook_injection:
+                if injection_content:
+                    injection_content = f"{injection_content}\n{post_hook_injection}"
+                else:
+                    injection_content = post_hook_injection
 
             # Append result to messages (potentially evicted, potentially with injection)
             if eviction.was_evicted:
@@ -1695,6 +1796,17 @@ class CustomToolAndMCPBackend(LLMBackend):
                 updated_messages.append(reminder_message)
                 logger.info(
                     f"[Tool Reminder] Injected reminder from {tool_name}: {reminder_text[:100]}...",
+                )
+
+            # Inject hook-based reminder as user message (from PostToolUse hooks)
+            if post_hook_reminder:
+                hook_reminder_message = {
+                    "role": "user",
+                    "content": f"\n{'='*60}\n⚠️  HOOK REMINDER\n{'='*60}\n\n{post_hook_reminder}\n\n{'='*60}\n",
+                }
+                updated_messages.append(hook_reminder_message)
+                logger.info(
+                    f"[PostToolUse Hook] Injected reminder for {tool_name}: {post_hook_reminder[:100]}...",
                 )
 
             # Yield results chunk

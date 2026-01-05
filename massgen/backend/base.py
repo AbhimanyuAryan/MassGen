@@ -288,6 +288,8 @@ class LLMBackend(ABC):
             "video_generation_model",
             "audio_generation_backend",
             "audio_generation_model",
+            # Hook framework (handled by base class)
+            "hooks",
         }
 
     @abstractmethod
