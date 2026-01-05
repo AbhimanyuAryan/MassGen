@@ -46,6 +46,7 @@ async def understand_image(
     model: str = "gpt-4.1",
     allowed_paths: Optional[List[str]] = None,
     agent_cwd: Optional[str] = None,
+    task_context: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Understand and analyze an image using OpenAI's gpt-4.1 API.
@@ -263,6 +264,11 @@ async def understand_image(
             )
 
         try:
+            # Inject task context into prompt if available
+            from massgen.context.task_context import format_prompt_with_context
+
+            augmented_prompt = format_prompt_with_context(prompt, task_context)
+
             # Call OpenAI API for image understanding
             response = client.responses.create(
                 model=model,
@@ -270,7 +276,7 @@ async def understand_image(
                     {
                         "role": "user",
                         "content": [
-                            {"type": "input_text", "text": prompt},
+                            {"type": "input_text", "text": augmented_prompt},
                             {
                                 "type": "input_image",
                                 "image_url": f"data:{mime_type};base64,{base64_image}",

@@ -43,6 +43,8 @@ _subagent_orchestrator_config: Optional[SubagentOrchestratorConfig] = None
 _log_directory: Optional[str] = None
 _max_concurrent: int = 3
 _default_timeout: int = SUBAGENT_DEFAULT_TIMEOUT
+_min_timeout: int = 60
+_max_timeout: int = 600
 
 
 def _get_manager() -> SubagentManager:
@@ -60,6 +62,8 @@ def _get_manager() -> SubagentManager:
             log_directory=_log_directory,
             max_concurrent=_max_concurrent,
             default_timeout=_default_timeout,
+            min_timeout=_min_timeout,
+            max_timeout=_max_timeout,
         )
     return _manager
 
@@ -89,7 +93,9 @@ def _save_subagents_to_filesystem() -> None:
 
 async def create_server() -> fastmcp.FastMCP:
     """Factory function to create and configure the subagent MCP server."""
-    global _workspace_path, _parent_agent_id, _orchestrator_id, _parent_agent_configs, _parent_backend_config, _subagent_orchestrator_config, _log_directory, _max_concurrent, _default_timeout
+    global _workspace_path, _parent_agent_id, _orchestrator_id, _parent_agent_configs
+    global _subagent_orchestrator_config, _log_directory
+    global _max_concurrent, _default_timeout, _min_timeout, _max_timeout
 
     parser = argparse.ArgumentParser(description="Subagent MCP Server")
     parser.add_argument(
@@ -128,6 +134,18 @@ async def create_server() -> fastmcp.FastMCP:
         type=int,
         default=300,
         help="Default timeout in seconds (default: 300)",
+    )
+    parser.add_argument(
+        "--min-timeout",
+        type=int,
+        default=60,
+        help="Minimum allowed timeout in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--max-timeout",
+        type=int,
+        default=600,
+        help="Maximum allowed timeout in seconds (default: 600)",
     )
     parser.add_argument(
         "--orchestrator-config",
@@ -181,6 +199,8 @@ async def create_server() -> fastmcp.FastMCP:
     # Set concurrency and timeout limits
     _max_concurrent = args.max_concurrent
     _default_timeout = args.default_timeout
+    _min_timeout = args.min_timeout
+    _max_timeout = args.max_timeout
 
     # Set up signal handlers for graceful shutdown
     try:
@@ -199,7 +219,12 @@ async def create_server() -> fastmcp.FastMCP:
     def spawn_subagents(
         tasks: List[Dict[str, Any]],
         context: str,
-        timeout_seconds: Optional[int] = None,
+        # NOTE: timeout_seconds parameter intentionally removed from MCP interface.
+        # Allowing models to set custom timeouts could cause issues:
+        # - Models might set very short timeouts and want to retry
+        # - Subagents are blocking, so retries would be problematic
+        # - Better to use the configured default from YAML (subagent_default_timeout)
+        # timeout_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
         f"""
         Spawn subagents to work on INDEPENDENT tasks in PARALLEL.
@@ -222,13 +247,13 @@ async def create_server() -> fastmcp.FastMCP:
                    - "context_files": (optional) files to share
             context: (REQUIRED) Project/goal description so subagents understand the work.
                      Example: "Building a Bob Dylan tribute website with bio, discography, timeline"
-            timeout_seconds: (optional) Max time per subagent, default 300s
 
         TIMEOUT HANDLING:
-        If subagents timeout, check their workspaces anyway - they may have partial work:
-        - Result includes "workspace" path for each subagent
-        - Read files from that path to salvage any completed work
-        - Complete remaining work yourself
+        Subagents that timeout will attempt to recover any completed work:
+        - "completed_but_timeout": Full answer recovered (success=True, use the answer)
+        - "partial": Some work done but incomplete (check workspace for partial files)
+        - "timeout": No recoverable work (check workspace anyway for any files)
+        The "workspace" path is ALWAYS provided, even on timeout/error.
 
         Returns:
             {{
@@ -236,10 +261,12 @@ async def create_server() -> fastmcp.FastMCP:
                 "results": [
                     {{
                         "subagent_id": "...",
-                        "status": "completed" | "timeout" | "error",
-                        "workspace": "/path/to/subagent/workspace",  # CHECK THIS ON TIMEOUT!
-                        "answer": "...",
-                        "execution_time_seconds": float
+                        "status": "completed" | "completed_but_timeout" | "partial" | "timeout" | "error",
+                        "workspace": "/path/to/subagent/workspace",  # ALWAYS provided
+                        "answer": "..." | null,  # May be recovered even on timeout
+                        "execution_time_seconds": float,
+                        "completion_percentage": int | null,  # Progress before timeout (0-100)
+                        "token_usage": {{"input_tokens": N, "output_tokens": N}}
                     }}
                 ],
                 "summary": {{"total": N, "completed": N, "timeout": N}}
@@ -304,7 +331,7 @@ async def create_server() -> fastmcp.FastMCP:
                 manager.spawn_parallel(
                     tasks=tasks,
                     context=context,
-                    timeout_seconds=timeout_seconds or _default_timeout,
+                    timeout_seconds=_default_timeout,  # Use configured default, not model-specified
                 ),
             )
 

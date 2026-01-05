@@ -1672,16 +1672,24 @@ Task D: Build website (deps: A, B, C)       ← Sequential, do yourself after A/
 → Spawn subagents for A, B, C simultaneously. Wait for results. Then do D yourself.
 
 **IDEAL USE CASES:**
+- **Research and exploration** - gathering information, searching, analyzing sources
+- **Parallel data collection** - multiple independent lookups that can run simultaneously
 - Complex subtasks that benefit from fresh context (avoid context pollution)
-- Parallel work streams that can execute independently (same or no dependencies in your plan)
-- Research or analysis tasks that would consume too many tokens
 - Experimental operations you want isolated from your main workspace
+
+**SUBAGENT RELIABILITY:**
+Subagents are useful helpers but have limitations:
+- They run with simpler configs and may be less capable than you
+- Their outputs are **raw materials** - expect to review, refine, and fix their work
+- Don't blindly trust subagent results - verify and integrate thoughtfully
+- If a subagent produces something broken or incomplete, **you fix it** rather than reporting failure
 
 **AVOID SUBAGENTS FOR:**
 - Simple, quick operations you can do directly (overhead not worth it)
 - Tasks requiring back-and-forth coordination (high overhead)
 - Operations that need to modify your main workspace directly
 - Sequential tasks that depend on other task outputs
+- High-stakes deliverables that need careful quality control (do these yourself)
 
 ## How Subagents Work
 
@@ -1794,15 +1802,24 @@ spawn_subagents(
     "results": [
         {{
             "subagent_id": "research_oauth",
-            "status": "completed",
+            "status": "completed",  // or "completed_but_timeout", "partial", "timeout", "error"
             "workspace": "{self.workspace_path}/subagents/research_oauth/workspace",
             "answer": "The subagent's answer with file paths...",
-            "execution_time_seconds": 45.2
+            "execution_time_seconds": 45.2,
+            "completion_percentage": 100,  // Progress when timeout occurred (0-100)
+            "token_usage": {{"input_tokens": 1000, "output_tokens": 500}}
         }}
     ],
     "summary": {{"total": 1, "completed": 1, "failed": 0, "timeout": 0}}
 }}
 ```
+
+**Status values:**
+- `completed`: Normal successful completion
+- `completed_but_timeout`: Timed out but answer was recovered (use it!)
+- `partial`: Some work done, check workspace for partial files
+- `timeout`: No recoverable work, but workspace still accessible
+- `error`: Failed with error
 
 ## Workspace Structure
 
@@ -2258,6 +2275,69 @@ read_media(file_path="output.mp4", prompt="What problems or gaps exist?")
 - Video: mp4, mov, avi, mkv, webm
 
 A beautiful screenshot means nothing if buttons don't work. Test functionality, then verify visuals with a critical eye."""
+
+
+class TaskContextSection(SystemPromptSection):
+    """
+    Instructions for creating CONTEXT.md before using multimodal tools or subagents.
+
+    This ensures external API calls (to GPT-4.1, Gemini, etc.) have context about
+    what the user is trying to accomplish, preventing hallucinations about
+    task-specific terminology.
+
+    MEDIUM priority - included when multimodal tools or subagents are enabled.
+    """
+
+    def __init__(self):
+        super().__init__(
+            title="Task Context",
+            priority=Priority.MEDIUM,
+            xml_tag="task_context",
+        )
+
+    def build_content(self) -> str:
+        return """## Task Context for Tools and Subagents
+
+**REQUIRED**: Before spawning subagents or using multimodal tools (read_media, generate_media),
+you MUST create a `CONTEXT.md` file in your workspace with task context.
+
+### Why This Matters
+External APIs (like GPT-4.1 for image analysis) have no idea what you're working on.
+Without context, they will hallucinate - for example, interpreting "MassGen" as
+"Massachusetts General Hospital" instead of "multi-agent AI system".
+
+### What to Include in CONTEXT.md
+Write a brief file explaining:
+- **What we're building/doing** - the core task in 1-2 sentences
+- **Key terminology** - project-specific terms that could be misinterpreted
+- **Visual/brand details** - style, colors, aesthetic if relevant
+- **Any other context** tools or subagents need to understand the task
+
+### Example CONTEXT.md
+```markdown
+# Task Context
+
+Building a marketing website for MassGen - a multi-agent AI orchestration system
+that coordinates parallel AI agents through voting and consensus.
+
+## Key Terms
+- MassGen: Multi-agent AI coordination system (NOT Massachusetts General Hospital)
+- Agents: Individual AI instances that collaborate
+- Voting: Consensus mechanism where agents vote on best solutions
+
+## Visual Style
+- Dark theme with terminal aesthetic
+- Primary color: indigo (#4F46E5)
+- Modern, technical but approachable tone
+```
+
+### When to Create It
+Create CONTEXT.md **before** your first use of:
+- `spawn_subagents` - subagents will inherit this context
+- `read_media` - image/audio/video analysis will use this context
+- `generate_media` - image/video/audio generation will use this context
+
+The file will be read automatically and injected into external API calls."""
 
 
 class SystemPromptBuilder:

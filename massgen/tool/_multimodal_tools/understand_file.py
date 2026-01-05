@@ -200,6 +200,7 @@ async def understand_file(
     max_chars: int = 50000,
     allowed_paths: Optional[List[str]] = None,
     agent_cwd: Optional[str] = None,
+    task_context: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Understand and analyze file contents using OpenAI's gpt-4.1 API.
@@ -497,8 +498,13 @@ async def understand_file(
             file_content += truncation_note
             chars_read = len(file_content)
 
+        # Inject task context into prompt if available
+        from massgen.context.task_context import format_prompt_with_context
+
+        augmented_prompt = format_prompt_with_context(prompt, task_context)
+
         # Build the full prompt with file content
-        full_prompt = f"{prompt}\n\nFile: {f_path.name}\nContent:\n```\n{file_content}\n```"
+        full_prompt = f"{augmented_prompt}\n\nFile: {f_path.name}\nContent:\n```\n{file_content}\n```"
 
         try:
             # Call OpenAI API for file understanding

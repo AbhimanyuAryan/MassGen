@@ -163,6 +163,7 @@ async def _generate_single_with_input_images(
     instructions: Optional[str],
     timestamp: str,
     ext: str,
+    task_context: Optional[str] = None,
 ) -> ExecutionResult:
     """Handle single image generation with input images (image-to-image).
 
@@ -197,9 +198,14 @@ async def _generate_single_with_input_images(
         filename = f"{timestamp}_{clean_prompt}.{ext}"
         output_path = output_dir / filename
 
+        # Inject task context into prompt for generation
+        from massgen.context.task_context import format_prompt_with_context
+
+        augmented_prompt = format_prompt_with_context(prompt, task_context)
+
         # Build config
         config = GenerationConfig(
-            prompt=prompt,
+            prompt=augmented_prompt,
             output_path=output_path,
             media_type=media_type,
             backend=selected_backend,
@@ -257,7 +263,7 @@ async def _generate_single_with_input_images(
         return _error_result(f"Generation error: {str(e)}")
 
 
-@context_params("agent_cwd", "allowed_paths", "multimodal_config")
+@context_params("agent_cwd", "allowed_paths", "multimodal_config", "task_context")
 async def generate_media(
     prompt: Optional[str] = None,
     mode: Literal["image", "video", "audio"] = "image",
@@ -277,6 +283,7 @@ async def generate_media(
     agent_cwd: Optional[str] = None,
     allowed_paths: Optional[List[str]] = None,
     multimodal_config: Optional[Dict[str, Any]] = None,
+    task_context: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Generate media (image, video, or audio) from text prompt(s).
@@ -351,6 +358,21 @@ async def generate_media(
         Audio: openai (gpt-4o-mini-tts)
     """
     try:
+        # Load task_context dynamically from CONTEXT.md (it may be created during execution)
+        # This allows agents to create CONTEXT.md after the backend starts streaming
+        from massgen.context.task_context import load_task_context_with_warning
+
+        task_context, context_warning = load_task_context_with_warning(agent_cwd, task_context)
+
+        # Require CONTEXT.md for external API calls
+        if not task_context:
+            return _error_result(
+                "CONTEXT.md not found in workspace. "
+                "Before using generate_media, create a CONTEXT.md file with task context. "
+                "This helps external APIs understand what you're working on. "
+                "See system prompt for instructions and examples.",
+            )
+
         # Validate prompt/prompts - exactly one must be provided
         if prompt and prompts:
             return _error_result("Provide either 'prompt' or 'prompts', not both")
@@ -421,7 +443,11 @@ async def generate_media(
                 instructions=instructions,
                 timestamp=timestamp,
                 ext=ext,
+                task_context=task_context,
             )
+
+        # Import context formatting function
+        from massgen.context.task_context import format_prompt_with_context
 
         # Define the single generation task
         async def _generate_one(idx: int, single_prompt: str, semaphore: asyncio.Semaphore) -> Dict[str, Any]:
@@ -436,9 +462,12 @@ async def generate_media(
                         filename = f"{timestamp}_{clean_prompt}.{ext}"
                     output_path = output_dir / filename
 
+                    # Inject task context into prompt for generation
+                    augmented_prompt = format_prompt_with_context(single_prompt, task_context)
+
                     # Build config
                     config = GenerationConfig(
-                        prompt=single_prompt,
+                        prompt=augmented_prompt,
                         output_path=output_path,
                         media_type=media_type,
                         backend=selected_backend,
@@ -522,22 +551,22 @@ async def generate_media(
 
         # Return appropriate format based on batch vs single
         if is_batch:
+            response_data = {
+                "success": succeeded > 0,
+                "operation": "generate_media",
+                "mode": mode,
+                "batch": True,
+                "total": len(final_results),
+                "succeeded": succeeded,
+                "failed": failed,
+                "results": final_results,
+            }
+            if context_warning:
+                response_data["warning"] = context_warning
             return ExecutionResult(
                 output_blocks=[
                     TextContent(
-                        data=json.dumps(
-                            {
-                                "success": succeeded > 0,
-                                "operation": "generate_media",
-                                "mode": mode,
-                                "batch": True,
-                                "total": len(final_results),
-                                "succeeded": succeeded,
-                                "failed": failed,
-                                "results": final_results,
-                            },
-                            indent=2,
-                        ),
+                        data=json.dumps(response_data, indent=2),
                     ),
                 ],
             )
@@ -545,24 +574,24 @@ async def generate_media(
             # Single prompt - return original format for backwards compatibility
             result = final_results[0]
             if result.get("success"):
+                response_data = {
+                    "success": True,
+                    "operation": "generate_media",
+                    "mode": mode,
+                    "file_path": result.get("file_path"),
+                    "filename": result.get("filename"),
+                    "backend": result.get("backend"),
+                    "model": result.get("model"),
+                    "file_size": result.get("file_size"),
+                    "duration_seconds": result.get("duration_seconds"),
+                    "metadata": result.get("metadata", {}),
+                }
+                if context_warning:
+                    response_data["warning"] = context_warning
                 return ExecutionResult(
                     output_blocks=[
                         TextContent(
-                            data=json.dumps(
-                                {
-                                    "success": True,
-                                    "operation": "generate_media",
-                                    "mode": mode,
-                                    "file_path": result.get("file_path"),
-                                    "filename": result.get("filename"),
-                                    "backend": result.get("backend"),
-                                    "model": result.get("model"),
-                                    "file_size": result.get("file_size"),
-                                    "duration_seconds": result.get("duration_seconds"),
-                                    "metadata": result.get("metadata", {}),
-                                },
-                                indent=2,
-                            ),
+                            data=json.dumps(response_data, indent=2),
                         ),
                     ],
                 )

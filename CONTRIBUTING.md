@@ -603,9 +603,23 @@ Have a significant feature idea not covered by existing tracks?
 ### Review Process
 
 1. Automated checks will run on your PR
-2. Maintainers will review your code
-3. Address any feedback or requested changes
-4. Once approved, PR will be merged
+2. **CodeRabbit** will provide AI-powered code review comments
+3. Maintainers will review your code
+4. Address any feedback or requested changes
+5. Once approved, PR will be merged
+
+### CodeRabbit AI Reviews
+
+We use [CodeRabbit](https://coderabbit.ai) for automated code reviews. Configuration is in `.coderabbit.yaml`.
+
+**Useful commands** (in PR comments):
+- `@coderabbitai review` - Trigger incremental review
+- `@coderabbitai resolve` - Mark all comments as resolved
+- `@coderabbitai summary` - Regenerate PR summary
+
+**Applying suggestions:**
+- Click "Commit suggestion" button on GitHub for simple fixes
+- For complex changes, address manually or use Claude Code
 
 ## 🐛 Reporting Issues
 
@@ -624,6 +638,67 @@ When reporting issues, please include:
 - **X**: Follow the official MassGen X account: https://x.com/massgen_ai
 - **GitHub Issues**: Report bugs and request features
 - **GitHub Discussions**: Ask questions and share ideas
+
+## 🤖 Using Claude Code
+
+MassGen development is made easier with [Claude Code](https://claude.ai/code). The `CLAUDE.md` file provides project-specific guidance for Claude Code sessions.
+
+### Key Files for Claude Code Users
+
+| File | Purpose |
+|------|---------|
+| `CLAUDE.md` | Project instructions for Claude Code (architecture, commands, workflows) |
+| `.coderabbit.yaml` | CodeRabbit configuration for automated PR reviews |
+| `docs/dev_notes/release_checklist.md` | Full release process documentation |
+
+### Useful Skills
+
+MassGen includes Claude Code skills in `massgen/skills/` -- ensure to symlink to .claude/skills so Claude Code starts with them in its context (ask Claude how to do this; it's in the CLAUDE.md):
+
+- `release-prep v0.1.X` - Prepare release documentation and announcements
+- `model-registry-maintainer` - Add new models to capabilities registry
+- `massgen-config-creator` - Create properly structured YAML configs
+
+### CodeRabbit CLI Integration
+
+After implementing changes, run CodeRabbit locally:
+
+```bash
+coderabbit --prompt-only
+```
+
+This provides AI review output that Claude Code can use to create fix task lists.
+
+## 🚀 Release Process
+
+### Automated Workflows
+
+| Workflow | Trigger | What It Does |
+|----------|---------|--------------|
+| `pypi-publish.yml` | GitHub Release published | Builds and publishes to PyPI, triggers ReadTheDocs build |
+| `release-docs-automation.yml` | Tag push `v*.*.*` | Validates announcement files exist |
+| `auto-release.yml` | Tag push | Creates GitHub Release |
+| `docker-publish.yml` | Release published | Publishes Docker images |
+
+### For Maintainers: Release Checklist
+
+1. **Merge release PR** to main (from `dev/v0.1.X` branch)
+2. **Run `/release-prep v0.1.X`** - Generates CHANGELOG entry, announcement draft
+3. **Review and commit** the generated files
+4. **Create and push tag**: `git tag v0.1.X && git push origin v0.1.X`
+5. **Publish GitHub Release** - Triggers PyPI auto-publish
+6. **Post announcement** - Copy from `docs/announcements/current-release.md` to LinkedIn/X
+7. **Update links** - Add social post URLs back to `current-release.md`
+
+### Announcement Files
+
+| File | Purpose |
+|------|---------|
+| `docs/announcements/feature-highlights.md` | Long-lived feature list (~3k chars for LinkedIn) |
+| `docs/announcements/current-release.md` | Active release announcement |
+| `docs/announcements/archive/` | Past announcements for reference |
+
+See `docs/announcements/README.md` for the full workflow.
 
 ## ⚠️ Important Notes
 

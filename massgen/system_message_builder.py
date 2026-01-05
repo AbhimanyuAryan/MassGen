@@ -34,6 +34,7 @@ from massgen.system_prompt_sections import (
     SkillsSection,
     SubagentSection,
     SystemPromptBuilder,
+    TaskContextSection,
     TaskPlanningSection,
     WorkspaceStructureSection,
 )
@@ -271,6 +272,7 @@ class SystemMessageBuilder:
                 logger.info(f"[SystemMessageBuilder] Added code-based tools section for {agent_id}")
 
         # PRIORITY 10 (MEDIUM): Subagent Delegation (conditional)
+        enable_subagents = False
         if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents"):
             enable_subagents = self.config.coordination_config.enable_subagents
             if enable_subagents:
@@ -282,6 +284,13 @@ class SystemMessageBuilder:
                 max_concurrent = getattr(self.config.coordination_config, "subagent_max_concurrent", 3)
                 builder.add_section(SubagentSection(workspace_path, max_concurrent))
                 logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent})")
+
+        # PRIORITY 10 (MEDIUM): Task Context (when multimodal tools OR subagents are enabled)
+        # This instructs agents to create CONTEXT.md before using tools that make external API calls
+        enable_multimodal = agent.backend.config.get("enable_multimodal_tools", False) if agent.backend else False
+        if enable_multimodal or enable_subagents:
+            builder.add_section(TaskContextSection())
+            logger.info(f"[SystemMessageBuilder] Added task context section for {agent_id} (multimodal: {enable_multimodal}, subagents: {enable_subagents})")
 
         # PRIORITY 10 (MEDIUM): Task Planning
         if enable_task_planning:
