@@ -334,38 +334,58 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
             })}
 
           {/* Draw nodes */}
-          {timelineData.nodes.map(node => {
-            const pos = nodePositions.get(node.id);
-            if (!pos) return null;
+          {(() => {
+            // Find the most recent vote for each agent (by timestamp)
+            // Only the most recent vote per agent is valid; earlier ones are superseded
+            const latestVoteByAgent = new Map<string, number>();
+            timelineData.nodes
+              .filter(n => n.type === 'vote')
+              .forEach(node => {
+                const existing = latestVoteByAgent.get(node.agentId);
+                if (!existing || node.timestamp > existing) {
+                  latestVoteByAgent.set(node.agentId, node.timestamp);
+                }
+              });
 
-            // Final nodes are larger for emphasis
-            const nodeSize = node.type === 'final' ? NODE_SIZE * 1.4 : NODE_SIZE;
+            return timelineData.nodes.map(node => {
+              const pos = nodePositions.get(node.id);
+              if (!pos) return null;
 
-            // Filter contextSources to only include sources that existed BEFORE this node
-            const filteredContextSources = node.contextSources.filter(sourceLabel => {
-              const sourceNode = timelineData.nodes.find(n => n.label === sourceLabel);
-              // Only include if source existed before this node (by timestamp)
-              return sourceNode && sourceNode.timestamp < node.timestamp;
+              // Final nodes are larger for emphasis
+              const nodeSize = node.type === 'final' ? NODE_SIZE * 1.4 : NODE_SIZE;
+
+              // Filter contextSources to only include sources that existed BEFORE this node
+              const filteredContextSources = node.contextSources.filter(sourceLabel => {
+                const sourceNode = timelineData.nodes.find(n => n.label === sourceLabel);
+                // Only include if source existed before this node (by timestamp)
+                return sourceNode && sourceNode.timestamp < node.timestamp;
+              });
+
+              // Create a modified node with filtered context sources for display
+              const displayNode = {
+                ...node,
+                contextSources: filteredContextSources,
+              };
+
+              // Determine if this vote is superseded
+              // A vote is superseded if it's not the most recent vote from that agent
+              const isSuperseded = node.type === 'vote' &&
+                node.timestamp !== latestVoteByAgent.get(node.agentId);
+
+              return (
+                <TimelineNode
+                  key={node.id}
+                  node={displayNode}
+                  x={pos.x}
+                  y={pos.y}
+                  size={nodeSize}
+                  agentOrder={timelineData.agents}
+                  isSuperseded={isSuperseded}
+                  onClick={() => onNodeClick?.(node)}
+                />
+              );
             });
-
-            // Create a modified node with filtered context sources for display
-            const displayNode = {
-              ...node,
-              contextSources: filteredContextSources,
-            };
-
-            return (
-              <TimelineNode
-                key={node.id}
-                node={displayNode}
-                x={pos.x}
-                y={pos.y}
-                size={nodeSize}
-                agentOrder={timelineData.agents}
-                onClick={() => onNodeClick?.(node)}
-              />
-            );
-          })}
+          })()}
         </svg>
       </div>
     </div>

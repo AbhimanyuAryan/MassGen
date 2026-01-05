@@ -3122,11 +3122,21 @@ def create_app(
         start_time = min(timestamps) if timestamps else 0
         end_time = max(timestamps) if timestamps else None
 
+        # Calculate current voting round (max round from vote nodes)
+        # This lets the frontend determine which votes are superseded
+        vote_rounds = [n.get("round", 1) for n in nodes if n.get("type") == "vote"]
+        current_voting_round = max(vote_rounds) if vote_rounds else 1
+
+        # Debug: log vote rounds
+        vote_info = [(n.get("label"), n.get("round")) for n in nodes if n.get("type") == "vote"]
+        print(f"[DEBUG] Timeline API: vote_info={vote_info}, currentVotingRound={current_voting_round}")
+
         return {
             "nodes": nodes,
             "agents": agent_ids,
             "startTime": start_time,
             "endTime": end_time,
+            "currentVotingRound": current_voting_round,
         }
 
     @app.get("/api/sessions/{session_id}")

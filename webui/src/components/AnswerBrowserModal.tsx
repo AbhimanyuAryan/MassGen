@@ -8,7 +8,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell, Wifi, WifiOff, File, Columns } from 'lucide-react';
-import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
+import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, selectVoteHistory, selectCurrentVotingRound, resolveAnswerContent } from '../stores/agentStore';
 import { useWorkspaceStore, selectWsStatus, selectWsError } from '../stores/workspaceStore';
 import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType } from '../types';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
@@ -286,6 +286,8 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const selectedAgent = useAgentStore(selectSelectedAgent);
   const finalAnswer = useAgentStore(selectFinalAnswer);
   const voteDistribution = useAgentStore(selectVoteDistribution);
+  const voteHistory = useAgentStore(selectVoteHistory);
+  const currentVotingRound = useAgentStore(selectCurrentVotingRound);
   const sessionId = useAgentStore((s) => s.sessionId);
 
   // Workspace store - always-on WebSocket provides real-time file updates
@@ -1098,52 +1100,38 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     return grouped;
   }, [answers]);
 
-  // Collect vote data with answer labels
+  // Collect vote data from voteHistory - permanent record that survives round resets
   const votes = useMemo(() => {
-    return agentOrder
-      .map((agentId, voterIdx) => {
-        const agent = agents[agentId];
-        if (!agent?.voteTarget) return null;
+    return voteHistory.map((record) => {
+      const voterIdx = agentOrder.indexOf(record.voterId);
+      const targetIdx = agentOrder.indexOf(record.targetId);
+      const voterAgent = agents[record.voterId];
+      const targetAgent = agents[record.targetId];
 
-        const targetIdx = agentOrder.indexOf(agent.voteTarget);
-        const targetAgent = agents[agent.voteTarget];
+      // Find what answers were available to choose from at the time of this vote
+      // This is approximate - we use the votedAnswerLabel's answer number as the baseline
+      const voteAnswerNum = parseInt(record.votedAnswerLabel?.match(/\.(\d+)$/)?.[1] || '1', 10);
+      const availableAnswers = agentOrder.map((_, idx) => `answer${idx + 1}.${voteAnswerNum}`);
 
-        // Find the answer that was voted for (most recent answer from target at time of vote)
-        // The target's answerCount tells us how many answers they had
-        const targetAnswerCount = targetAgent?.answerCount || 1;
-        const votedAnswerLabel = `answer${targetIdx + 1}.${targetAnswerCount}`;
+      // Check if this vote is from the current voting round (valid) or a previous round (invalidated)
+      const isValid = record.voteRound === currentVotingRound;
 
-        // Find what answers were available to choose from (answers from all agents at vote time)
-        const availableAnswers = agentOrder.map((aid, idx) => {
-          const a = agents[aid];
-          const count = a?.answerCount || 1;
-          return `answer${idx + 1}.${count}`;
-        });
-
-        return {
-          voterId: agentId,
-          voterIndex: voterIdx + 1,
-          voterModel: agent.modelName,
-          targetId: agent.voteTarget,
-          targetIndex: targetIdx + 1,
-          targetModel: targetAgent?.modelName,
-          votedAnswerLabel,
-          availableAnswers,
-          reason: agent.voteReason || 'No reason provided',
-        };
-      })
-      .filter(Boolean) as Array<{
-        voterId: string;
-        voterIndex: number;
-        voterModel?: string;
-        targetId: string;
-        targetIndex: number;
-        targetModel?: string;
-        votedAnswerLabel: string;
-        availableAnswers: string[];
-        reason: string;
-      }>;
-  }, [agents, agentOrder]);
+      return {
+        voterId: record.voterId,
+        voterIndex: voterIdx + 1,
+        voterModel: voterAgent?.modelName,
+        targetId: record.targetId,
+        targetIndex: targetIdx + 1,
+        targetModel: targetAgent?.modelName,
+        votedAnswerLabel: record.votedAnswerLabel || `answer${targetIdx + 1}.1`,
+        availableAnswers,
+        reason: record.reason || 'No reason provided',
+        isValid,
+        voteRound: record.voteRound,
+        timestamp: record.timestamp,
+      };
+    }).sort((a, b) => b.timestamp - a.timestamp);  // Newest first (top-down chronological)
+  }, [voteHistory, agents, agentOrder, currentVotingRound]);
 
   // Sort vote distribution by votes (highest first)
   const sortedDistribution = useMemo(() => {
@@ -1508,39 +1496,52 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                       <div className="space-y-3">
                         {votes.map((vote) => (
                           <motion.div
-                            key={vote.voterId}
+                            key={`${vote.voterId}-${vote.voteRound}`}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className="bg-gray-700/50 rounded-lg border border-gray-600 overflow-hidden"
+                            className={`rounded-lg border overflow-hidden ${
+                              vote.isValid
+                                ? 'bg-gray-700/50 border-gray-600'
+                                : 'bg-gray-800/30 border-gray-700/50 opacity-60'
+                            }`}
                           >
                             {/* Vote header */}
-                            <div className="flex items-center gap-3 px-4 py-3 bg-gray-700/50">
+                            <div className={`flex items-center gap-3 px-4 py-3 ${
+                              vote.isValid ? 'bg-gray-700/50' : 'bg-gray-800/30'
+                            }`}>
                               <div className="flex items-center gap-2 text-gray-300">
-                                <User className="w-4 h-4 text-blue-400" />
-                                <span className="font-medium">Agent {vote.voterIndex}</span>
+                                <User className={`w-4 h-4 ${vote.isValid ? 'text-blue-400' : 'text-gray-500'}`} />
+                                <span className={`font-medium ${!vote.isValid && 'text-gray-500'}`}>Agent {vote.voterIndex}</span>
                                 {vote.voterModel && (
                                   <span className="text-xs text-gray-500">({vote.voterModel})</span>
                                 )}
                               </div>
-                              <ArrowRight className="w-4 h-4 text-amber-500" />
+                              <ArrowRight className={`w-4 h-4 ${vote.isValid ? 'text-amber-500' : 'text-gray-600'}`} />
                               <div className="flex items-center gap-2">
                                 <span className={`font-medium px-2 py-0.5 rounded ${
-                                  vote.targetId === selectedAgent
-                                    ? 'bg-yellow-500/30 text-yellow-300'
-                                    : 'bg-green-500/20 text-green-300'
+                                  !vote.isValid
+                                    ? 'bg-gray-600/30 text-gray-500 line-through'
+                                    : vote.targetId === selectedAgent
+                                      ? 'bg-yellow-500/30 text-yellow-300'
+                                      : 'bg-green-500/20 text-green-300'
                                 }`}>
                                   {vote.votedAnswerLabel}
                                 </span>
-                                {vote.targetId === selectedAgent && <span className="text-sm">👑</span>}
+                                {vote.isValid && vote.targetId === selectedAgent && <span className="text-sm">👑</span>}
+                                {!vote.isValid && (
+                                  <span className="text-xs text-red-400/70 bg-red-900/30 px-1.5 py-0.5 rounded">
+                                    superseded
+                                  </span>
+                                )}
                               </div>
                             </div>
 
                             {/* Vote details */}
-                            <div className="px-4 py-3 border-t border-gray-600 space-y-2">
+                            <div className="px-4 py-3 border-t border-gray-600/50 space-y-2">
                               {/* Voted for */}
                               <div className="text-sm">
                                 <span className="text-gray-500">Voted for: </span>
-                                <span className="text-gray-300">
+                                <span className={vote.isValid ? 'text-gray-300' : 'text-gray-500'}>
                                   Agent {vote.targetIndex}
                                   {vote.targetModel && ` (${vote.targetModel})`}
                                 </span>
@@ -1556,7 +1557,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
 
                               {/* Reason */}
                               <div className="mt-2 pt-2 border-t border-gray-600/50">
-                                <p className="text-sm text-gray-400 italic">{vote.reason}</p>
+                                <p className={`text-sm italic ${vote.isValid ? 'text-gray-400' : 'text-gray-500'}`}>{vote.reason}</p>
                               </div>
                             </div>
                           </motion.div>

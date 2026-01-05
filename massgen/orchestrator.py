@@ -2754,6 +2754,7 @@ Your answer:"""
                                             vote_label=vote_label,
                                             voted_for=voted_for_label or voted_for_agent,
                                             available_answers=available_answers,
+                                            voting_round=self.coordination_tracker.current_iteration,
                                         )
                                 # Update status file for real-time monitoring
                                 # Run in executor to avoid blocking event loop

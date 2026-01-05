@@ -13,6 +13,7 @@ import type { AnswerWorkspace } from '../types';
 import { InlineArtifactPreview } from './InlineArtifactPreview';
 import { ConversationHistory } from './ConversationHistory';
 import { ComparisonView } from './ComparisonView';
+import { ResizableSplitPane } from './ResizableSplitPane';
 import { canPreviewFile } from '../utils/artifactTypes';
 import { clearFileCache } from '../hooks/useFileContent';
 
@@ -876,63 +877,88 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                 </div>
               )}
 
-              {/* Split View: File Tree + Preview */}
-              <div className="flex-1 flex overflow-hidden">
-                {/* Left: File Tree - hidden when fullscreen */}
-                {!isPreviewFullscreen && (
-                  <div className="w-80 shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto custom-scrollbar p-4">
-                    {isLoadingWorkspaces || isLoadingFiles ? (
-                      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-                        <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
-                        <p className="text-sm">Loading...</p>
-                      </div>
-                    ) : !activeWorkspace ? (
-                      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm">No workspace found</p>
-                        {selectedAnswerLabel !== 'current' && (
-                          <p className="text-xs text-amber-500 mt-1">Historical snapshot not available</p>
-                        )}
-                      </div>
-                    ) : workspaceFiles.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm">No files</p>
-                      </div>
+              {/* Split View: File Tree + Preview with draggable divider */}
+              <div className="flex-1 overflow-hidden">
+                {isPreviewFullscreen ? (
+                  /* When fullscreen, show only the preview */
+                  <div className="h-full overflow-hidden p-4 relative">
+                    {selectedFilePath && activeWorkspace ? (
+                      <InlineArtifactPreview
+                        filePath={selectedFilePath}
+                        workspacePath={activeWorkspace.path}
+                        onClose={handleInlinePreviewClose}
+                        onFullscreen={() => setIsPreviewFullscreen(true)}
+                      />
                     ) : (
-                      <div>
-                        <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                          <Folder className="w-3 h-3" />
-                          <span>{workspaceFiles.length} files</span>
-                          <span className={selectedAnswerLabel === 'current' ? 'text-green-500' : 'text-amber-500'}>
-                            ({selectedAnswerLabel === 'current' ? 'final' : 'historical'})
-                          </span>
-                        </div>
-                        {fileTree.map((node) => (
-                          <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
-                        ))}
+                      <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-100 dark:bg-gray-800/30 rounded-lg border border-gray-200 dark:border-gray-700">
+                        <Eye className="w-12 h-12 mb-4 opacity-30" />
+                        <p className="text-sm">Select a file to preview</p>
+                        <p className="text-xs text-gray-400 mt-1">Click any file in the tree</p>
                       </div>
                     )}
                   </div>
+                ) : (
+                  <ResizableSplitPane
+                    storageKey="final-workspace-split"
+                    defaultLeftWidth={25}
+                    minLeftWidth={15}
+                    maxLeftWidth={50}
+                    left={
+                      <div className="h-full overflow-y-auto custom-scrollbar p-4 bg-white dark:bg-gray-900">
+                        {isLoadingWorkspaces || isLoadingFiles ? (
+                          <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                            <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
+                            <p className="text-sm">Loading...</p>
+                          </div>
+                        ) : !activeWorkspace ? (
+                          <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                            <Folder className="w-10 h-10 mb-3 opacity-50" />
+                            <p className="text-sm">No workspace found</p>
+                            {selectedAnswerLabel !== 'current' && (
+                              <p className="text-xs text-amber-500 mt-1">Historical snapshot not available</p>
+                            )}
+                          </div>
+                        ) : workspaceFiles.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                            <Folder className="w-10 h-10 mb-3 opacity-50" />
+                            <p className="text-sm">No files</p>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                              <Folder className="w-3 h-3" />
+                              <span>{workspaceFiles.length} files</span>
+                              <span className={selectedAnswerLabel === 'current' ? 'text-green-500' : 'text-amber-500'}>
+                                ({selectedAnswerLabel === 'current' ? 'final' : 'historical'})
+                              </span>
+                            </div>
+                            {fileTree.map((node) => (
+                              <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    }
+                    right={
+                      <div className="h-full overflow-hidden p-4 relative">
+                        {selectedFilePath && activeWorkspace ? (
+                          <InlineArtifactPreview
+                            filePath={selectedFilePath}
+                            workspacePath={activeWorkspace.path}
+                            onClose={handleInlinePreviewClose}
+                            onFullscreen={() => setIsPreviewFullscreen(true)}
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-100 dark:bg-gray-800/30 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <Eye className="w-12 h-12 mb-4 opacity-30" />
+                            <p className="text-sm">Select a file to preview</p>
+                            <p className="text-xs text-gray-400 mt-1">Click any file in the tree</p>
+                          </div>
+                        )}
+                      </div>
+                    }
+                  />
                 )}
-
-                {/* Right: Inline Preview */}
-                <div className="flex-1 overflow-hidden p-4 relative">
-                  {selectedFilePath && activeWorkspace ? (
-                    <InlineArtifactPreview
-                      filePath={selectedFilePath}
-                      workspacePath={activeWorkspace.path}
-                      onClose={handleInlinePreviewClose}
-                      onFullscreen={() => setIsPreviewFullscreen(true)}
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-100 dark:bg-gray-800/30 rounded-lg border border-gray-200 dark:border-gray-700">
-                      <Eye className="w-12 h-12 mb-4 opacity-30" />
-                      <p className="text-sm">Select a file to preview</p>
-                      <p className="text-xs text-gray-400 mt-1">Click any file in the tree</p>
-                    </div>
-                  )}
-                </div>
               </div>
             </motion.div>
           )}

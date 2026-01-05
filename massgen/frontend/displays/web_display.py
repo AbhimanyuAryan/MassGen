@@ -507,6 +507,7 @@ class WebDisplay(BaseDisplay):
         vote_label: str,
         voted_for: str,
         available_answers: List[str],
+        voting_round: int = 1,
     ) -> None:
         """Record a vote node with its available answers for timeline visualization.
 
@@ -515,15 +516,18 @@ class WebDisplay(BaseDisplay):
             vote_label: Label like "vote1.1"
             voted_for: Agent ID who received the vote
             available_answers: List of answer labels voter could see
+            voting_round: The iteration/round number when this vote was cast
         """
+        # Use vote_label in ID to allow multiple votes from same agent (superseded votes)
+        print(f"[DEBUG] record_vote_with_context: voter={voter_id}, label={vote_label}, round={voting_round}")
         self._timeline_events.append(
             {
-                "id": f"{voter_id}-vote",
+                "id": f"{voter_id}-{vote_label}",
                 "type": "vote",
                 "agent_id": voter_id,
                 "label": vote_label,
                 "timestamp": time.time() * 1000,
-                "round": 1,
+                "round": voting_round,
                 "context_sources": available_answers,
                 "voted_for": voted_for,
             },

@@ -199,6 +199,7 @@ export interface AgentState {
   displayRoundId: string;  // What the dropdown shows (user-selectable)
   voteTarget?: string;
   voteReason?: string;
+  voteRound?: number;  // Which voting round this vote was cast in (for invalidation tracking)
   answerCount: number;
   voteCount: number;  // Track votes for labeling
   files: FileInfo[];
@@ -263,6 +264,16 @@ export interface ConversationMessage {
 }
 
 // Full session state
+// Record of a vote for history tracking
+export interface VoteRecord {
+  voterId: string;
+  targetId: string;
+  reason: string;
+  voteRound: number;
+  timestamp: number;
+  votedAnswerLabel?: string;  // e.g., "answer1.2"
+}
+
 export interface SessionState {
   sessionId: string;
   question: string;
@@ -270,6 +281,8 @@ export interface SessionState {
   agentOrder: string[];
   answers: Answer[];
   voteDistribution: Record<string, number>;
+  voteHistory: VoteRecord[];  // All votes across all rounds (for history display)
+  currentVotingRound: number;  // Track which voting round we're in (increments when new answer submitted)
   selectedAgent?: string;
   finalAnswer?: string;
   orchestratorEvents: string[];
@@ -360,6 +373,7 @@ export interface TimelineData {
   agents: string[];
   startTime: number;
   endTime?: number;
+  currentVotingRound?: number;  // For determining which votes are superseded
 }
 
 // ============================================================================
