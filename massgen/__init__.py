@@ -89,7 +89,7 @@ from .orchestrator import Orchestrator, create_orchestrator
 
 LITELLM_AVAILABLE = True
 
-__version__ = "0.1.31"
+__version__ = "0.1.33"
 __author__ = "MassGen Contributors"
 
 
@@ -218,8 +218,8 @@ def build_config(
                 },
             )
     else:
-        # Default: 2 agents with gpt-5
-        default_model = "gpt-5.1-codex"
+        # Default: 2 agents with gpt-5.2
+        default_model = "gpt-5.2"
         default_backend = "openai"
         n = num_agents or 2
         provider_info = builder.PROVIDERS.get(default_backend, {})

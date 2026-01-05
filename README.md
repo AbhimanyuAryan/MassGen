@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.31 Features](#-latest-features-v0131)
+- [v0.1.33 Features](#-latest-features-v0133)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.31)](#recent-achievements-v0131)
-- [Previous Achievements (v0.0.3 - v0.1.30)](#previous-achievements-v003---v0130)
+- [Recent Achievements (v0.1.33)](#recent-achievements-v0133)
+- [Previous Achievements (v0.0.3 - v0.1.32)](#previous-achievements-v003---v0132)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.32 Roadmap](#v0132-roadmap)
+- [v0.1.34 Roadmap](#v0134-roadmap)
 </details>
 
 <details open>
@@ -155,16 +155,17 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.31)
+## 🆕 Latest Features (v0.1.33)
 
-**🎉 Released: December 29, 2025**
+**🎉 Released: January 2, 2026**
 
-**What's New in v0.1.31:**
-- **📊 Logfire Observability** - Comprehensive logging and tracing via [Logfire](https://logfire.pydantic.dev/) with automatic LLM instrumentation for OpenAI, Claude, and Gemini backends
-- **☁️ Azure Tool Call Streaming** - Tool calls now accumulated and yielded as structured chunks for Azure OpenAI
-- **🔧 OpenRouter Web Search Logging** - Fixed logging output for web search operations
+**What's New in v0.1.33:**
+- **🔄 Reactive Context Compression** - Automatic conversation compression when context length errors occur, seamlessly recovering from token limit issues
+- **📦 Streaming Buffer System** - Tracks partial agent responses during streaming, enabling compression recovery
+- **🛡️ MCP Tool Protections** - `write_file` refuses to overwrite existing files; `create_task_plan` prevents duplicate task plans after recovery
+- **🔧 Model Behavior Fixes** - Grok MCP tools visibility, Gemini vote-only mode, GPT-5 coordination improvements
 
-**Try v0.1.31 Features:**
+**Try v0.1.33 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
@@ -172,13 +173,14 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Enable Logfire observability - comprehensive logging and tracing
-massgen --logfire --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "What are the benefits of multi-agent AI systems?"
+# Test reactive context compression (automatically handles long conversations)
+uv run massgen --debug --save-llm-calls \
+  --config massgen/configs/tools/filesystem/test_reactive_compression.yaml \
+  "Read all Python files in massgen/backend/ and summarize what each one does"
 
-# Or enable via environment variable
-MASSGEN_LOGFIRE_ENABLED=true massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "Compare different AI architectures"
+# Compression activates automatically when context limits are reached
+# Agent progress is preserved through the streaming buffer system
+# Debug logs saved to .massgen/massgen_logs/<session>/compression_debug/
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -402,7 +404,9 @@ MassGen automatically loads API keys from `.env` in your current directory.
 The system currently supports multiple model providers with advanced capabilities:
 
 **API-based Models:**
-- **OpenAI**: GPT-5.1-Codex series (gpt-5.1-codex-max, gpt-5.1-codex, gpt-5.1-codex-mini), GPT-5.2, GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+- **OpenAI**: GPT-5.2 (recommended default), GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-5.1-Codex series, GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+  - **Note**: We recommend GPT-5.2/5.1/5 over Codex models. Codex models are [optimized for shorter system messages](https://cookbook.openai.com/examples/gpt-5-codex_prompting_guide) and may not work well with MassGen's coordination prompts.
+  - **Reasoning**: GPT-5.1 and GPT-5.2 default to `reasoning: none`. MassGen automatically sets `reasoning.effort: medium` when no reasoning config is provided, matching GPT-5's default behavior.
 - **Azure OpenAI**: Any Azure-deployed models (GPT-4, GPT-4o, GPT-35-turbo, etc.)
 - **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.1, Claude Sonnet 4
   - Advanced tooling: web search, code execution, Files API, programmatic tool calling, tool search with deferred loading
@@ -1164,22 +1168,34 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.31)
+### Recent Achievements (v0.1.33)
 
-**🎉 Released: December 29, 2025**
+**🎉 Released: January 2, 2026**
 
-#### Logfire Observability Integration
-- **Automatic LLM Instrumentation**: Tracing for OpenAI, Anthropic Claude, and Google Gemini backends
-- **Tool Execution Tracing**: Timing metrics for MCP and custom tools with agent coordination observability
-- **Enable via CLI**: Use `--logfire` flag or `MASSGEN_LOGFIRE_ENABLED=true` environment variable
+#### Reactive Context Compression
+- **Automatic Recovery**: Conversation automatically compressed when context length errors occur
+- **Seamless Continuation**: Agents resume work after compression without losing progress
+- **Streaming Buffer Integration**: Partial responses preserved through streaming buffer system
 
-#### Azure OpenAI Native Tool Call Streaming
-- **Structured Tool Chunks**: Tool calls accumulated and yielded as structured `tool_calls` chunks instead of plain content
+#### Streaming Buffer System
+- **Response Tracking**: Tracks partial agent responses during streaming for compression recovery
+- **Backend Integration**: Works across all supported backends
 
-#### Documentation
-- `docs/source/user_guide/logging.rst` - Logfire usage guide with SQL query examples
+#### MCP Tool Protections
+- **File Overwrite Protection**: `write_file` tool refuses to overwrite existing files, preventing accidental data loss
+- **Task Plan Duplicate Prevention**: `create_task_plan` blocks duplicate plan creation after compression recovery
 
-### Previous Achievements (v0.0.3 - v0.1.30)
+#### Model Behavior Fixes
+- **Grok MCP Tools**: Fixed MCP tool visibility for Grok backend by adjusting tool handling in chat completions
+- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
+- **GPT-5 Model Behavior**: System prompt adjustments and default reasoning set for newer models
+- **Circuit Breaker**: Improved debugging output with shorter ultimate timeout for faster failure detection
+
+### Previous Achievements (v0.0.3 - v0.1.32)
+
+✅ **Multi-Turn Session Export & Per-Attempt Logging (v0.1.32)**: Turn range selection for session export (`--turns`), workspace export controls (`--no-workspace`, `--workspace-limit`), Logfire moved to optional `[observability]` extra, per-attempt isolated log files with handler reconfiguration, automatic DOCX/PPTX/XLSX to PDF conversion for session sharing
+
+✅ **Logfire Observability & Azure Tool Streaming (v0.1.31)**: Optional Logfire integration with automatic LLM instrumentation for OpenAI, Claude, and Gemini backends, Azure OpenAI tool calls yielded as structured chunks, `--logfire` CLI flag and `MASSGEN_LOGFIRE_ENABLED` environment variable
 
 ✅ **OpenRouter Web Search & Persona Diversity (v0.1.30)**: Native web search via OpenRouter plugins with `enable_web_search`, persona diversity modes (`perspective`/`implementation`) with phase-based adaptation, Azure multi-endpoint auto-detection, environment variable expansion with `${VAR}` syntax
 
@@ -1385,19 +1401,17 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.32 Roadmap
+### v0.1.34 Roadmap
 
-Version 0.1.32 focuses on backend model auto-update and automatic context compression:
+Version 0.1.34 focuses on exposing MassGen as an OpenAI-compatible chat server:
 
 #### Planned Features
-- **Backend Model List Auto-Update** (@ncrispino): Automatic model listing via provider APIs, third-party wrappers, or documented manual processes
-- **Automatic Context Compression** (@ncrispino): Automatic context compression to manage long conversations efficiently
+- **OpenAI-Compatible Chat Server** (@ncrispino): Run MassGen as an OpenAI-compatible API server for integration with external tools like Cursor and Continue
 
 Key technical approach:
-- **Backend Model List Auto-Update**: Native API implementation for OpenAI, Anthropic, Grok, Groq, Nebius; third-party wrappers where needed
-- **Automatic Context Compression**: Intelligent summarization with configurable thresholds and strategies
+- **OpenAI-Compatible Server**: Implement `/v1/chat/completions` endpoint with streaming and tool calling support
 
-For detailed milestones and technical specifications, see the [full v0.1.32 roadmap](ROADMAP_v0.1.32.md).
+For detailed milestones and technical specifications, see the [full v0.1.34 roadmap](ROADMAP_v0.1.34.md).
 
 ---
 

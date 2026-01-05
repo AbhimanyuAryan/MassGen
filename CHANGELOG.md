@@ -9,16 +9,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.33 (January 2, 2026)** - Reactive Context Compression & Streaming Buffers
+Reactive context compression recovers from context length errors by summarizing conversation history. Streaming buffer system tracks partial responses for compression recovery. File overwrite and task plan duplicate protections. Grok MCP tools visibility and Gemini vote-only mode fixes.
+
+**v0.1.32 (December 31, 2025)** - Multi-Turn Export & Logfire Optional
+Enhanced session export with multi-turn support, turn range selection, and workspace options. Logfire moved to optional `[observability]` dependency. Per-attempt logging with separate log files. Office document PDF conversion for sharing previews.
+
 **v0.1.31 (December 29, 2025)** - Logfire Observability Integration
 Comprehensive structured logging via Logfire with automatic LLM instrumentation (OpenAI, Anthropic, Gemini), tool execution tracing, and agent coordination observability. Enable with `--logfire` CLI flag. Azure OpenAI native tool call streaming fixes.
 
-**v0.1.30 (December 26, 2025)** - OpenRouter Web Search & Persona Diversity Modes
-OpenRouter native web search plugin via `enable_web_search`. Persona generator diversity modes (`perspective`/`implementation`) with phase-based adaptation. Azure OpenAI multi-endpoint support and environment variable expansion in configs.
-
-**v0.1.29 (December 24, 2025)** - Subagent System & Responses API Fixes
-New subagent system for spawning parallel child MassGen processes with isolated workspaces. Enhanced tool metrics with distribution statistics. CLI config builder per-agent system messages. OpenAI Responses API duplicate item and function call ID fixes.
-
 ---
+
+## [0.1.33] - 2026-01-02
+
+### Added
+- **Reactive Context Compression**: Automatic conversation compression when context length errors are detected
+  - Summarizes older messages while preserving recent context
+  - Supports all major backends: OpenAI, Claude, Gemini, OpenRouter, Grok
+  - Includes message truncation fallback when compression alone is insufficient
+
+- **Streaming Buffer System**: Tracks accumulated streaming content for compression recovery
+  - Captures text deltas, tool calls, tool results, and reasoning/thinking content
+  - New `--save-streaming-buffers` CLI flag to save buffers for debugging
+  - New `persist_conversation_buffers` config option for cross-agent buffer inspection
+
+### Changed
+- **File Overwrite Protection**: `write_file` tool now refuses to overwrite existing files (use `edit_file` instead)
+
+- **Task Plan Duplicate Protection**: `create_task_plan` MCP tool prevents re-creating plans after recovery, avoiding duplicate work
+
+- **Grok Backend MCP Tools**: Fixed MCP tools visibility by removing incorrect stream method override
+
+- **Circuit Breaker Debugging**: Added `agent_id`, `error_type`, and `error_message` parameters for better failure diagnostics
+
+- **Voting Prompts**: Improved agent coordination prompts to encourage answer synthesis before voting
+
+- **Subagent Failure Handling**: Results now include both `workspace` and `log_path` for debugging failed/timed-out subagents
+
+### Fixed
+- **GPT-5 Model Behavior**: System prompt adjustments ensure MassGen task planning is used over native model planning
+
+- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
+
+- **Subagent Failed Paths**: Fixed subagent MCP server handling of failed subagent results
+
+- **Incomplete Response Recovery**: Added recovery mechanism when API streams end early, preserving partial content
+
+### Documentations, Configurations and Resources
+- **Context Compression Design Doc**: New `docs/dev_notes/context_compression_design.md` with architecture, testing, and backend-specific notes
+- **Test Configurations**: New `test_reactive_compression.yaml` for compression testing
+
+### Technical Details
+- **Major Focus**: Reactive context compression, streaming buffer system, MCP tool protections
+- **Contributors**: @ncrispino and the MassGen team
+
+## [0.1.32] - 2025-12-31
+
+### Changed
+- **Session Export Multi-Turn Support**: Enhanced `massgen export` command with multi-turn session handling
+  - New `--turns` flag for turn range selection (`all`, `N`, `N-M`, `latest`)
+  - Workspace options: `--no-workspace`, `--workspace-limit` (default 500KB per agent)
+  - Export controls: `--yes` (skip prompts), `--dry-run`, `--verbose`, `--json`
+  - Multi-turn file collection preserves turn/attempt structure in exported gists
+
+- **Logfire Optional Dependency**: Moved Logfire from required to optional `[observability]` dependency
+  - Install with `pip install massgen[observability]` to enable Logfire tracing
+  - Helpful error message when `--logfire` flag used without Logfire installed
+  - Reduces default installation size for users who don't need observability
+
+- **Per-Attempt Logging**: Each orchestration restart attempt now has isolated log files
+  - Separate `massgen.log` and `execution_metadata.yaml` per attempt directory
+  - Log handlers reconfigured on restart via `set_log_attempt()` function
+  - Viewer adjusted to handle multiple attempt directories
+
+- **Office Document PDF Conversion**: Automatic PDF conversion for DOCX/PPTX/XLSX when sharing sessions
+  - Uses Docker + LibreOffice for headless conversion
+  - Includes both original file (for download) and PDF (for preview) in gists
+  - Tries sudo image first (`mcp-runtime-sudo`), falls back to standard image
+
+### Documentations, Configurations and Resources
+- **Installation Documentation**: Clarified `uv run` commands for tests and examples in README and quickstart docs
+- **Logfire Documentation**: Updated installation instructions for observability optional extra
+
+### Technical Details
+- **Major Focus**: Multi-turn session export, Logfire optional dependency, per-attempt logging
+- **Contributors**: @ncrispino @AbhimanyuAryan and the MassGen team
 
 ## [0.1.31] - 2025-12-29
 

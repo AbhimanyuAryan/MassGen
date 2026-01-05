@@ -92,22 +92,37 @@ def load_env_file():
 load_env_file()
 
 
-def _setup_logfire_observability():
+def _setup_logfire_observability() -> bool:
     """Configure Logfire observability and instrument all LLM providers.
 
     This sets up structured logging/tracing via Logfire and instruments
     all supported LLM provider clients (OpenAI, Anthropic, Google GenAI).
+
+    Returns:
+        True if Logfire was successfully configured, False otherwise.
     """
+    try:
+        import logfire  # noqa: F401 - Check if logfire is installed
+    except ImportError:
+        print(
+            f"{BRIGHT_YELLOW}⚠️  Logfire not installed. " f"Install with: pip install massgen[observability]{RESET}",
+        )
+        return False
+
     from .logger_config import integrate_logfire_with_loguru
     from .structured_logging import configure_observability, get_tracer
 
-    configure_observability(enabled=True)
+    success = configure_observability(enabled=True)
+    if not success:
+        return False
+
     integrate_logfire_with_loguru()
     # Instrument all LLM providers globally
     tracer = get_tracer()
     tracer.instrument_google_genai()  # Gemini
     tracer.instrument_openai()  # OpenAI-compatible APIs
     tracer.instrument_anthropic()  # Claude
+    return True
 
 
 # Add project root to path for imports
@@ -660,7 +675,11 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         api_key = kwargs.get("api_key") or os.getenv("FIREWORKS_API_KEY")
         if not api_key:
             raise ConfigurationError(
-                _api_key_error_message("Fireworks AI", "FIREWORKS_API_KEY", config_path),
+                _api_key_error_message(
+                    "Fireworks AI",
+                    "FIREWORKS_API_KEY",
+                    config_path,
+                ),
             )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.fireworks.ai/inference/v1"
@@ -1657,7 +1676,9 @@ async def run_question_with_history(
                 persona_guidelines=pg_cfg.get("persona_guidelines"),
                 persist_across_turns=pg_cfg.get("persist_across_turns", False),
             )
-            logger.info(f"[CLI] Created PersonaGeneratorConfig: enabled={persona_generator_config.enabled}")
+            logger.info(
+                f"[CLI] Created PersonaGeneratorConfig: enabled={persona_generator_config.enabled}",
+            )
 
         # Parse subagent_orchestrator config if present
         subagent_orchestrator_config = None
@@ -1690,6 +1711,10 @@ async def run_question_with_history(
             enable_memory_filesystem_mode=coord_cfg.get(
                 "enable_memory_filesystem_mode",
                 False,
+            ),
+            compression_target_ratio=coord_cfg.get(
+                "compression_target_ratio",
+                0.20,
             ),
             use_skills=coord_cfg.get("use_skills", False),
             massgen_skills=coord_cfg.get("massgen_skills", []),
@@ -1826,6 +1851,10 @@ async def run_question_with_history(
                 enable_memory_filesystem_mode=coordination_settings.get(
                     "enable_memory_filesystem_mode",
                     False,
+                ),
+                compression_target_ratio=coordination_settings.get(
+                    "compression_target_ratio",
+                    0.20,
                 ),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
@@ -2259,6 +2288,10 @@ async def run_single_question(
                     "enable_memory_filesystem_mode",
                     False,
                 ),
+                compression_target_ratio=coordination_settings.get(
+                    "compression_target_ratio",
+                    0.20,
+                ),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
                 skills_directory=coordination_settings.get(
@@ -2376,6 +2409,10 @@ async def run_single_question(
                     "enable_memory_filesystem_mode",
                     False,
                 ),
+                compression_target_ratio=coord_cfg.get(
+                    "compression_target_ratio",
+                    0.20,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
@@ -2428,6 +2465,25 @@ async def run_single_question(
                         f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
                     )
                     print(f"{'='*80}\n")
+
+                # Set log attempt BEFORE creating new UI so display gets correct path
+                # orchestrator.current_attempt was already incremented by _reset_for_restart()
+                from massgen.logger_config import set_log_attempt
+
+                set_log_attempt(orchestrator.current_attempt + 1)
+
+                # Save execution metadata for this attempt
+                save_execution_metadata(
+                    query=question,
+                    config_path=None,  # Not available in this scope
+                    config_content=None,  # Not available in this scope
+                    cli_args={
+                        "mode": "coordination_restart",
+                        "attempt": orchestrator.current_attempt + 1,
+                        "session_id": session_id,
+                        "restart_reason": orchestrator.restart_reason,
+                    },
+                )
 
                 # Reset all agent backends to ensure clean state for next attempt
                 for agent_id, agent in orchestrator.agents.items():
@@ -4995,6 +5051,12 @@ async def main(args):
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
 
+    # Initialize streaming buffer saving if requested
+    if args.save_streaming_buffers:
+        from .backend._streaming_buffer_mixin import set_save_streaming_buffers
+
+        set_save_streaming_buffers(True)
+
     # Check if bare `massgen` with no args - use default config if it exists
     if not args.backend and not args.model and not args.config:
         # Use resolve_config_path to check project-level then global config
@@ -5320,9 +5382,13 @@ async def main(args):
                     model=model_name,
                     log_directory=log_dir_name,
                 )
-                logger.info(f"📝 Registered new session in registry: {memory_session_id}")
+                logger.info(
+                    f"📝 Registered new session in registry: {memory_session_id}",
+                )
             else:
-                logger.debug(f"📝 Skipping session registry (--no-session-registry): {memory_session_id}")
+                logger.debug(
+                    f"📝 Skipping session registry (--no-session-registry): {memory_session_id}",
+                )
 
         agents = create_agents_from_config(
             config,
@@ -5684,6 +5750,44 @@ def cli_main():
             nargs="?",
             help="Log directory to export (default: latest). Can be full path or log name.",
         )
+        export_parser.add_argument(
+            "--turns",
+            "-t",
+            default="all",
+            help='Turn range to export: "all", "N" (turns 1-N), "N-M", or "latest" (default: all)',
+        )
+        export_parser.add_argument(
+            "--no-workspace",
+            action="store_true",
+            help="Exclude workspace artifacts from export",
+        )
+        export_parser.add_argument(
+            "--workspace-limit",
+            default="500KB",
+            help="Max workspace size per agent (e.g., 500KB, 1MB). Default: 500KB",
+        )
+        export_parser.add_argument(
+            "--yes",
+            "-y",
+            action="store_true",
+            help="Skip interactive prompts and use defaults",
+        )
+        export_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Show what would be shared without creating gist",
+        )
+        export_parser.add_argument(
+            "--verbose",
+            "-v",
+            action="store_true",
+            help="Show detailed file listing",
+        )
+        export_parser.add_argument(
+            "--json",
+            action="store_true",
+            help="Output result as JSON (useful for scripting)",
+        )
 
         export_args = export_parser.parse_args(sys.argv[2:])
         sys.exit(export_command(export_args))
@@ -5839,6 +5943,11 @@ Environment Variables:
         "--debug",
         action="store_true",
         help="Enable debug mode with verbose logging",
+    )
+    parser.add_argument(
+        "--save-streaming-buffers",
+        action="store_true",
+        help="Save streaming buffers to files in streaming_buffers/ directory (works with all backends)",
     )
     parser.add_argument(
         "--logfire",

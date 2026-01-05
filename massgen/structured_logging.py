@@ -48,7 +48,10 @@ _instrumented_clients: Dict[str, bool] = {}
 # Context variable for tracking current agent round (for tool call attribution)
 # This allows nested tool calls to know which round they belong to
 _current_round: ContextVar[Optional[int]] = ContextVar("current_round", default=None)
-_current_round_type: ContextVar[Optional[str]] = ContextVar("current_round_type", default=None)
+_current_round_type: ContextVar[Optional[str]] = ContextVar(
+    "current_round_type",
+    default=None,
+)
 
 
 @dataclass
@@ -104,7 +107,11 @@ def configure_observability(
 
     # Determine if enabled from environment or parameter
     if enabled is None:
-        enabled = os.environ.get("MASSGEN_LOGFIRE_ENABLED", "").lower() in ("true", "1", "yes")
+        enabled = os.environ.get("MASSGEN_LOGFIRE_ENABLED", "").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
 
     if not enabled:
         logger.debug("Logfire observability is disabled")
@@ -141,16 +148,26 @@ def configure_observability(
             service_version=service_version,
             environment=environment,
             send_to_logfire=send_to_logfire,
-            console=logfire.ConsoleOptions(
-                min_log_level=console_min_level,
-            )
-            if console_enabled
-            else False,
-            scrubbing=logfire.ScrubbingOptions(
-                extra_patterns=["api_key", "api_secret", "password", "token", "secret"],
-            )
-            if scrub_sensitive_data
-            else False,
+            console=(
+                logfire.ConsoleOptions(
+                    min_log_level=console_min_level,
+                )
+                if console_enabled
+                else False
+            ),
+            scrubbing=(
+                logfire.ScrubbingOptions(
+                    extra_patterns=[
+                        "api_key",
+                        "api_secret",
+                        "password",
+                        "token",
+                        "secret",
+                    ],
+                )
+                if scrub_sensitive_data
+                else False
+            ),
         )
 
         _logfire_enabled = True
@@ -169,15 +186,27 @@ def configure_observability(
         otel_context_logger = logging.getLogger("opentelemetry.context")
         otel_context_logger.addFilter(ContextDetachFilter())
 
-        logger.info(f"Logfire observability configured: service={service_name}, env={environment}")
+        logger.info(
+            f"Logfire observability configured: service={service_name}, env={environment}",
+        )
         return True
 
     except ImportError:
-        logger.warning("Logfire package not installed. Observability features disabled.")
+        logger.warning(
+            "Logfire package not installed. Install with: pip install massgen[observability]",
+        )
         _logfire_enabled = False
         return False
     except Exception as e:
-        logger.warning(f"Failed to configure Logfire: {e}. Observability features disabled.")
+        error_msg = str(e)
+        if "not logged in" in error_msg.lower():
+            logger.warning(
+                "Logfire requires authentication. Run 'logfire auth' to authenticate, " "then re-run your command. Continuing without observability...",
+            )
+        else:
+            logger.warning(
+                f"Failed to configure Logfire: {e}. Observability features disabled.",
+            )
         _logfire_enabled = False
         return False
 
@@ -338,7 +367,9 @@ class TracerProxy:
                 # after global instrumentation or the library was imported before
                 # global instrumentation could take effect
                 logfire.instrument_anthropic(client)
-                logger.debug("Anthropic client instance instrumented for Logfire tracing")
+                logger.debug(
+                    "Anthropic client instance instrumented for Logfire tracing",
+                )
             elif not _instrumented_clients.get("anthropic"):
                 # Global instrumentation - only do once
                 logfire.instrument_anthropic()
@@ -365,7 +396,9 @@ class TracerProxy:
                 logger.debug("Google GenAI instrumented for Logfire tracing")
             except Exception as e:
                 # Log at warning level since user explicitly enabled observability
-                logger.warning(f"Could not instrument Google GenAI for observability: {e}")
+                logger.warning(
+                    f"Could not instrument Google GenAI for observability: {e}",
+                )
 
     def instrument_aiohttp(self):
         """Instrument aiohttp for HTTP client tracing."""
@@ -637,7 +670,10 @@ def trace_agent_execution(
     }
     attributes.update(extra_attributes)
 
-    with tracer.span(f"agent.{agent_id}.round_{round_number}", attributes=attributes) as span:
+    with tracer.span(
+        f"agent.{agent_id}.round_{round_number}",
+        attributes=attributes,
+    ) as span:
         yield span
 
 
@@ -738,6 +774,46 @@ def log_tool_execution(
     )
 
 
+def log_context_compression(
+    agent_id: str,
+    reason: str,
+    original_message_count: int,
+    compressed_message_count: int,
+    original_char_count: int = 0,
+    compressed_char_count: int = 0,
+    compression_ratio: float = 0.0,
+    success: bool = True,
+    error_message: Optional[str] = None,
+):
+    """
+    Log context compression event as a structured event.
+
+    Args:
+        agent_id: ID of the agent whose context was compressed.
+        reason: Reason for compression (e.g., "context_length_exceeded", "proactive").
+        original_message_count: Number of messages before compression.
+        compressed_message_count: Number of messages after compression.
+        original_char_count: Character count before compression.
+        compressed_char_count: Character count after compression.
+        compression_ratio: Ratio of compression (0.0-1.0, where 0.2 means 20% of original).
+        success: Whether compression was successful.
+        error_message: Error message if compression failed.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        "Context compression performed",
+        agent_id=agent_id,
+        reason=reason,
+        original_message_count=original_message_count,
+        compressed_message_count=compressed_message_count,
+        original_char_count=original_char_count,
+        compressed_char_count=compressed_char_count,
+        compression_ratio=round(compression_ratio, 4),
+        success=success,
+        error_message=error_message,
+    )
+
+
 def log_coordination_event(
     event_type: str,
     agent_id: Optional[str] = None,
@@ -757,6 +833,38 @@ def log_coordination_event(
         event_type=event_type,
         agent_id=agent_id,
         **(details or {}),
+    )
+
+
+def log_agent_restart(
+    agent_id: str,
+    reason: str,
+    triggering_agent: Optional[str] = None,
+    restart_count: int = 1,
+    affected_agents: Optional[List[str]] = None,
+):
+    """
+    Log when an agent restart is triggered or completed.
+
+    This is crucial for understanding coordination flow and debugging
+    why agents restarted during a session.
+
+    Args:
+        agent_id: ID of the agent being restarted.
+        reason: Reason for the restart (e.g., "new_answer_available", "api_error", "mcp_disconnect").
+        triggering_agent: ID of the agent that triggered this restart (if any).
+        restart_count: How many times this agent has restarted in this session.
+        affected_agents: List of all agents affected by this restart event.
+    """
+    tracer = get_tracer()
+    tracer.info(
+        "Agent restart: {agent_id} (reason: {reason})",
+        event_type="agent_restart",
+        agent_id=agent_id,
+        reason=reason,
+        triggering_agent=triggering_agent,
+        restart_count=restart_count,
+        affected_agents=",".join(affected_agents) if affected_agents else None,
     )
 
 
@@ -850,7 +958,10 @@ def trace_coordination_iteration(
         attributes["massgen.available_answers"] = ",".join(available_answers)
     attributes.update(extra_attributes)
 
-    with tracer.span(f"coordination.iteration.{iteration}", attributes=attributes) as span:
+    with tracer.span(
+        f"coordination.iteration.{iteration}",
+        attributes=attributes,
+    ) as span:
         _current_iteration_span = span
         try:
             yield span
@@ -891,7 +1002,10 @@ def trace_agent_round(
         attributes["massgen.context_labels"] = ",".join(context_labels)
     attributes.update(extra_attributes)
 
-    with tracer.span(f"agent.{agent_id}.iteration_{iteration}", attributes=attributes) as span:
+    with tracer.span(
+        f"agent.{agent_id}.iteration_{iteration}",
+        attributes=attributes,
+    ) as span:
         yield span
 
 
@@ -1406,6 +1520,7 @@ __all__ = [
     "log_token_usage",
     "log_tool_execution",
     "log_coordination_event",
+    "log_agent_restart",
     # Coordination-specific loggers
     "log_agent_round_context",
     "log_agent_answer",

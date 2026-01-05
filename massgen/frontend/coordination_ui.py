@@ -189,6 +189,14 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
+                # Display compression status - show in agent panel
+                elif chunk_type == "compression_status":
+                    if self.display and source and source in self.agent_ids:
+                        self.display.update_agent_content(source, content, "tool")
+                    if self.logger:
+                        self.logger.log_chunk(source, content, chunk_type)
+                    continue
+
                 # Handle reasoning streams
                 elif chunk_type in [
                     "reasoning",
@@ -312,14 +320,15 @@ class CoordinationUI:
 
             # Ensure display shows final answer even if streaming chunks were filtered
             # This applies to all display types that have show_final_answer method
-            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
+            # Only show if we have a valid selected agent (don't create "Unknown" files)
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown and selected_agent:
                 display_answer = (final_result or "").strip()
                 if display_answer:
                     self._final_answer_shown = True
                     self.display.show_final_answer(
                         display_answer,
                         vote_results=vote_results,
-                        selected_agent=selected_agent or "Unknown",
+                        selected_agent=selected_agent,
                     )
 
             # Finalize session if logger exists
@@ -672,6 +681,14 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
+                # Display compression status - show in agent panel
+                elif chunk_type == "compression_status":
+                    if source and source in self.agent_ids:
+                        self.display.update_agent_content(source, content, "tool")
+                    if self.logger:
+                        self.logger.log_chunk(source, content, chunk_type)
+                    continue
+
                 # builtin_tool_results handling removed - now handled as simple content
 
                 # Handle reasoning streams
@@ -799,14 +816,15 @@ class CoordinationUI:
 
             # Ensure display shows final answer even if streaming chunks were filtered
             # This applies to all display types that have show_final_answer method
-            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
+            # Only show if we have a valid selected agent (don't create "Unknown" files)
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown and selected_agent:
                 display_answer = (final_result or "").strip()
                 if display_answer:
                     self._final_answer_shown = True
                     self.display.show_final_answer(
                         display_answer,
                         vote_results=vote_results,
-                        selected_agent=selected_agent or "Unknown",
+                        selected_agent=selected_agent,
                     )
 
             # Finalize session
@@ -1084,6 +1102,14 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
+                # Display compression status - show in agent panel
+                elif chunk_type == "compression_status":
+                    if source and source in self.agent_ids:
+                        self.display.update_agent_content(source, content, "tool")
+                    if self.logger:
+                        self.logger.log_chunk(source, content, chunk_type)
+                    continue
+
                 # builtin_tool_results handling removed - now handled as simple content
 
                 # Handle reasoning streams
@@ -1222,14 +1248,15 @@ class CoordinationUI:
 
             # Ensure display shows final answer even if streaming chunks were filtered
             # This applies to all display types that have show_final_answer method
-            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
+            # Only show if we have a valid selected agent (don't create "Unknown" files)
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown and selected_agent:
                 display_answer = (final_result or "").strip()
                 if display_answer:
                     self._final_answer_shown = True
                     self.display.show_final_answer(
                         display_answer,
                         vote_results=vote_results,
-                        selected_agent=selected_agent or "Unknown",
+                        selected_agent=selected_agent,
                     )
 
             # Finalize session
@@ -1436,6 +1463,10 @@ class CoordinationUI:
         if self._final_answer_shown or not self._answer_buffer.strip():
             return
 
+        # Don't create final presentation if restart is pending
+        if hasattr(self.orchestrator, "restart_pending") and self.orchestrator.restart_pending:
+            return
+
         # Don't show final answer (and inspection menu) if post-evaluation might still run
         # Only show when orchestration is TRULY finished
         if hasattr(self.orchestrator, "max_attempts"):
@@ -1448,7 +1479,12 @@ class CoordinationUI:
 
         # Get orchestrator status for voting results and winner
         status = self.orchestrator.get_status()
-        selected_agent = status.get("selected_agent", "Unknown")
+        selected_agent = status.get("selected_agent")
+
+        # Don't create file if no valid agent is selected
+        if not selected_agent:
+            return
+
         vote_results = status.get("vote_results", {})
 
         # Mark as shown to prevent duplicate calls
@@ -1521,7 +1557,7 @@ class CoordinationUI:
 
                 # Create event for this chunk but don't call show_final_answer yet
                 status = self.orchestrator.get_status()
-                selected_agent = status.get("selected_agent", "Unknown")
+                selected_agent = status.get("selected_agent")
                 vote_results = status.get("vote_results", {})
                 vote_counts = vote_results.get("vote_counts", {})
                 is_tie = vote_results.get("is_tie", False)
@@ -1531,7 +1567,7 @@ class CoordinationUI:
                     # Check if orchestrator timed out
                     orchestrator_timeout = getattr(self.orchestrator, "is_orchestrator_timeout", False)
 
-                    if selected_agent == "Unknown" or selected_agent is None:
+                    if not selected_agent:
                         if orchestrator_timeout:
                             # Even with timeout, try to select agent from available votes
                             if vote_counts:
