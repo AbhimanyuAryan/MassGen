@@ -17,11 +17,48 @@ reviews:
     Title should be concise (<= 80 chars).
 
   path_filters:
-    - "!**/*.json"
+    # Lock and config files
     - "!**/*.lock"
+    - "!**/package-lock.json"
+    - "!**/pnpm-lock.yaml"
+    - "!**/yarn.lock"
+    - "!uv.lock"
+
+    # Build artifacts and caches
     - "!**/node_modules/**"
-    - "!docs/_build/**"
     - "!**/__pycache__/**"
+    - "!**/.pytest_cache/**"
+    - "!**/.mypy_cache/**"
+    - "!**/.ruff_cache/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!docs/_build/**"
+    - "!docs/build/**"
+
+    # Generated/bundled frontend assets
+    - "!massgen/frontend/web/static/assets/**"
+    - "!**/*.min.js"
+    - "!**/*.min.css"
+    - "!**/*.map"
+
+    # Binary/media files
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/*.ico"
+    - "!**/*.svg"
+    - "!**/*.woff"
+    - "!**/*.woff2"
+    - "!**/*.ttf"
+    - "!**/*.eot"
+
+    # MassGen runtime logs and workspaces (agent-generated content)
+    - "!.massgen/**"
+    - "!massgen_logs/**"
+
+    # Website static images
+    - "!website/images/**"
 
   path_instructions:
     # Core Python code
