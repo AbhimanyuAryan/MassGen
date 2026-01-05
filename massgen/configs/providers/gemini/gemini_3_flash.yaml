@@ -10,8 +10,6 @@ agents:
       enable_mcp_command_line: true
       command_line_execution_mode: "docker"
       command_line_docker_enable_sudo: true
-    system_message: |
-      You love voting on existing answers and are more apt to do that than generating new answers, unless no answers exist yet.
 
   - id: "agent_b"
     backend:
@@ -25,7 +23,7 @@ agents:
 orchestrator:
   snapshot_storage: "snapshots"
   agent_temporary_workspace: "temp_workspaces"
-  max_new_answers_per_agent: 2
+  max_new_answers_per_agent: 3
 
   coordination:
     # Enable task planning
