@@ -1225,8 +1225,10 @@ class Orchestrator(ChatAgent):
                 yield StreamChunk(type="preparation_status", status="Generating prompt variants...", detail="DSPy paraphrasing")
             await self._prepare_paraphrases_for_agents(self.current_task)
 
-            # Reinitialize session with user prompt now that we have it
-            self.coordination_tracker.initialize_session(list(self.agents.keys()), self.current_task)
+            # Reinitialize session with user prompt now that we have it (MAS-199: includes log_path)
+            log_dir = get_log_session_dir()
+            log_path = str(log_dir) if log_dir else None
+            self.coordination_tracker.initialize_session(list(self.agents.keys()), self.current_task, log_path=log_path)
             self.workflow_phase = "coordinating"
 
             # Reset restart_pending flag at start of coordination (will be set again if restart needed)
@@ -3748,12 +3750,16 @@ Your answer:"""
             normalized_answers = self._normalize_workspace_paths_in_answers(answers, agent_id) if answers else answers
 
             # Log structured context for this agent's round (for observability/debugging)
+            # Get agent's log directory path for hybrid access pattern (MAS-199)
+            log_session_dir = get_log_session_dir()
+            agent_log_path = str(log_session_dir / agent_id) if log_session_dir else None
             log_agent_round_context(
                 agent_id=agent_id,
                 round_number=current_round,
                 round_type=round_type,
                 answers_in_context=normalized_answers,
                 answer_labels=context_labels,
+                agent_log_path=agent_log_path,
             )
 
             # Log the normalized answers this agent will see
@@ -5351,9 +5357,11 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         self._selected_agent = None
         self._final_presentation_content = None
 
-        # Reset coordination tracker for new attempt
+        # Reset coordination tracker for new attempt (MAS-199: includes log_path)
         self.coordination_tracker = CoordinationTracker()
-        self.coordination_tracker.initialize_session(list(self.agents.keys()))
+        log_dir = get_log_session_dir()
+        log_path = str(log_dir) if log_dir else None
+        self.coordination_tracker.initialize_session(list(self.agents.keys()), log_path=log_path)
 
         # Reset workflow phase to idle so next coordinate() call starts fresh
         self.workflow_phase = "idle"

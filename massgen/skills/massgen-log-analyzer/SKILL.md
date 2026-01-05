@@ -147,6 +147,40 @@ MassGen spans include these custom attributes (access via `attributes->'key'`):
 | `massgen.usage.cached_input` | Cached input token count |
 | `massgen.usage.cost` | Estimated cost in USD |
 
+### Workflow Analysis Attributes (MAS-199)
+
+These attributes enable explaining agent behavior in natural language and detecting patterns:
+
+| Attribute | Description |
+|-----------|-------------|
+| `massgen.round.intent` | What the agent was asked to do this round (200 chars) |
+| `massgen.round.available_answers` | JSON array of answer labels available for reference |
+| `massgen.round.available_answer_count` | Number of answers agent could see |
+| `massgen.round.answer_previews` | JSON dict of truncated answer previews (100 chars each) |
+| `massgen.vote.reason` | Full voting reason (500 chars) |
+| `massgen.vote.agents_with_answers` | Count of agents who submitted answers |
+| `massgen.vote.answer_label_mapping` | JSON dict mapping labels to agent IDs |
+| `massgen.agent.files_created` | Comma-separated list of filenames created |
+| `massgen.agent.file_count` | Total files in agent workspace |
+| `massgen.agent.workspace_path` | Path to agent workspace directory |
+| `massgen.restart.reason` | Why the agent was restarted (200 chars) |
+| `massgen.restart.trigger` | Trigger type: "new_answer", "vote_change", "manual" |
+| `massgen.restart.triggered_by_agent` | Agent ID that triggered the restart |
+| `massgen.subagent.task` | Full subagent task (500 chars) |
+| `massgen.subagent.files_created` | Comma-separated list of subagent files |
+| `massgen.subagent.file_count` | Files in subagent workspace |
+| `massgen.subagent.workspace_path` | Path to subagent workspace |
+| `massgen.subagent.log_path` | Path to subagent log directory |
+| `massgen.tool.error_context` | Additional error context (500 chars) |
+| `massgen.log_path` | Path to the run's log directory |
+| `massgen.agent.log_path` | Path to agent's log directory |
+| `massgen.agent.answer_path` | Path to agent's answer file |
+
+**Hybrid Access Pattern:** When Logfire shows truncated previews, use the path attributes to retrieve full content locally:
+- `massgen.agent.log_path` → full context.txt, vote.json, answer.txt
+- `massgen.agent.answer_path` → complete answer content
+- `massgen.subagent.workspace_path` → all subagent files
+
 ## Part 3: Common Analysis Queries
 
 ### 1. View Trace Hierarchy
