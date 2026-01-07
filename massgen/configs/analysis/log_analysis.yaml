@@ -86,43 +86,6 @@ agents:
       env:
         LOGFIRE_READ_TOKEN: ${LOGFIRE_READ_TOKEN}
 
-# - id: agent_c
-#   backend:
-#     type: gemini
-#     model: gemini-3-flash-preview
-#     cwd: workspace3
-#     enable_code_based_tools: true
-#     exclude_file_operation_mcps: true
-#     enable_mcp_command_line: true
-#     command_line_execution_mode: docker
-#     command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
-#     command_line_docker_network_mode: bridge
-#     command_line_docker_enable_sudo: true
-#     command_line_docker_credentials:
-#       env_file: .env
-#       env_vars_from_file:
-#       - OPENAI_API_KEY
-#       - ANTHROPIC_API_KEY
-#       - GOOGLE_API_KEY
-#       - GEMINI_API_KEY
-#     shared_tools_directory: shared_tools
-#     auto_discover_custom_tools: true
-#     exclude_custom_tools:
-#     - _computer_use
-#     - _claude_computer_use
-#     - _gemini_computer_use
-#     - _browser_automation
-#     enable_web_search: true
-#     direct_mcp_servers:
-#     - logfire
-#     # mcp_servers:
-#     # - name: logfire
-#     #   type: stdio
-#     #   command: uvx
-#     #   args: ["logfire-mcp@latest"]
-#     #   env:
-#     #     LOGFIRE_READ_TOKEN: ${LOGFIRE_READ_TOKEN}
-
 orchestrator:
   snapshot_storage: snapshots
   agent_temporary_workspace: temp_workspaces

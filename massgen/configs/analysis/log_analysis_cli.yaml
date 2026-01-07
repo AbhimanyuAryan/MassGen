@@ -5,10 +5,7 @@
 #
 # Usage:
 #
-#   uv run massgen --config massgen/configs/analysis/log_analysis_cli.yaml "Analyze the log directory at /Users/ncrispin/GitHubProjects/MassGenMore/.massgen/massgen_logs/log_20260104_221531_023767. Read all relevant files and produce an ANALYSIS_REPORT.md"
-#     "Analyze the log directory at [LOG_DIR]. Read all relevant files and produce an ANALYSIS_REPORT.md"
-#
-# Note: context_paths will be injected dynamically when using --mode self
+#   uv run massgen --config massgen/configs/analysis/log_analysis_cli.yaml "Use the massgen-log-analyzer skill to analyze the log directory at .massgen/massgen_logs/log_20260104_221531_023767. Read all relevant files and produce an ANALYSIS_REPORT.md"
 #
 # Prerequisites:
 #   - LOGFIRE_READ_TOKEN environment variable must be set for Logfire MCP access
@@ -41,13 +38,15 @@ agents:
     - _gemini_computer_use
     - _browser_automation
     enable_web_search: true
-    # mcp_servers:
-    # - name: logfire
-    #   type: stdio
-    #   command: uvx
-    #   args: ["logfire-mcp@latest"]
-    #   env:
-    #     LOGFIRE_READ_TOKEN: ${LOGFIRE_READ_TOKEN}
+    direct_mcp_servers:
+    - logfire
+    mcp_servers:
+    - name: logfire
+      type: stdio
+      command: uvx
+      args: ["logfire-mcp@latest"]
+      env:
+        LOGFIRE_READ_TOKEN: ${LOGFIRE_READ_TOKEN}
 
 - id: agent_b
   backend:
@@ -76,48 +75,15 @@ agents:
     - _gemini_computer_use
     - _browser_automation
     enable_web_search: true
-    # mcp_servers:
-    # - name: logfire
-    #   type: stdio
-    #   command: uvx
-    #   args: ["logfire-mcp@latest"]
-    #   env:
-    #     LOGFIRE_READ_TOKEN: ${LOGFIRE_READ_TOKEN}
-
-- id: agent_c
-  backend:
-    type: gemini
-    model: gemini-3-flash-preview
-    cwd: workspace3
-    enable_code_based_tools: true
-    exclude_file_operation_mcps: true
-    enable_mcp_command_line: true
-    command_line_execution_mode: docker
-    command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
-    command_line_docker_network_mode: bridge
-    command_line_docker_enable_sudo: true
-    command_line_docker_credentials:
-      env_file: .env
-      env_vars_from_file:
-      - OPENAI_API_KEY
-      - ANTHROPIC_API_KEY
-      - GOOGLE_API_KEY
-      - GEMINI_API_KEY
-    shared_tools_directory: shared_tools
-    auto_discover_custom_tools: true
-    exclude_custom_tools:
-    - _computer_use
-    - _claude_computer_use
-    - _gemini_computer_use
-    - _browser_automation
-    enable_web_search: true
-    # mcp_servers:
-    # - name: logfire
-    #   type: stdio
-    #   command: uvx
-    #   args: ["logfire-mcp@latest"]
-    #   env:
-    #     LOGFIRE_READ_TOKEN: ${LOGFIRE_READ_TOKEN}
+    direct_mcp_servers:
+    - logfire
+    mcp_servers:
+    - name: logfire
+      type: stdio
+      command: uvx
+      args: ["logfire-mcp@latest"]
+      env:
+        LOGFIRE_READ_TOKEN: ${LOGFIRE_READ_TOKEN}
 
 orchestrator:
   snapshot_storage: snapshots
@@ -133,15 +99,12 @@ orchestrator:
     task_planning_filesystem_mode: true
     enable_memory_filesystem_mode: true
     enable_subagents: false
-    # persona_generator:
-    #   enabled: true
-    #   diversity_mode: implementation
-  # context_paths is injected dynamically for log analysis
-  # When using --mode self, the log directory will be added here with read permission
-  # and ANALYSIS_REPORT.md path with write permission
-  # context_paths: []
+    persona_generator:
+      enabled: true
+      diversity_mode: implementation
+  # Provide all massgen logs as context here; the prompt will specify which log to analyze
   context_paths:
-    - path: "/Users/ncrispin/GitHubProjects/MassGenMore/.massgen/massgen_logs/log_20260104_221531_023767"
+    - path: ".massgen/massgen_logs/"
       permission: "read"
 
 timeout_settings:

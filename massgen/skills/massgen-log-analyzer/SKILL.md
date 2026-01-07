@@ -66,6 +66,7 @@ Self-analysis mode runs MassGen with multiple agents to analyze logs from differ
 **Rate Limiting:** If Logfire returns a rate limit error, **wait up to 60 seconds and retry** rather than falling back to local logs. The rate limit resets quickly and Logfire data is worth waiting for when timing/hierarchy analysis is needed.
 
 **Key Local Log Files:**
+
 | File | Contains |
 |------|----------|
 | `metrics_summary.json` | Cost, tokens, tool stats, round history |

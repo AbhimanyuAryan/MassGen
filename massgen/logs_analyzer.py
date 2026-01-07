@@ -7,10 +7,11 @@ Provides CLI commands to analyze and display metrics from MassGen run logs.
 import json
 import os
 import platform
+import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from rich.console import Console
@@ -19,6 +20,26 @@ from rich.table import Table
 
 # Default config file for log analysis
 DEFAULT_ANALYSIS_CONFIG = Path(__file__).parent / "configs" / "analysis" / "log_analysis.yaml"
+
+
+def _natural_sort_key(path: Union[Path, str]) -> list:
+    """Generate a sort key for natural ordering of paths with numeric components.
+
+    Splits the path string into numeric and non-numeric parts, converting
+    numeric parts to integers for proper numeric comparison.
+    This ensures turn_2 < turn_10 instead of lexicographic turn_10 < turn_2.
+
+    Args:
+        path: Path or string to generate sort key for
+
+    Returns:
+        List of mixed str/int tokens for comparison
+    """
+    path_str = str(path)
+    # Split into numeric and non-numeric parts
+    parts = re.split(r"(\d+)", path_str)
+    # Convert numeric parts to integers for proper numeric sorting
+    return [int(part) if part.isdigit() else part for part in parts]
 
 
 def get_logs_dir() -> Path:
@@ -614,7 +635,8 @@ def run_self_analysis(
         return 1
 
     # Use the first attempt directory (usually turn_1/attempt_1)
-    attempt_dir = sorted(attempt_dirs)[0]
+    # Use natural sort to handle multi-digit numbers correctly (turn_2 < turn_10)
+    attempt_dir = sorted(attempt_dirs, key=_natural_sort_key)[0]
     report_path = attempt_dir / "ANALYSIS_REPORT.md"
 
     # Create empty ANALYSIS_REPORT.md if it doesn't exist
