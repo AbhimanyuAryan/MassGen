@@ -490,6 +490,18 @@ class CustomToolAndMCPBackend(LLMBackend):
                 f"[{self.backend_name}] Hook framework initialized for agent {self.agent_id}",
             )
 
+        # Debug delay for testing injection flow
+        # When set, adds artificial delay after N tool calls to simulate slow agents
+        # This allows other agents to complete and inject updates before this agent continues
+        self._debug_delay_seconds: float = self.config.get("debug_delay_seconds", 0.0)
+        self._debug_delay_after_n_tools: int = self.config.get("debug_delay_after_n_tools", 3)
+        self._debug_tool_call_count: int = 0
+        self._debug_delay_applied: bool = False
+        if self._debug_delay_seconds > 0:
+            logger.info(
+                f"[{self.backend_name}] Debug delay enabled: {self._debug_delay_seconds}s after {self._debug_delay_after_n_tools} tool calls for agent {self.agent_id}",
+            )
+
     def set_general_hook_manager(self, manager: GeneralHookManager) -> None:
         """Set the GeneralHookManager (used by orchestrator for global hooks)."""
         self._general_hook_manager = manager
@@ -1683,9 +1695,12 @@ class CustomToolAndMCPBackend(LLMBackend):
                         # Default: append to tool result
                         post_hook_injection = inject_content
 
-                    logger.debug(
-                        f"[PostToolUse] Hook injection for {tool_name}: " f"strategy={inject_strategy}, content_len={len(inject_content)}",
+                    logger.info(
+                        f"[PostToolUse] Hook injection for {tool_name}: strategy={inject_strategy}, content_len={len(inject_content)}",
                     )
+                    # Log injection content for visibility
+                    if inject_content:
+                        logger.info(f"[PostToolUse] Injection content:\n{inject_content}")
 
             # Use hook injection as the injection content
             # Mid-stream injection is now handled via MidStreamInjectionHook in the hook framework
@@ -1786,6 +1801,29 @@ class CustomToolAndMCPBackend(LLMBackend):
                 source=f"{config.source_prefix}{tool_name}",
             )
 
+            # Yield injection chunk if there was mid-stream injection
+            if injection_content:
+                # Truncate for display but show it happened
+                display_injection = injection_content[:300] + "..." if len(injection_content) > 300 else injection_content
+                yield StreamChunk(
+                    type=config.chunk_type,
+                    status="injection",
+                    content=f"📥 [INJECTION] {display_injection}",
+                    source="mid_stream_injection",
+                )
+
+            # Yield reminder chunk if there was a user_message hook injection
+            if post_hook_reminder:
+                # Extract first line for display (skip separator lines)
+                reminder_lines = [line for line in post_hook_reminder.split("\n") if line.strip() and "===" not in line]
+                display_reminder = reminder_lines[0] if reminder_lines else "System reminder"
+                yield StreamChunk(
+                    type=config.chunk_type,
+                    status="reminder",
+                    content=f"💡 [REMINDER] {display_reminder}",
+                    source="high_priority_task_reminder",
+                )
+
             # Yield completion status
             yield StreamChunk(
                 type=config.chunk_type,
@@ -1796,6 +1834,17 @@ class CustomToolAndMCPBackend(LLMBackend):
 
             processed_call_ids.add(call.get("call_id", ""))
             logger.info(f"Executed {config.tool_type} tool: {tool_name}")
+
+            # Debug delay: Apply after N tool calls to allow other agents to inject
+            # Note: Set flag before sleep to prevent parallel tools from also triggering delay
+            if self._debug_delay_seconds > 0 and not self._debug_delay_applied:
+                self._debug_tool_call_count += 1
+                if self._debug_tool_call_count >= self._debug_delay_after_n_tools:
+                    self._debug_delay_applied = True  # Set immediately to prevent race conditions
+                    logger.info(
+                        f"[{self.backend_name}] Applying debug delay of {self._debug_delay_seconds}s after {self._debug_tool_call_count} tool calls for agent {self.agent_id}",
+                    )
+                    await asyncio.sleep(self._debug_delay_seconds)
 
             # Record successful execution metrics (use pre-captured time, not current time
             # which would include time spent waiting for stream consumers)

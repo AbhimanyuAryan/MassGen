@@ -278,22 +278,12 @@ class TaskPlan:
                 if other_task.status == "pending" and task_id in other_task.dependencies and self.can_start_task(other_task.id):
                     newly_ready.append(other_task)
 
-            # Add memory reminder for high-priority completed tasks
-            result = {
+            # Return task completion result
+            # Note: High-priority task reminders are injected via HighPriorityTaskReminderHook
+            return {
                 "task": task.to_dict(),
                 "newly_ready_tasks": [t.to_dict() for t in newly_ready],
             }
-
-            if task.priority == "high":
-                result["reminder"] = (
-                    "✓ High-priority task completed! Document decisions to optimize future work:\n"
-                    "  • Which skills/tools were effective (or not)? → memory/long_term/skill_effectiveness.md\n"
-                    "  • What approach worked (or failed) and why? → memory/long_term/approach_patterns.md\n"
-                    "  • What would prevent mistakes on similar tasks? → memory/long_term/lessons_learned.md\n"
-                    "  • User preferences revealed? → memory/short_term/user_prefs.md"
-                )
-
-            return result
 
         return {"task": task.to_dict()}
 

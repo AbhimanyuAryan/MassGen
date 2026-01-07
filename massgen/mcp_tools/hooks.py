@@ -769,7 +769,10 @@ class MidStreamInjectionHook(PatternHook):
         self._injection_callback = injection_callback
 
     def set_callback(self, callback: Callable[[], Optional[str]]) -> None:
-        """Set the injection callback dynamically."""
+        """Set the injection callback dynamically.
+
+        The callback can be either sync or async - both are supported.
+        """
         self._injection_callback = callback
 
     async def execute(
@@ -784,8 +787,13 @@ class MidStreamInjectionHook(PatternHook):
             return HookResult.allow()
 
         try:
-            # Get injection content from callback
-            content = self._injection_callback()
+            # Get injection content from callback (supports both sync and async)
+            result = self._injection_callback()
+            if asyncio.iscoroutine(result):
+                content = await result
+            else:
+                content = result
+
             if content:
                 logger.debug(f"[MidStreamInjectionHook] Injecting content for {function_name}")
                 return HookResult(
@@ -801,24 +809,31 @@ class MidStreamInjectionHook(PatternHook):
         return HookResult.allow()
 
 
-class ReminderExtractionHook(PatternHook):
-    """Built-in PostToolUse hook for reminder extraction.
+class HighPriorityTaskReminderHook(PatternHook):
+    """PostToolUse hook that injects reminder when high-priority task is completed.
 
-    This hook extracts "reminder" fields from tool results (JSON) and injects
-    them as user messages to make them more prominent to the agent.
+    Instead of tools returning reminder keys, this hook inspects tool output
+    and injects reminders based on conditions (consistent hook pattern).
 
-    Handles both:
-    - JSON string tool outputs (standard case)
-    - Dict tool outputs (custom tools that return dicts directly)
+    This hook matches update_task_status and checks if a high-priority
+    task was completed, then injects a reminder to document learnings.
     """
 
-    def __init__(self, name: str = "reminder_extraction"):
-        """Initialize the reminder extraction hook."""
-        super().__init__(name, matcher="*", timeout=5)
+    def __init__(self, name: str = "high_priority_task_reminder"):
+        """Initialize the high-priority task reminder hook."""
+        # Match update_task_status - the tool that sets status to "completed"
+        super().__init__(name, matcher="*update_task_status", timeout=5)
 
-    def _format_reminder(self, reminder_text: str) -> str:
-        """Format reminder text with standard header and borders."""
+    def _format_reminder(self) -> str:
+        """Format the high-priority task completion reminder."""
         separator = "=" * 60
+        reminder_text = (
+            "✓ High-priority task completed! Document decisions to optimize future work:\n"
+            "  • Which skills/tools were effective (or not)? → memory/long_term/skill_effectiveness.md\n"
+            "  • What approach worked (or failed) and why? → memory/long_term/approach_patterns.md\n"
+            "  • What would prevent mistakes on similar tasks? → memory/long_term/lessons_learned.md\n"
+            "  • User preferences revealed? → memory/short_term/user_prefs.md"
+        )
         return f"\n{separator}\n⚠️  SYSTEM REMINDER\n{separator}\n\n{reminder_text}\n\n{separator}\n"
 
     async def execute(
@@ -828,30 +843,32 @@ class ReminderExtractionHook(PatternHook):
         context: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> HookResult:
-        """Execute the reminder extraction hook."""
+        """Execute the high-priority task reminder hook."""
+        # Check pattern match first (only fires for update_task_status)
+        if not self.matches(function_name):
+            return HookResult.allow()
+
         tool_output = (context or {}).get("tool_output")
         if not tool_output:
             return HookResult.allow()
 
-        reminder_text = None
         try:
-            # Try to parse tool output as JSON
+            # Parse tool output to check task details
             result_dict = json.loads(tool_output)
             if isinstance(result_dict, dict):
-                reminder_text = result_dict.get("reminder")
+                task = result_dict.get("task", {})
+                # Check if high-priority task was completed
+                if task.get("priority") == "high" and task.get("status") == "completed":
+                    logger.debug(f"[HighPriorityTaskReminderHook] Injecting reminder for {function_name}")
+                    return HookResult(
+                        allowed=True,
+                        inject={
+                            "content": self._format_reminder(),
+                            "strategy": "user_message",
+                        },
+                    )
         except (json.JSONDecodeError, TypeError):
             pass
-
-        if reminder_text and isinstance(reminder_text, str):
-            logger.debug(f"[ReminderExtractionHook] Extracting reminder from {function_name}")
-            formatted_reminder = self._format_reminder(reminder_text)
-            return HookResult(
-                allowed=True,
-                inject={
-                    "content": formatted_reminder,
-                    "strategy": "user_message",
-                },
-            )
 
         return HookResult.allow()
 
@@ -960,6 +977,9 @@ __all__ = [
     "PythonCallableHook",
     "ExternalCommandHook",
     "GeneralHookManager",
+    # Built-in hooks
+    "MidStreamInjectionHook",
+    "HighPriorityTaskReminderHook",
     # Session-based hooks
     "PermissionClientSession",
     "convert_sessions_to_permission_sessions",

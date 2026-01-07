@@ -227,48 +227,25 @@ async def create_server() -> fastmcp.FastMCP:
         Tasks can be simple strings or structured dictionaries with dependencies.
 
         Args:
-            tasks: List of task descriptions or task objects
+            tasks: List of task descriptions or task objects. Each task can have:
+                - description (str): Task description (required)
+                - id (str): Custom task ID (optional, auto-generated if not provided)
+                - depends_on (list): Task IDs or indices this task depends on
+                - priority (str): "low", "medium", or "high" (default: "medium")
 
         Returns:
             Dictionary with plan_id and created task list
 
+        Priority:
+            Indicates mission criticality. All tasks should be completed regardless
+            of priority. Mark the core deliverables as "high" - completing them triggers
+            a reflection reminder.
+
         Examples:
-            # Simple tasks (no dependencies)
             create_task_plan([
-                "Research existing authentication methods",
-                "Design new OAuth flow",
-                "Implement backend endpoints"
-            ])
-
-            # Tasks with dependencies (by index)
-            create_task_plan([
-                "Research OAuth providers",
-                {
-                    "description": "Implement OAuth endpoints",
-                    "depends_on": [0]  # Depends on task at index 0
-                },
-                {
-                    "description": "Write integration tests",
-                    "depends_on": [1]  # Depends on task at index 1
-                }
-            ])
-
-            # Tasks with named IDs and dependencies
-            create_task_plan([
-                {
-                    "id": "research_oauth",
-                    "description": "Research OAuth providers"
-                },
-                {
-                    "id": "implement_oauth",
-                    "description": "Implement OAuth endpoints",
-                    "depends_on": ["research_oauth"]
-                },
-                {
-                    "id": "integration_tests",
-                    "description": "Run integration tests",
-                    "depends_on": ["implement_oauth"]
-                }
+                {"id": "research", "description": "Research OAuth providers"},
+                {"id": "implement", "description": "Implement OAuth", "depends_on": ["research"], "priority": "high"},
+                {"id": "test", "description": "Write tests", "depends_on": ["implement"]}
             ])
 
         Dependency Rules:

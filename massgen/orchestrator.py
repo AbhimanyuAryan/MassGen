@@ -51,9 +51,9 @@ from .logger_config import (
 )
 from .mcp_tools.hooks import (
     GeneralHookManager,
+    HighPriorityTaskReminderHook,
     HookType,
     MidStreamInjectionHook,
-    ReminderExtractionHook,
 )
 from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
@@ -1421,33 +1421,6 @@ class Orchestrator(ChatAgent):
             return modified_messages
 
         return messages
-
-    def _extract_tool_reminder(self, tool_result_content: str) -> Optional[str]:
-        """
-        Extract reminder message from tool result if present.
-
-        Tools can include a "reminder" field in their JSON response to trigger
-        contextual reminders for agents (e.g., "save learnings to memory after
-        completing high-priority tasks").
-
-        Args:
-            tool_result_content: JSON string from tool execution result
-
-        Returns:
-            Reminder message if present, None otherwise
-        """
-        try:
-            import json
-
-            result_data = json.loads(tool_result_content)
-            if isinstance(result_data, dict) and "reminder" in result_data:
-                reminder = result_data["reminder"]
-                if reminder and isinstance(reminder, str):
-                    return reminder
-        except (json.JSONDecodeError, TypeError, ValueError):
-            # Tool result is not valid JSON or doesn't contain reminder
-            pass
-        return None
 
     def _merge_agent_memories_to_winner(self, winning_agent_id: str) -> None:
         """
@@ -3269,6 +3242,7 @@ Your answer:"""
         self,
         agent_id: str,
         new_answers: Dict[str, str],
+        existing_answers: Optional[Dict[str, str]] = None,
     ) -> str:
         """Build compact injection content for appending to tool results.
 
@@ -3279,36 +3253,86 @@ Your answer:"""
         Args:
             agent_id: The agent receiving the injection
             new_answers: Dict mapping agent_id to their NEW answer content
+            existing_answers: Dict of answers agent already knew about (to detect updates)
 
         Returns:
             Formatted string to append to tool result content
         """
+        existing_answers = existing_answers or {}
+
         # Normalize workspace paths for this agent's perspective
         normalized = self._normalize_workspace_paths_in_answers(
             new_answers,
             viewing_agent_id=agent_id,
         )
 
-        # Create anonymous mapping (consistent with CURRENT ANSWERS format)
-        agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(sorted(new_answers.keys()), 1)}
+        # Get viewing agent's temporary workspace path
+        temp_workspace_base = None
+        viewing_agent = self.agents.get(agent_id)
+        if viewing_agent and viewing_agent.backend.filesystem_manager:
+            temp_workspace_base = str(viewing_agent.backend.filesystem_manager.agent_temporary_workspace)
 
-        # Format answers compactly
+        # Create anonymous mapping (consistent with CURRENT ANSWERS format across all agents)
+        all_agent_ids = sorted(self.agents.keys())
+        agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(all_agent_ids, 1)}
+
+        # Format answers with workspace paths
         lines = []
+        updated_agents = []
+        new_agents = []
+
         for aid, answer in normalized.items():
-            anon_id = agent_mapping[aid]
+            anon_id = agent_mapping.get(aid, f"agent_{aid}")
+            is_update = aid in existing_answers
+
+            if is_update:
+                updated_agents.append(anon_id)
+            else:
+                new_agents.append(anon_id)
+
             # Truncate long answers for injection context
             truncated = answer[:500] + "..." if len(answer) > 500 else answer
-            lines.append(f"  [{anon_id}]: {truncated}")
+
+            # Include workspace path for file access
+            workspace_path = os.path.join(temp_workspace_base, anon_id) if temp_workspace_base else f"temp_workspaces/{anon_id}"
+            lines.append(f"  [{anon_id}] (workspace: {workspace_path}):")
+            lines.append(f"    {truncated}")
+            lines.append("")
+
+        # Build header based on what changed
+        if updated_agents and new_agents:
+            header = f"[UPDATE: {', '.join(new_agents)} submitted new answer(s); {', '.join(updated_agents)} updated their answer(s)]"
+        elif updated_agents:
+            header = f"[UPDATE: {', '.join(updated_agents)} updated their answer(s)]"
+        else:
+            header = f"[UPDATE: {', '.join(new_agents)} submitted new answer(s)]"
 
         injection_parts = [
             "",
-            "---",
-            "[UPDATE: New answers arrived while you were working]",
+            "=" * 60,
+            "⚠️  IMPORTANT: NEW ANSWER RECEIVED - ACTION REQUIRED",
+            "=" * 60,
+            "",
+            header,
             "",
             *lines,
+            "=" * 60,
+            "REQUIRED ACTION - You MUST do one of the following:",
+            "=" * 60,
             "",
-            "Continue your work, build on these, or vote if you agree.",
-            "---",
+            "1. **ADD A TASK** to your plan: 'Evaluate agent answer(s) and decide next action'",
+            "   - Use update_task_status or create a new task to track this evaluation",
+            "   - Read their workspace files (paths above) to understand their solution",
+            "   - Compare their approach to yours",
+            "",
+            "2. **THEN CHOOSE ONE**:",
+            "   a) VOTE for their answer if it's complete and correct (use vote tool)",
+            "   b) BUILD on their work - improve/extend it and submit YOUR enhanced answer",
+            "   c) MERGE approaches - combine the best parts of their work with yours",
+            "   d) CONTINUE your own approach if you believe it's better",
+            "",
+            "DO NOT ignore this update - you must explicitly evaluate and decide!",
+            "=" * 60,
         ]
 
         return "\n".join(injection_parts)
@@ -3340,7 +3364,8 @@ Your answer:"""
         mid_stream_hook = MidStreamInjectionHook()
 
         # Define the injection callback (captures agent_id and answers)
-        def get_injection_content() -> Optional[str]:
+        # This is async to allow copying snapshots before injection
+        async def get_injection_content() -> Optional[str]:
             """Check if mid-stream injection is needed and return content."""
             if not self._check_restart_pending(agent_id):
                 return None
@@ -3366,8 +3391,31 @@ Your answer:"""
             if self.agent_states[agent_id].injection_count == 0:
                 return None  # Use traditional approach for first injection
 
-            # Build injection content
-            injection = self._build_tool_result_injection(agent_id, new_answers)
+            # Copy snapshots from new answer agents to temp workspace BEFORE building injection
+            # This ensures the workspace files are available when the agent tries to access them
+            logger.info(f"[Orchestrator] Copying snapshots for mid-stream injection to {agent_id}")
+            await self._copy_all_snapshots_to_temp_workspace(agent_id)
+
+            # Build injection content (pass existing answers to detect updates vs new)
+            injection = self._build_tool_result_injection(agent_id, new_answers, existing_answers=answers)
+
+            # Debug: Log what's in the temp workspace for each injected agent
+            viewing_agent = self.agents.get(agent_id)
+            if viewing_agent and viewing_agent.backend.filesystem_manager:
+                temp_workspace_base = str(viewing_agent.backend.filesystem_manager.agent_temporary_workspace)
+                all_agent_ids = sorted(self.agents.keys())
+                agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(all_agent_ids, 1)}
+                for aid in new_answers.keys():
+                    anon_id = agent_mapping.get(aid, f"agent_{aid}")
+                    workspace_path = os.path.join(temp_workspace_base, anon_id)
+                    if os.path.exists(workspace_path):
+                        try:
+                            files = os.listdir(workspace_path)
+                            logger.info(f"[Orchestrator] Injection workspace {workspace_path} contains: {files}")
+                        except Exception as e:
+                            logger.warning(f"[Orchestrator] Could not list workspace {workspace_path}: {e}")
+                    else:
+                        logger.warning(f"[Orchestrator] Injection workspace {workspace_path} does NOT exist!")
 
             # Clear restart_pending since injection satisfies the update need
             self.agent_states[agent_id].restart_pending = False
@@ -3378,6 +3426,10 @@ Your answer:"""
             # Track the injection
             logger.info(
                 f"[Orchestrator] Mid-stream injection for {agent_id}: {len(new_answers)} new answer(s)",
+            )
+            # Log the actual injection content for debugging
+            logger.info(
+                f"[Orchestrator] Injection content:\n{injection}",
             )
             self.coordination_tracker.track_agent_action(
                 agent_id,
@@ -3399,8 +3451,8 @@ Your answer:"""
         # Register mid-stream injection hook first (maintains current behavior order)
         manager.register_global_hook(HookType.POST_TOOL_USE, mid_stream_hook)
 
-        # Register reminder extraction hook
-        reminder_hook = ReminderExtractionHook()
+        # Register high-priority task reminder hook
+        reminder_hook = HighPriorityTaskReminderHook()
         manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
         # Set manager on backend

@@ -290,6 +290,9 @@ class LLMBackend(ABC):
             "audio_generation_model",
             # Hook framework (handled by base class)
             "hooks",
+            # Debug options (not passed to API)
+            "debug_delay_seconds",
+            "debug_delay_after_n_tools",
         }
 
     @abstractmethod

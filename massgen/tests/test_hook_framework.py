@@ -8,7 +8,7 @@ Tests:
 - PythonCallableHook execution
 - ExternalCommandHook execution
 - GeneralHookManager registration and execution
-- Built-in hooks (MidStreamInjection, ReminderExtraction)
+- Built-in hooks (MidStreamInjection, HighPriorityTaskReminder)
 """
 
 import json
@@ -18,13 +18,13 @@ import pytest
 
 from massgen.mcp_tools.hooks import (
     GeneralHookManager,
+    HighPriorityTaskReminderHook,
     HookEvent,
     HookResult,
     HookType,
     MidStreamInjectionHook,
     PatternHook,
     PythonCallableHook,
-    ReminderExtractionHook,
 )
 
 # =============================================================================
@@ -458,51 +458,99 @@ class TestMidStreamInjectionHook:
         assert result.inject["strategy"] == "tool_result"
 
 
-class TestReminderExtractionHook:
-    """Tests for ReminderExtractionHook."""
+class TestHighPriorityTaskReminderHook:
+    """Tests for HighPriorityTaskReminderHook."""
 
     @pytest.mark.asyncio
     async def test_no_output_returns_allow(self):
         """Test hook without tool output returns allow."""
-        hook = ReminderExtractionHook()
-        result = await hook.execute("tool", "{}", {})
+        hook = HighPriorityTaskReminderHook()
+        result = await hook.execute("mcp__planning__update_task_status", "{}", {})
         assert result.allowed is True
+        assert result.inject is None
+
+    @pytest.mark.asyncio
+    async def test_non_matching_tool_returns_allow(self):
+        """Test hook with non-matching tool name returns allow without checking output."""
+        hook = HighPriorityTaskReminderHook()
+        # Even with valid high-priority task output, should not inject for wrong tool
+        tool_output = json.dumps(
+            {
+                "task": {"priority": "high", "status": "completed"},
+                "newly_ready_tasks": [],
+            },
+        )
+        result = await hook.execute(
+            "other_tool",
+            "{}",
+            {"tool_output": tool_output},
+        )
         assert result.inject is None
 
     @pytest.mark.asyncio
     async def test_non_json_output_returns_allow(self):
         """Test hook with non-JSON output returns allow."""
-        hook = ReminderExtractionHook()
+        hook = HighPriorityTaskReminderHook()
         result = await hook.execute(
-            "tool",
+            "mcp__planning__update_task_status",
             "{}",
             {"tool_output": "plain text output"},
         )
         assert result.inject is None
 
     @pytest.mark.asyncio
-    async def test_json_without_reminder_returns_allow(self):
-        """Test hook with JSON lacking reminder field returns allow."""
-        hook = ReminderExtractionHook()
+    async def test_low_priority_task_returns_allow(self):
+        """Test hook with low-priority completed task returns allow."""
+        hook = HighPriorityTaskReminderHook()
+        tool_output = json.dumps(
+            {
+                "task": {"priority": "low", "status": "completed"},
+                "newly_ready_tasks": [],
+            },
+        )
         result = await hook.execute(
-            "tool",
+            "mcp__planning__update_task_status",
             "{}",
-            {"tool_output": '{"result": "success"}'},
+            {"tool_output": tool_output},
         )
         assert result.inject is None
 
     @pytest.mark.asyncio
-    async def test_json_with_reminder_extracts_it(self):
-        """Test hook extracts reminder from JSON output with proper formatting."""
-        hook = ReminderExtractionHook()
+    async def test_high_priority_incomplete_task_returns_allow(self):
+        """Test hook with high-priority but incomplete task returns allow."""
+        hook = HighPriorityTaskReminderHook()
+        tool_output = json.dumps(
+            {
+                "task": {"priority": "high", "status": "in_progress"},
+                "newly_ready_tasks": [],
+            },
+        )
         result = await hook.execute(
-            "tool",
+            "mcp__planning__update_task_status",
             "{}",
-            {"tool_output": '{"result": "ok", "reminder": "Remember this!"}'},
+            {"tool_output": tool_output},
+        )
+        assert result.inject is None
+
+    @pytest.mark.asyncio
+    async def test_high_priority_completed_task_injects_reminder(self):
+        """Test hook injects reminder for high-priority completed task."""
+        hook = HighPriorityTaskReminderHook()
+        tool_output = json.dumps(
+            {
+                "task": {"priority": "high", "status": "completed"},
+                "newly_ready_tasks": [],
+            },
+        )
+        result = await hook.execute(
+            "mcp__planning__update_task_status",
+            "{}",
+            {"tool_output": tool_output},
         )
         assert result.inject is not None
         # Reminder should be formatted with SYSTEM REMINDER header and borders
-        assert "Remember this!" in result.inject["content"]
+        assert "High-priority task completed" in result.inject["content"]
         assert "SYSTEM REMINDER" in result.inject["content"]
         assert "=" * 60 in result.inject["content"]  # Border separator
+        assert "memory/long_term" in result.inject["content"]  # Memory paths
         assert result.inject["strategy"] == "user_message"
