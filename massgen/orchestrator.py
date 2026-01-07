@@ -4269,13 +4269,24 @@ Your answer:"""
                                 external_tool_calls.append(tool_call)
                                 continue
 
-                            # Unknown tools (not internal, not external): log warning and skip
+                            # Check if this is an MCP or custom tool (handled by backend)
+                            is_mcp = hasattr(agent.backend, "is_mcp_tool_call") and agent.backend.is_mcp_tool_call(tool_name)
+                            is_custom = hasattr(agent.backend, "is_custom_tool_call") and agent.backend.is_custom_tool_call(tool_name)
+
+                            # MCP and custom tools are handled by backend - just log for UI, don't warn
+                            if is_mcp or is_custom:
+                                tool_type = "MCP" if is_mcp else "Custom"
+                                logger.debug(f"[Orchestrator] Agent {agent_id} called {tool_type} tool '{tool_name}' (handled by backend)")
+                                # Don't yield UI message here - backend streams its own status messages
+                                continue
+
+                            # Unknown tools (not workflow, not MCP, not custom, not external): log warning
                             # This handles hallucinated tool names or model prefixes like "default_api:"
                             if tool_name and tool_name not in internal_tool_names:
                                 logger.warning(
-                                    f"[Orchestrator] Agent {agent_id} called unknown tool '{tool_name}' - skipping",
+                                    f"[Orchestrator] Agent {agent_id} called unknown tool '{tool_name}' - not registered as workflow, MCP, or custom tool",
                                 )
-                                yield self._trace_tuple(f"⚠️ Unknown tool: {tool_name} (skipped)", kind="coordination")
+                                yield self._trace_tuple(f"⚠️ Unknown tool: {tool_name} (not registered)", kind="coordination")
                                 continue
 
                             if tool_name == "new_answer":
@@ -4589,8 +4600,10 @@ Your answer:"""
                             workflow_tool_found = True
                             # Don't return - let the loop continue so agent can process broadcast result
                             # and provide a proper workflow response (new_answer or vote)
-                        elif tool_name.startswith("mcp") or "__" in tool_name:
-                            # MCP tools (with or without mcp__ prefix) and custom tools are handled by the backend
+                        elif (hasattr(agent.backend, "is_mcp_tool_call") and agent.backend.is_mcp_tool_call(tool_name)) or (
+                            hasattr(agent.backend, "is_custom_tool_call") and agent.backend.is_custom_tool_call(tool_name)
+                        ):
+                            # MCP and custom tools are handled by the backend
                             # Tool results are streamed separately via StreamChunks
                             # Only mark as workflow progress if agent can still provide answers.
                             # If they've hit their answer limit, they MUST vote - MCP tools shouldn't delay this.
@@ -4598,12 +4611,6 @@ Your answer:"""
                             if can_answer:
                                 workflow_tool_found = True
                             # else: agent must vote, don't set workflow_tool_found so enforcement triggers
-                        elif tool_name.startswith("custom_tool"):
-                            # Custom tools are handled by the backend and their results are streamed separately
-                            # Only mark as workflow progress if agent can still provide answers.
-                            can_answer, _ = self._check_answer_count_limit(agent_id)
-                            if can_answer:
-                                workflow_tool_found = True
                         else:
                             # Non-workflow tools not yet implemented
                             yield (
