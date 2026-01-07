@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.35 (January 7, 2026)** - Enhanced Log Analysis & Workflow Observability
-New `massgen logs analyze` command generates analysis prompts or launches multi-agent self-analysis. Comprehensive Logfire attributes for workflow explanation including round context, vote context, and local file references. New `direct_mcp_servers` config option to keep specific MCP servers as direct protocol tools. Grok and Gemini tool fixes, vote-only mode improvements.
+New `massgen logs analyze` command generates analysis prompts or launches multi-agent self-analysis using MassGen. Comprehensive Logfire attributes for workflow explanation including round context, vote context, and local file references. New `direct_mcp_servers` config option for code-based tools mode to keep specific MCP servers as direct protocol tools. Grok and Gemini tool fixes, vote-only mode improvements.
 
 **v0.1.34 (January 5, 2026)** - OpenAI-Compatible Server & Model Discovery
 Local OpenAI-compatible HTTP server enables integration with any OpenAI SDK client. Dynamic model discovery for Groq and Together backends fetches available models via authenticated API calls. WebUI improvements include file diffs, answer refresh polling, and workspace browser optimizations. Subagent reliability enhancements for status tracking, cancellation recovery, and error handling.

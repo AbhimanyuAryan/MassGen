@@ -159,7 +159,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: January 7, 2026** | **Next Update: January 9, 2026**
 
 **What's New in v0.1.35:**
-- **📊 Log Analysis CLI** - New `massgen logs analyze` command with prompt mode and multi-agent self-analysis
+- **📊 Log Analysis CLI** - New `massgen logs analyze` command with prompt mode and multi-agent self-analysis using MassGen
 - **🔍 Logfire Workflow Attributes** - Comprehensive observability with round context, vote reasoning, and local file references
 - **🔧 Direct MCP Servers** - New `direct_mcp_servers` config to keep specific MCPs as protocol tools when using code-based tools
 - **🐛 Tool Handling Fixes** - Unknown tools handled gracefully, vote-only mode improvements, Grok and Gemini backend fixes
@@ -173,13 +173,13 @@ pip install --upgrade massgen
 uv pip install massgen
 
 # List your runs and see which have been analyzed
-massgen logs list
+uv run massgen logs list
 
-# Generate an analysis prompt for a specific log
-massgen logs analyze --log-dir .massgen/massgen_logs/log_20260107_123456
+# Generate an analysis prompt (defaults to most recent log)
+uv run massgen logs analyze
 
 # Run multi-agent self-analysis on your logs
-massgen logs analyze --mode self --log-dir .massgen/massgen_logs/log_20260107_123456
+uv run massgen logs analyze --mode self
 
 # Use direct MCP servers with code-based tools for multi-agent log analysis
 uv run massgen --config massgen/configs/analysis/log_analysis_cli.yaml \

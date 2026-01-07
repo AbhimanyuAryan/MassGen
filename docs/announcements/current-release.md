@@ -9,9 +9,9 @@ After posting, update the social links below.
 
 We're excited to release MassGen v0.1.35, adding Enhanced Log Analysis & Workflow Observability!
 
-Run `massgen logs analyze` to generate analysis prompts or launch multi-agent self-analysis. New Logfire attributes provide comprehensive workflow context including round intent, vote reasoning, and local file references for hybrid access.
+Run `massgen logs analyze` to generate analysis prompts or launch multi-agent self-analysis using MassGen. New Logfire attributes provide comprehensive workflow context including round intent, vote reasoning, and local file references for hybrid access.
 
-**Plus:** `direct_mcp_servers` config option for keeping specific MCPs as protocol tools, Grok and Gemini tool fixes, and vote-only mode improvements.
+**Plus:** `direct_mcp_servers` config option for code-based tools mode to keep specific MCPs as protocol tools, Grok and Gemini tool fixes, and vote-only mode improvements.
 
 ## Install
 
@@ -35,7 +35,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 We're excited to release MassGen v0.1.35, adding Enhanced Log Analysis & Workflow Observability!
 
-Run `massgen logs analyze` to generate analysis prompts or launch multi-agent self-analysis. New Logfire attributes provide comprehensive workflow context including round intent, vote reasoning, and local file references for hybrid access. Plus: `direct_mcp_servers` config option for keeping specific MCPs as protocol tools, Grok and Gemini tool fixes, and vote-only mode improvements.
+Run `massgen logs analyze` to generate analysis prompts or launch multi-agent self-analysis using MassGen. New Logfire attributes provide comprehensive workflow context including round intent, vote reasoning, and local file references for hybrid access. Plus: `direct_mcp_servers` config option for code-based tools mode to keep specific MCPs as protocol tools, Grok and Gemini tool fixes, and vote-only mode improvements.
 
 Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.35
 

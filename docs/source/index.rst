@@ -159,7 +159,7 @@ Recent Releases
 
 **v0.1.35 (January 7, 2026)** - Log Analysis & Workflow Observability
 
-New ``massgen logs analyze`` command generates analysis prompts or launches multi-agent self-analysis. Logfire workflow attributes capture round intent, vote reasoning, and local file references. ``direct_mcp_servers`` config keeps specific MCPs as protocol tools when using code-based tools. Tool handling fixes for Grok, Gemini, unknown tools, and vote-only mode.
+New ``massgen logs analyze`` command generates analysis prompts or launches multi-agent self-analysis using MassGen. Logfire workflow attributes capture round intent, vote reasoning, and local file references. ``direct_mcp_servers`` config option for code-based tools mode to keep specific MCPs as protocol tools. Tool handling fixes for Grok, Gemini, unknown tools, and vote-only mode.
 
 **v0.1.34 (January 5, 2026)** - OpenAI-Compatible Server & Model Discovery
 

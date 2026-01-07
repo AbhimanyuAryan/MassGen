@@ -231,7 +231,7 @@ Most configurations use environment variables for API keys:so
 **New Features:** Log Analysis CLI, Logfire Workflow Observability, Direct MCP Servers, Tool Handling Fixes
 
 **Key Features:**
-- **Log Analysis CLI**: New `massgen logs analyze` command with prompt mode and multi-agent self-analysis
+- **Log Analysis CLI**: New `massgen logs analyze` command with prompt mode and multi-agent self-analysis using MassGen
 - **Logfire Workflow Attributes**: Round context, vote reasoning, and local file references for observability
 - **Direct MCP Servers**: Keep specific MCPs as protocol tools when using code-based tools
 - **Tool Handling Fixes**: Unknown tools handled gracefully, vote-only mode improvements
@@ -242,13 +242,13 @@ Most configurations use environment variables for API keys:so
 pip install --upgrade massgen
 
 # List your runs and see which have been analyzed
-massgen logs list
+uv run massgen logs list
 
-# Generate an analysis prompt for a specific log
-massgen logs analyze --log-dir .massgen/massgen_logs/log_20260107_123456
+# Generate an analysis prompt (defaults to most recent log)
+uv run massgen logs analyze
 
 # Run multi-agent self-analysis on your logs
-massgen logs analyze --mode self --log-dir .massgen/massgen_logs/log_20260107_123456
+uv run massgen logs analyze --mode self
 
 # Use direct MCP servers with code-based tools for multi-agent log analysis
 uv run massgen --config massgen/configs/analysis/log_analysis_cli.yaml \

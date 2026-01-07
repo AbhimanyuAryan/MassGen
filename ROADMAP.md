@@ -47,7 +47,6 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 | **v0.1.37** | 01/12/26 | Integrate Smart Semantic Search | @ncrispino | Advanced semantic search capabilities for improved retrieval |
 | | | General Hook Framework | @ncrispino | Agent lifecycle event hooks for extensibility |
 | **v0.1.38** | 01/14/26 | Improve Log Sharing and Analysis | @ncrispino | Enhanced log sharing workflows and analysis tools |
-| | | Multi-Turn Log Analyzer | @ncrispino | Log analyzer skill for multi-turn, multi-attempt sessions |
 
 *All releases ship on MWF @ 9am PT when ready*
 
@@ -128,7 +127,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.38 - Log Sharing & Multi-Turn Analysis
+## 📋 v0.1.38 - Log Sharing & Analysis
 
 ### Features
 
@@ -138,15 +137,8 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Improved analysis tools and visualizations
 - **Use Case**: Better collaboration and debugging workflows
 
-**2. Multi-Turn Log Analyzer Skill** (@ncrispino)
-- Issue: [#762](https://github.com/massgen/MassGen/issues/762)
-- Adjust log analyzer skill to handle multi-turn, multi-attempt sessions
-- Comprehensive analysis across coordination phases
-- **Use Case**: Deep analysis of complex multi-turn sessions
-
 ### Success Criteria
 - ✅ Log sharing improvements deployed
-- ✅ Log analyzer handles multi-turn sessions
 
 ---
 
@@ -679,12 +671,6 @@ These features are being actively developed on **separate parallel tracks** and 
 - Issue: [#722](https://github.com/massgen/MassGen/issues/722)
 - Enhanced log sharing workflows
 - Improved analysis tools and visualizations
-- **Target:** v0.1.38
-
-### Track: Multi-Turn Log Analyzer Skill (@ncrispino, nickcrispino)
-- Issue: [#762](https://github.com/massgen/MassGen/issues/762)
-- Adjust log analyzer skill to handle multi-turn, multi-attempt sessions
-- Comprehensive analysis across coordination phases
 - **Target:** v0.1.38
 
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)

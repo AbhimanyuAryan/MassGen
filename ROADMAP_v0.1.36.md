@@ -134,7 +134,6 @@ Version 0.1.36 focuses on OpenAI Responses API improvements and computer use mod
 
 ### v0.1.38 Plans
 - **Improve Log Sharing and Analysis** (@ncrispino): Enhanced log sharing workflows ([#722](https://github.com/massgen/MassGen/issues/722))
-- **Multi-Turn Log Analyzer** (@ncrispino): Log analyzer for multi-turn, multi-attempt sessions ([#762](https://github.com/massgen/MassGen/issues/762))
 
 ### Long-term Vision
 - **Advanced Agent Communication**: Sophisticated inter-agent protocols and negotiation
