@@ -806,11 +806,20 @@ class ReminderExtractionHook(PatternHook):
 
     This hook extracts "reminder" fields from tool results (JSON) and injects
     them as user messages to make them more prominent to the agent.
+
+    Handles both:
+    - JSON string tool outputs (standard case)
+    - Dict tool outputs (custom tools that return dicts directly)
     """
 
     def __init__(self, name: str = "reminder_extraction"):
         """Initialize the reminder extraction hook."""
         super().__init__(name, matcher="*", timeout=5)
+
+    def _format_reminder(self, reminder_text: str) -> str:
+        """Format reminder text with standard header and borders."""
+        separator = "=" * 60
+        return f"\n{separator}\n⚠️  SYSTEM REMINDER\n{separator}\n\n{reminder_text}\n\n{separator}\n"
 
     async def execute(
         self,
@@ -835,10 +844,11 @@ class ReminderExtractionHook(PatternHook):
 
         if reminder_text and isinstance(reminder_text, str):
             logger.debug(f"[ReminderExtractionHook] Extracting reminder from {function_name}")
+            formatted_reminder = self._format_reminder(reminder_text)
             return HookResult(
                 allowed=True,
                 inject={
-                    "content": reminder_text,
+                    "content": formatted_reminder,
                     "strategy": "user_message",
                 },
             )

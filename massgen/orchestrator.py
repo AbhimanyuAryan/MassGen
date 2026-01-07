@@ -49,6 +49,12 @@ from .logger_config import (
     log_tool_call,
     set_log_attempt,
 )
+from .mcp_tools.hooks import (
+    GeneralHookManager,
+    HookType,
+    MidStreamInjectionHook,
+    ReminderExtractionHook,
+)
 from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
 from .persona_generator import PersonaGenerator
@@ -3307,6 +3313,100 @@ Your answer:"""
 
         return "\n".join(injection_parts)
 
+    def _setup_hook_manager_for_agent(
+        self,
+        agent_id: str,
+        agent: ChatAgent,
+        answers: Dict[str, str],
+    ) -> None:
+        """Set up GeneralHookManager with mid-stream injection and reminder extraction hooks.
+
+        This creates a hook manager with:
+        1. MidStreamInjectionHook - injects answers from other agents into tool results
+        2. ReminderExtractionHook - extracts reminder fields from tool results
+
+        Args:
+            agent_id: The agent identifier
+            agent: The ChatAgent instance
+            answers: Dict of existing answers when agent started (used to detect new answers)
+        """
+        if not hasattr(agent.backend, "set_general_hook_manager"):
+            return
+
+        # Create hook manager
+        manager = GeneralHookManager()
+
+        # Create mid-stream injection hook with closure-based callback
+        mid_stream_hook = MidStreamInjectionHook()
+
+        # Define the injection callback (captures agent_id and answers)
+        def get_injection_content() -> Optional[str]:
+            """Check if mid-stream injection is needed and return content."""
+            if not self._check_restart_pending(agent_id):
+                return None
+
+            # In vote-only mode, skip injection and force a full restart instead.
+            # Mid-stream injection can't update tool schemas, so agents in vote-only mode
+            # wouldn't be able to vote for newly discovered answers (the vote enum is fixed
+            # at stream start). A full restart gives them updated tool schemas.
+            if self._is_vote_only_mode(agent_id):
+                return None  # Let restart happen instead
+
+            # Get CURRENT answers from agent_states
+            current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+
+            # Filter to only NEW answers (ones that didn't exist when this agent started)
+            new_answers = {aid: ans for aid, ans in current_answers.items() if aid not in answers}
+
+            if not new_answers:
+                return None
+
+            # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
+            # This prevents premature convergence where agents immediately adopt the first answer
+            if self.agent_states[agent_id].injection_count == 0:
+                return None  # Use traditional approach for first injection
+
+            # Build injection content
+            injection = self._build_tool_result_injection(agent_id, new_answers)
+
+            # Clear restart_pending since injection satisfies the update need
+            self.agent_states[agent_id].restart_pending = False
+
+            # Increment injection count
+            self.agent_states[agent_id].injection_count += 1
+
+            # Track the injection
+            logger.info(
+                f"[Orchestrator] Mid-stream injection for {agent_id}: {len(new_answers)} new answer(s)",
+            )
+            self.coordination_tracker.track_agent_action(
+                agent_id,
+                ActionType.UPDATE_INJECTED,
+                f"Mid-stream: {len(new_answers)} answer(s)",
+            )
+
+            # Update agent's context labels
+            self.coordination_tracker.update_agent_context_with_new_answers(
+                agent_id,
+                list(new_answers.keys()),
+            )
+
+            return injection
+
+        # Set callback on hook
+        mid_stream_hook.set_callback(get_injection_content)
+
+        # Register mid-stream injection hook first (maintains current behavior order)
+        manager.register_global_hook(HookType.POST_TOOL_USE, mid_stream_hook)
+
+        # Register reminder extraction hook
+        reminder_hook = ReminderExtractionHook()
+        manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+
+        # Set manager on backend
+        agent.backend.set_general_hook_manager(manager)
+        logger.debug(f"[Orchestrator] Set up hook manager for {agent_id} with mid-stream and reminder hooks")
+
     def _normalize_workspace_paths_in_answers(self, answers: Dict[str, str], viewing_agent_id: Optional[str] = None) -> Dict[str, str]:
         """Normalize absolute workspace paths in agent answers to accessible temporary workspace paths.
 
@@ -3974,64 +4074,8 @@ Your answer:"""
                 else:
                     logger.info(f"[Orchestrator] Backend planning mode DISABLED for {agent_id} - MCP tools allowed")
 
-            # Set up mid-stream injection callback for tool result updates
-            # This allows injecting new answers into tool results without interrupting the stream
-            def get_injection_content() -> Optional[str]:
-                """Check if mid-stream injection is needed and return content."""
-                if not self._check_restart_pending(agent_id):
-                    return None
-
-                # In vote-only mode, skip injection and force a full restart instead.
-                # Mid-stream injection can't update tool schemas, so agents in vote-only mode
-                # wouldn't be able to vote for newly discovered answers (the vote enum is fixed
-                # at stream start). A full restart gives them updated tool schemas.
-                if self._is_vote_only_mode(agent_id):
-                    return None  # Let restart happen instead
-
-                # Get CURRENT answers from agent_states
-                current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
-
-                # Filter to only NEW answers (ones that didn't exist when this agent started)
-                new_answers = {aid: ans for aid, ans in current_answers.items() if aid not in answers}
-
-                if not new_answers:
-                    return None
-
-                # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
-                # This prevents premature convergence where agents immediately adopt the first answer
-                if self.agent_states[agent_id].injection_count == 0:
-                    return None  # Use traditional approach for first injection
-
-                # Build injection content
-                injection = self._build_tool_result_injection(agent_id, new_answers)
-
-                # Clear restart_pending since injection satisfies the update need
-                self.agent_states[agent_id].restart_pending = False
-
-                # Increment injection count
-                self.agent_states[agent_id].injection_count += 1
-
-                # Track the injection
-                logger.info(
-                    f"[Orchestrator] Mid-stream injection for {agent_id}: " f"{len(new_answers)} new answer(s)",
-                )
-                self.coordination_tracker.track_agent_action(
-                    agent_id,
-                    ActionType.UPDATE_INJECTED,
-                    f"Mid-stream: {len(new_answers)} answer(s)",
-                )
-
-                # Update agent's context labels
-                self.coordination_tracker.update_agent_context_with_new_answers(
-                    agent_id,
-                    list(new_answers.keys()),
-                )
-
-                return injection
-
-            # Set the callback on the backend
-            if hasattr(agent.backend, "set_mid_stream_injection_callback"):
-                agent.backend.set_mid_stream_injection_callback(get_injection_content)
+            # Set up hook manager for mid-stream injection and reminder extraction
+            self._setup_hook_manager_for_agent(agent_id, agent, answers)
 
             # Build proper conversation messages with system + user messages
             max_attempts = 3
@@ -4620,9 +4664,8 @@ Your answer:"""
             yield ("error", f"Agent execution failed: {str(e)}")
             yield ("done", None)
         finally:
-            # Clean up mid-stream injection callback
-            if hasattr(agent.backend, "set_mid_stream_injection_callback"):
-                agent.backend.set_mid_stream_injection_callback(None)
+            # Hook manager cleanup is automatic - no explicit cleanup needed
+            # The GeneralHookManager is recreated for each agent run
 
             # Add outcome attributes to agent execution span
             if _agent_outcome:

@@ -493,7 +493,7 @@ class TestReminderExtractionHook:
 
     @pytest.mark.asyncio
     async def test_json_with_reminder_extracts_it(self):
-        """Test hook extracts reminder from JSON output."""
+        """Test hook extracts reminder from JSON output with proper formatting."""
         hook = ReminderExtractionHook()
         result = await hook.execute(
             "tool",
@@ -501,5 +501,8 @@ class TestReminderExtractionHook:
             {"tool_output": '{"result": "ok", "reminder": "Remember this!"}'},
         )
         assert result.inject is not None
-        assert result.inject["content"] == "Remember this!"
+        # Reminder should be formatted with SYSTEM REMINDER header and borders
+        assert "Remember this!" in result.inject["content"]
+        assert "SYSTEM REMINDER" in result.inject["content"]
+        assert "=" * 60 in result.inject["content"]  # Border separator
         assert result.inject["strategy"] == "user_message"

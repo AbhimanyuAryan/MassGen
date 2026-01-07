@@ -1687,15 +1687,9 @@ class CustomToolAndMCPBackend(LLMBackend):
                         f"[PostToolUse] Hook injection for {tool_name}: " f"strategy={inject_strategy}, content_len={len(inject_content)}",
                     )
 
-            # Check for mid-stream injection content (updates from other agents)
-            injection_content = self.get_mid_stream_injection()
-
-            # Combine hook injection with mid-stream injection
-            if post_hook_injection:
-                if injection_content:
-                    injection_content = f"{injection_content}\n{post_hook_injection}"
-                else:
-                    injection_content = post_hook_injection
+            # Use hook injection as the injection content
+            # Mid-stream injection is now handled via MidStreamInjectionHook in the hook framework
+            injection_content = post_hook_injection
 
             # Append result to messages (potentially evicted, potentially with injection)
             if eviction.was_evicted:
@@ -1752,62 +1746,17 @@ class CustomToolAndMCPBackend(LLMBackend):
                         config.tool_type,
                     )
 
-            # Check for reminder in tool result and inject as separate user message
-            reminder_text = None
-            if config.tool_type == "mcp" and result_obj:
-                # MCP results are CallToolResult objects - need to parse JSON from content
-                try:
-                    import json
-
-                    json_str = None
-                    if hasattr(result_obj, "content") and isinstance(
-                        result_obj.content,
-                        list,
-                    ):
-                        if len(result_obj.content) > 0 and hasattr(
-                            result_obj.content[0],
-                            "text",
-                        ):
-                            json_str = result_obj.content[0].text
-                    elif isinstance(result_obj, dict):
-                        # Already a dict (some MCP servers return dicts directly)
-                        reminder_text = result_obj.get("reminder")
-
-                    if json_str:
-                        result_dict = json.loads(json_str)
-                        if isinstance(result_dict, dict):
-                            reminder_text = result_dict.get("reminder")
-                except (
-                    json.JSONDecodeError,
-                    AttributeError,
-                    IndexError,
-                    TypeError,
-                ) as e:
-                    logger.debug(f"Could not parse MCP result for reminder: {e}")
-            elif config.tool_type == "custom" and isinstance(result, dict):
-                reminder_text = result.get("reminder")
-
-            if reminder_text and isinstance(reminder_text, str):
-                # Inject reminder as a user message (appears prominently, not buried in JSON)
-                reminder_message = {
-                    "role": "user",
-                    "content": f"\n{'='*60}\n⚠️  SYSTEM REMINDER\n{'='*60}\n\n{reminder_text}\n\n{'='*60}\n",
-                }
-                updated_messages.append(reminder_message)
-                logger.info(
-                    f"[Tool Reminder] Injected reminder from {tool_name}: {reminder_text[:100]}...",
-                )
-
             # Inject hook-based reminder as user message (from PostToolUse hooks)
+            # Reminder extraction is now handled by ReminderExtractionHook which formats the content
             if post_hook_reminder:
                 hook_reminder_message = {
                     "role": "user",
-                    "content": f"\n{'='*60}\n⚠️  HOOK REMINDER\n{'='*60}\n\n{post_hook_reminder}\n\n{'='*60}\n",
+                    "content": post_hook_reminder,  # Already formatted by ReminderExtractionHook
                 }
                 updated_messages.append(hook_reminder_message)
-                logger.info(
-                    f"[PostToolUse Hook] Injected reminder for {tool_name}: {post_hook_reminder[:100]}...",
-                )
+                # Log first 100 chars, stripping formatting for readability
+                log_content = post_hook_reminder.replace("=", "").strip()[:100]
+                logger.info(f"[PostToolUse Hook] Injected reminder for {tool_name}: {log_content}...")
 
             # Yield results chunk
             # For MCP tools, try to extract text from result_obj if available

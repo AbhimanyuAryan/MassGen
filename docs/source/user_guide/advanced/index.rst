@@ -10,6 +10,7 @@ Advanced features in MassGen:
 
 * **Agent diversity** - Configure multiple agents with different models and behaviors
 * **Agent communication** - Enable agents to ask each other questions
+* **Hook framework** - Extend agent behavior with custom hooks for tool execution
 * **Task planning** - Structured task breakdown and execution
 * **Subagents** - Spawn parallel child processes for independent tasks
 * **Planning mode** - Safe execution with human approval
@@ -44,6 +45,17 @@ Guides in This Section
       * Coordination strategies
 
       :doc:`Read the Agent Communication guide → <agent_communication>`
+
+   .. grid-item-card:: 🪝 Hook Framework
+
+      Extend agent behavior
+
+      * PreToolUse / PostToolUse hooks
+      * Content injection strategies
+      * Reminder extraction
+      * Custom hook development
+
+      :doc:`Read the Hook Framework guide → <hooks>`
 
    .. grid-item-card:: 📋 Task Planning
 
@@ -125,6 +137,7 @@ Related Documentation
 
    diversity
    agent_communication
+   hooks
    agent_task_planning
    subagents
    planning_mode
