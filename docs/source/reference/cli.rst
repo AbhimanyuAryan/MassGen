@@ -353,7 +353,7 @@ Analyze and browse session logs without manual file navigation.
    * - ``massgen logs analyze``
      - Generate analysis prompt for use in coding CLIs
    * - ``massgen logs analyze --mode self``
-     - Run multi-agent self-analysis
+     - Run multi-agent self-analysis using a preset MassGen team (customizable via ``--config``)
    * - ``massgen logs open``
      - Open log directory in system file manager
 

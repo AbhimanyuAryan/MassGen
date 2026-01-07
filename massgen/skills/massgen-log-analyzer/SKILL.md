@@ -53,7 +53,7 @@ Self-analysis mode runs MassGen with multiple agents to analyze logs from differ
 
 MassGen log directories support multiple turns (coordination sessions). Each turn has its own `turn_N/` directory with attempts inside:
 
-```
+```text
 log_YYYYMMDD_HHMMSS/
 ├── turn_1/                    # First coordination session
 │   ├── ANALYSIS_REPORT.md     # Report for turn 1
@@ -111,7 +111,7 @@ uv pip install "massgen[observability]"
 
 ### Step 2: Create a Logfire Account
 
-Go to https://logfire.pydantic.dev/ and create a free account.
+Go to <https://logfire.pydantic.dev/> and create a free account.
 
 ### Step 3: Authenticate with Logfire
 
@@ -125,7 +125,7 @@ export LOGFIRE_TOKEN=your_token_here
 
 ### Step 4: Get Your Read Token for the MCP Server
 
-1. Go to https://logfire.pydantic.dev/ and log in
+1. Go to <https://logfire.pydantic.dev/> and log in
 2. Navigate to your project settings
 3. Create a **Read Token** (this is different from the write token used for authentication)
 4. Copy the token for use in Step 5
@@ -140,8 +140,10 @@ Then restart Claude Code and re-invoke this skill.
 
 ## Prerequisites
 
-**Required MCP Server:**
-This skill requires the Logfire MCP server to be configured (see setup above). The MCP server provides these tools:
+**Logfire MCP Server (Optional but Recommended):**
+The Logfire MCP server provides enhanced analysis with precise timing data and cross-session queries. If `LOGFIRE_READ_TOKEN` is not set, self-analysis mode will automatically disable the Logfire MCP and fall back to local log files only.
+
+When configured, the MCP server provides these tools:
 - `mcp__logfire__arbitrary_query` - Run SQL queries against logfire data
 - `mcp__logfire__schema_reference` - Get the database schema
 - `mcp__logfire__find_exceptions_in_file` - Find exceptions in a file
@@ -149,7 +151,7 @@ This skill requires the Logfire MCP server to be configured (see setup above). T
 
 **Required Flags:**
 - `--automation` - Clean output for programmatic parsing -- see `massgen-develops-massgen` skill for more info on this flag
-- `--logfire` - Enable Logfire tracing
+- `--logfire` - Enable Logfire tracing (optional, but required to populate Logfire data)
 
 ## Part 1: Running MassGen Experiments
 
@@ -474,7 +476,7 @@ with tracer.span("my_operation", attributes={
 
 ## Logfire Documentation Reference
 
-**Main Documentation:** https://logfire.pydantic.dev/docs/
+**Main Documentation:** <https://logfire.pydantic.dev/docs/>
 
 ### Key Pages to Know
 
@@ -506,7 +508,7 @@ with tracer.span("my_operation", attributes={
 
 ### Live View Features
 
-The Logfire Live View UI (https://logfire.pydantic.dev/) provides:
+The Logfire Live View UI (<https://logfire.pydantic.dev/>) provides:
 - **Real-time streaming** of traces as they arrive
 - **SQL search pane** (press `/` to open) with auto-complete
 - **Natural language to SQL** - describe what you want and get a query
@@ -548,12 +550,12 @@ MassGen's backends use this for `llm.{provider}.stream` spans.
 ## Reference Documentation
 
 **Logfire:**
-- Main docs: https://logfire.pydantic.dev/docs/
-- Live View: https://logfire.pydantic.dev/docs/guides/web-ui/live/
-- SQL Explorer: https://logfire.pydantic.dev/docs/guides/web-ui/explore/
-- Query API: https://logfire.pydantic.dev/docs/how-to-guides/query-api/
-- Manual tracing: https://logfire.pydantic.dev/docs/guides/onboarding-checklist/add-manual-tracing/
-- OpenAI integration: https://logfire.pydantic.dev/docs/integrations/llms/openai/
+- Main docs: <https://logfire.pydantic.dev/docs/>
+- Live View: <https://logfire.pydantic.dev/docs/guides/web-ui/live/>
+- SQL Explorer: <https://logfire.pydantic.dev/docs/guides/web-ui/explore/>
+- Query API: <https://logfire.pydantic.dev/docs/how-to-guides/query-api/>
+- Manual tracing: <https://logfire.pydantic.dev/docs/guides/onboarding-checklist/add-manual-tracing/>
+- OpenAI integration: <https://logfire.pydantic.dev/docs/integrations/llms/openai/>
 - Schema reference: Use `mcp__logfire__schema_reference` tool
 
 **MassGen:**

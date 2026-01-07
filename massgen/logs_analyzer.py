@@ -95,18 +95,18 @@ class LogAnalyzer:
 
         # Search through logs to find one with metrics
         for log in logs:
-            turns = sorted(log.glob("turn_*"))
+            turns = sorted(log.glob("turn_*"), key=_natural_sort_key)
             if turns:
-                attempts = sorted(turns[-1].glob("attempt_*"), reverse=True)
+                attempts = sorted(turns[-1].glob("attempt_*"), key=_natural_sort_key, reverse=True)
                 for attempt in attempts:
                     if (attempt / "metrics_summary.json").exists():
                         return attempt
 
         # Fallback to latest log even without metrics
         log = logs[0]
-        turns = sorted(log.glob("turn_*"))
+        turns = sorted(log.glob("turn_*"), key=_natural_sort_key)
         if turns:
-            attempts = sorted(turns[-1].glob("attempt_*"))
+            attempts = sorted(turns[-1].glob("attempt_*"), key=_natural_sort_key)
             if attempts:
                 return attempts[-1]
         return log
@@ -453,8 +453,8 @@ def display_list(
     for i, log_dir in enumerate(logs, 1):
         # Find metrics in this log
         metrics_path = None
-        for turn in sorted(log_dir.glob("turn_*")):
-            for attempt in sorted(turn.glob("attempt_*"), reverse=True):
+        for turn in sorted(log_dir.glob("turn_*"), key=_natural_sort_key):
+            for attempt in sorted(turn.glob("attempt_*"), key=_natural_sort_key, reverse=True):
                 p = attempt / "metrics_summary.json"
                 if p.exists():
                     metrics_path = p
@@ -691,8 +691,11 @@ def run_self_analysis(
 
     # Create empty ANALYSIS_REPORT.md if it doesn't exist
     # This is required for context_paths validation
+    # Track if we created it so we can clean up on failure
+    created_empty_report = False
     if not report_path.exists():
         report_path.touch()
+        created_empty_report = True
 
     # Inject context_paths for safe log access
     # Log dir is read-only, only ANALYSIS_REPORT.md is writable
@@ -769,12 +772,19 @@ Read log files directly and use Logfire MCP tools if available."""
 
         if result.returncode == 0:
             console.print("\n[green]Analysis complete![/green]")
-            if report_path.exists():
+            if report_path.exists() and report_path.stat().st_size > 0:
                 console.print(f"[green]Report saved to:[/green] {report_path}")
             else:
                 console.print("[yellow]Note: ANALYSIS_REPORT.md was not created by the agents.[/yellow]")
+                # Clean up empty file we created
+                if created_empty_report and report_path.exists() and report_path.stat().st_size == 0:
+                    report_path.unlink()
         else:
             console.print(f"\n[red]Analysis failed with exit code {result.returncode}[/red]")
+            # Clean up empty file we created on failure
+            if created_empty_report and report_path.exists() and report_path.stat().st_size == 0:
+                report_path.unlink()
+                console.print("[dim]Cleaned up empty report file.[/dim]")
 
         return result.returncode
 
@@ -782,6 +792,12 @@ Read log files directly and use Logfire MCP tools if available."""
         # Clean up temporary config file
         try:
             Path(tmp_config_path).unlink()
+        except Exception:
+            pass
+        # Also clean up empty report if subprocess was interrupted
+        try:
+            if created_empty_report and report_path.exists() and report_path.stat().st_size == 0:
+                report_path.unlink()
         except Exception:
             pass
 
