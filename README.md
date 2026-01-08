@@ -1478,6 +1478,13 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 ---
 
+## 🤝 Acknowledge
+
+We thank AgentWeb <img width="196" height="51" alt="68dacef628cd7a44dfb97814_agentweb-logo" src="https://github.com/user-attachments/assets/312f1d67-b342-4f62-b8ad-65cc9f54dc65" />
+for their kind sponsorship.
+
+---
+
 ## 📄 License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
