@@ -50,6 +50,9 @@ uv run pre-commit run --all-files
 
 # Validate all configs
 uv run python scripts/validate_all_configs.py
+
+# Build Web UI (required after modifying webui/src/*)
+cd webui && npm run build
 ```
 
 ## Architecture Overview

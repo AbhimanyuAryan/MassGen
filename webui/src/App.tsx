@@ -20,6 +20,7 @@ import { FinalAnswerView } from './components/FinalAnswerView';
 import { QuickstartWizard } from './components/QuickstartWizard';
 import { NotificationToast } from './components/NotificationToast';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { PathAutocomplete, type PathAutocompleteHandle } from './components/PathAutocomplete';
 import { ConversationHistory } from './components/ConversationHistory';
 import { AutomationView } from './components/AutomationView';
 import { ConfigEditorModal } from './components/ConfigEditorModal';
@@ -85,6 +86,9 @@ export function App() {
 
   // Store scroll position when leaving coordination view
   const coordinationScrollRef = useRef<number>(0);
+
+  // Path autocomplete ref
+  const pathAutocompleteRef = useRef<PathAutocompleteHandle>(null);
 
   // Theme - apply effective theme class to document
   const getEffectiveTheme = useThemeStore((s) => s.getEffectiveTheme);
@@ -626,13 +630,30 @@ export function App() {
               </button>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="flex gap-4">
+            <form onSubmit={handleSubmit} className="flex gap-4 relative">
+              {/* Path autocomplete dropdown */}
+              <PathAutocomplete
+                ref={pathAutocompleteRef}
+                inputValue={inputQuestion}
+                onSelect={(path, suffix) => {
+                  // Path was selected - focus returns to input automatically
+                  console.log('Selected path:', path, suffix);
+                }}
+                onInputChange={setInputQuestion}
+                enabled={status === 'connected' && !!selectedConfig}
+              />
               <input
                 type="text"
                 value={inputQuestion}
                 onChange={(e) => setInputQuestion(e.target.value)}
+                onKeyDown={(e) => {
+                  // Let autocomplete handle keys if it's showing
+                  if (pathAutocompleteRef.current?.handleKeyDown(e)) {
+                    return;
+                  }
+                }}
                 placeholder={selectedConfig
-                  ? "Enter your question for multi-agent coordination..."
+                  ? "Enter your question (use @path for context, @path:w for write access)..."
                   : "Select a config first..."
                 }
                 disabled={status !== 'connected' || !selectedConfig}

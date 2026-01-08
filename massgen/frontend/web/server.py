@@ -3030,6 +3030,109 @@ def create_app(
                 status_code=500,
             )
 
+    @app.get("/api/path/autocomplete")
+    async def path_autocomplete(
+        prefix: str = "",
+        base_path: str | None = None,
+    ):
+        """Get path suggestions for autocomplete.
+
+        Used by the Web UI to provide inline file path completion
+        when users type @path syntax.
+
+        Args:
+            prefix: The partial path to complete (e.g., "~/Doc" or "./src")
+            base_path: Optional base directory to resolve relative paths from.
+                       If not provided, uses user's home directory.
+
+        Returns:
+            {
+                "suggestions": [
+                    {"path": "/full/path", "name": "filename", "is_dir": bool},
+                    ...
+                ]
+            }
+        """
+        import os
+        from pathlib import Path
+
+        MAX_SUGGESTIONS = 50
+
+        try:
+            # Expand ~ to home directory
+            if prefix.startswith("~"):
+                prefix = os.path.expanduser(prefix)
+            elif prefix.startswith("./") or prefix.startswith("../"):
+                # Resolve relative paths
+                if base_path:
+                    base = Path(base_path).expanduser().resolve()
+                else:
+                    base = Path.home()
+                prefix = str(base / prefix)
+            elif not prefix.startswith("/"):
+                # If no prefix or just a filename, use base_path or home
+                if base_path:
+                    base = Path(base_path).expanduser().resolve()
+                else:
+                    base = Path.home()
+                prefix = str(base / prefix) if prefix else str(base) + "/"
+
+            prefix_path = Path(prefix)
+
+            # Determine parent directory and partial name to match
+            if prefix.endswith("/") or prefix_path.is_dir():
+                # User is browsing a directory
+                parent_dir = prefix_path if prefix_path.is_dir() else prefix_path.parent
+                partial_name = ""
+            else:
+                # User is typing a partial name
+                parent_dir = prefix_path.parent
+                partial_name = prefix_path.name.lower()
+
+            # Security: Resolve to absolute path and verify it exists
+            parent_dir = parent_dir.resolve()
+
+            if not parent_dir.exists() or not parent_dir.is_dir():
+                return {"suggestions": []}
+
+            # List directory contents
+            suggestions = []
+            try:
+                for entry in parent_dir.iterdir():
+                    # Skip hidden files unless explicitly requested
+                    if entry.name.startswith(".") and not partial_name.startswith("."):
+                        continue
+
+                    # Match partial name (case-insensitive)
+                    if partial_name and not entry.name.lower().startswith(partial_name):
+                        continue
+
+                    is_dir = entry.is_dir()
+                    suggestions.append(
+                        {
+                            "path": str(entry),
+                            "name": entry.name + ("/" if is_dir else ""),
+                            "is_dir": is_dir,
+                        },
+                    )
+
+                    if len(suggestions) >= MAX_SUGGESTIONS:
+                        break
+
+            except PermissionError:
+                return {"suggestions": []}
+
+            # Sort: directories first, then alphabetically
+            suggestions.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+
+            return {"suggestions": suggestions}
+
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to get path suggestions: {str(e)}"},
+                status_code=500,
+            )
+
     @app.get("/api/sessions/{session_id}/timeline")
     async def get_session_timeline(session_id: str):
         """Get coordination timeline data for visualization.
