@@ -6,7 +6,6 @@ Tests:
 - HookEvent and HookResult dataclasses
 - PatternHook matching
 - PythonCallableHook execution
-- ExternalCommandHook execution
 - GeneralHookManager registration and execution
 - Built-in hooks (MidStreamInjection, HighPriorityTaskReminder)
 """
@@ -271,6 +270,49 @@ class TestPythonCallableHook:
         result = await hook.execute("tool_name", '{"original": true}')
         assert result.updated_input == {"modified": True}
 
+    @pytest.mark.asyncio
+    async def test_fail_open_on_error_by_default(self):
+        """Test that hooks fail open (allow) on errors by default."""
+
+        def failing_hook(event: HookEvent) -> HookResult:
+            raise RuntimeError("Hook crashed!")
+
+        hook = PythonCallableHook("test", failing_hook)
+        result = await hook.execute("tool_name", "{}")
+        # Default is fail-open: allow execution despite error
+        assert result.allowed is True
+        assert result.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_on_error_when_configured(self):
+        """Test that hooks fail closed (deny) on errors when fail_closed=True."""
+
+        def failing_hook(event: HookEvent) -> HookResult:
+            raise RuntimeError("Hook crashed!")
+
+        hook = PythonCallableHook("test", failing_hook, fail_closed=True)
+        result = await hook.execute("tool_name", "{}")
+        # fail_closed=True: deny execution on error
+        assert result.allowed is False
+        assert result.decision == "deny"
+        assert "failed" in result.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_fail_closed_on_timeout(self):
+        """Test that hooks fail closed on timeout when fail_closed=True."""
+        import asyncio
+
+        async def slow_hook(event: HookEvent) -> HookResult:
+            await asyncio.sleep(10)  # Will timeout
+            return HookResult.allow()
+
+        # Very short timeout to trigger timeout error
+        hook = PythonCallableHook("test", slow_hook, timeout=0.01, fail_closed=True)
+        result = await hook.execute("tool_name", "{}")
+        assert result.allowed is False
+        assert result.decision == "deny"
+        assert "timed out" in result.reason.lower()
+
 
 # =============================================================================
 # GeneralHookManager Tests
@@ -421,6 +463,89 @@ class TestGeneralHookManager:
         post_hooks = manager.get_hooks_for_agent(None, HookType.POST_TOOL_USE)
         assert len(pre_hooks) == 1
         assert len(post_hooks) == 1
+
+    @pytest.mark.asyncio
+    async def test_deny_with_pattern_only_blocks_matching_tools(self):
+        """Test that deny hook with pattern only blocks matching tools."""
+        manager = GeneralHookManager()
+
+        def deny_dangerous_tools(event):
+            return HookResult.deny(reason="Dangerous tool blocked")
+
+        # Register deny hook only for Write and Delete tools
+        manager.register_global_hook(
+            HookType.PRE_TOOL_USE,
+            PythonCallableHook("block_writes", deny_dangerous_tools, matcher="Write|Delete"),
+        )
+
+        # Write tool should be blocked
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "Write",
+            '{"file": "test.txt"}',
+            {},
+        )
+        assert result.decision == "deny"
+        assert result.allowed is False
+        assert "Dangerous tool blocked" in result.reason
+
+        # Delete tool should be blocked
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "Delete",
+            '{"file": "test.txt"}',
+            {},
+        )
+        assert result.decision == "deny"
+        assert result.allowed is False
+
+        # Read tool should be allowed (doesn't match pattern)
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "Read",
+            '{"file": "test.txt"}',
+            {},
+        )
+        assert result.decision == "allow"
+        assert result.allowed is True
+
+    @pytest.mark.asyncio
+    async def test_deny_propagates_reason_correctly(self):
+        """Test that deny reason is properly propagated through hook execution."""
+        manager = GeneralHookManager()
+
+        custom_reason = "Access denied: insufficient permissions for /etc/passwd"
+
+        def security_check(event):
+            # Check if trying to access sensitive files
+            tool_input = event.tool_input
+            if tool_input.get("file_path", "").startswith("/etc/"):
+                return HookResult.deny(reason=custom_reason)
+            return HookResult.allow()
+
+        manager.register_global_hook(
+            HookType.PRE_TOOL_USE,
+            PythonCallableHook("security", security_check, matcher="*"),
+        )
+
+        # Access to /etc should be denied with specific reason
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "Read",
+            '{"file_path": "/etc/passwd"}',
+            {},
+        )
+        assert result.decision == "deny"
+        assert result.reason == custom_reason
+
+        # Access to /home should be allowed
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "Read",
+            '{"file_path": "/home/user/file.txt"}',
+            {},
+        )
+        assert result.decision == "allow"
 
 
 # =============================================================================

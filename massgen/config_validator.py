@@ -657,7 +657,7 @@ class ConfigValidator:
         # Validate optional field: type
         if "type" in hook_config:
             hook_type = hook_config["type"]
-            valid_types = {"python", "command"}
+            valid_types = {"python"}
             if hook_type not in valid_types:
                 result.add_error(
                     f"Invalid hook type: '{hook_type}'",
@@ -689,6 +689,16 @@ class ConfigValidator:
                     f"'timeout' must be positive, got {timeout}",
                     f"{location}.timeout",
                     "Use a positive number of seconds",
+                )
+
+        # Validate optional field: fail_closed
+        if "fail_closed" in hook_config:
+            fail_closed = hook_config["fail_closed"]
+            if not isinstance(fail_closed, bool):
+                result.add_error(
+                    f"'fail_closed' must be a boolean, got {type(fail_closed).__name__}",
+                    f"{location}.fail_closed",
+                    "Use true or false",
                 )
 
     def _validate_orchestrator(self, orchestrator_config: Dict[str, Any], result: ValidationResult) -> None:

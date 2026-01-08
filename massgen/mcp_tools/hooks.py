@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Hook system for MCP tool call interception.
+Hook system for tool call interception in the MassGen multi-agent framework.
 
 This module provides the infrastructure for intercepting tool calls
-across different backend architectures:
-
-1. Function-based backends (OpenAI, Claude, etc.) - use FunctionHook
-2. Session-based backends (Gemini) - use PermissionClientSession
+across different backend architectures (OpenAI, Claude, Gemini, etc.).
 
 Hook Types:
 - PRE_TOOL_USE: Fires before tool execution (can block or modify)
@@ -17,18 +14,18 @@ Hook Registration:
 - Per-agent hooks: Apply to specific agents (in `backend.hooks:`)
 - Per-agent hooks can extend or override global hooks
 
-The actual permission logic is implemented in filesystem_manager.py
+Built-in Hooks:
+- MidStreamInjectionHook: Injects cross-agent updates during tool execution
+- HighPriorityTaskReminderHook: Injects reminders for completed high-priority tasks
 """
 
 import asyncio
 import fnmatch
 import importlib
 import json
-import os
-import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
@@ -271,6 +268,7 @@ class PythonCallableHook(PatternHook):
         handler: Union[str, Callable],
         matcher: str = "*",
         timeout: int = 30,
+        fail_closed: bool = False,
     ):
         """
         Initialize a Python callable hook.
@@ -280,10 +278,13 @@ class PythonCallableHook(PatternHook):
             handler: Module path string or callable
             matcher: Glob pattern for tool name matching
             timeout: Execution timeout in seconds
+            fail_closed: If True, deny tool execution on hook errors/timeouts.
+                        If False (default), allow execution on errors (fail-open).
         """
         super().__init__(name, matcher, timeout)
         self._handler_path = handler if isinstance(handler, str) else None
         self._callable: Optional[Callable] = handler if callable(handler) else None
+        self.fail_closed = fail_closed
 
     def _import_callable(self, path: str) -> Callable:
         """Import a callable from a module path."""
@@ -329,7 +330,7 @@ class PythonCallableHook(PatternHook):
             session_id=ctx.get("session_id", ""),
             orchestrator_id=ctx.get("orchestrator_id", ""),
             agent_id=ctx.get("agent_id"),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             tool_name=function_name,
             tool_input=tool_input,
             tool_output=ctx.get("tool_output"),
@@ -354,11 +355,13 @@ class PythonCallableHook(PatternHook):
 
         except asyncio.TimeoutError:
             logger.warning(f"[PythonCallableHook] Hook {self.name} timed out for {function_name}")
-            # Fail open on timeout
+            if self.fail_closed:
+                return HookResult.deny(reason=f"Hook {self.name} timed out")
             return HookResult.allow()
         except Exception as e:
             logger.error(f"[PythonCallableHook] Hook {self.name} failed: {e}")
-            # Fail open on execution error
+            if self.fail_closed:
+                return HookResult.deny(reason=f"Hook {self.name} failed: {e}")
             return HookResult.allow()
 
     def _normalize_result(self, result: Any) -> HookResult:
@@ -372,115 +375,6 @@ class PythonCallableHook(PatternHook):
         # Unknown type - treat as allow
         logger.warning(f"[PythonCallableHook] Unknown result type: {type(result)}")
         return HookResult.allow()
-
-
-class ExternalCommandHook(PatternHook):
-    """Hook that invokes an external command via JSON stdin/stdout protocol.
-
-    The external command receives:
-    - stdin: JSON-encoded HookEvent
-    - Environment variables: MASSGEN_HOOK_TYPE, MASSGEN_TOOL_NAME, etc.
-
-    The command returns:
-    - stdout: JSON-encoded HookResult
-    """
-
-    def __init__(
-        self,
-        name: str,
-        handler: str,
-        matcher: str = "*",
-        timeout: int = 30,
-    ):
-        """
-        Initialize an external command hook.
-
-        Args:
-            name: Hook identifier
-            handler: Path to the executable script
-            matcher: Glob pattern for tool name matching
-            timeout: Execution timeout in seconds
-        """
-        super().__init__(name, matcher, timeout)
-        self.handler_path = handler
-
-    async def execute(
-        self,
-        function_name: str,
-        arguments: str,
-        context: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ) -> HookResult:
-        """Execute the external command hook."""
-        if not self.matches(function_name):
-            return HookResult.allow()
-
-        ctx = context or {}
-        try:
-            tool_input = json.loads(arguments) if arguments else {}
-        except json.JSONDecodeError:
-            tool_input = {"raw": arguments}
-
-        event = HookEvent(
-            hook_type=ctx.get("hook_type", "PreToolUse"),
-            session_id=ctx.get("session_id", ""),
-            orchestrator_id=ctx.get("orchestrator_id", ""),
-            agent_id=ctx.get("agent_id"),
-            timestamp=datetime.utcnow(),
-            tool_name=function_name,
-            tool_input=tool_input,
-            tool_output=ctx.get("tool_output"),
-        )
-
-        # Prepare environment
-        env = os.environ.copy()
-        env.update(
-            {
-                "MASSGEN_HOOK_TYPE": event.hook_type,
-                "MASSGEN_TOOL_NAME": function_name,
-                "MASSGEN_SESSION_ID": event.session_id,
-                "MASSGEN_AGENT_ID": event.agent_id or "",
-                "MASSGEN_ORCHESTRATOR_ID": event.orchestrator_id,
-            },
-        )
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable,
-                self.handler_path,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
-
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(event.to_json().encode()),
-                timeout=self.timeout,
-            )
-
-            if stderr:
-                logger.debug(f"[ExternalCommandHook] stderr from {self.name}: {stderr.decode()}")
-
-            if proc.returncode != 0:
-                logger.warning(f"[ExternalCommandHook] {self.name} exited with code {proc.returncode}")
-                # Non-zero exit - fail open
-                return HookResult.allow()
-
-            # Parse JSON output
-            try:
-                result_dict = json.loads(stdout.decode())
-                return HookResult.from_dict(result_dict)
-            except json.JSONDecodeError as e:
-                logger.warning(f"[ExternalCommandHook] Invalid JSON from {self.name}: {e}")
-                return HookResult.allow()
-
-        except asyncio.TimeoutError:
-            logger.warning(f"[ExternalCommandHook] Hook {self.name} timed out for {function_name}")
-            return HookResult.allow()
-        except Exception as e:
-            logger.error(f"[ExternalCommandHook] Hook {self.name} failed: {e}")
-            return HookResult.allow()
 
 
 class GeneralHookManager:
@@ -671,8 +565,22 @@ class GeneralHookManager:
         """Register hooks from YAML configuration.
 
         Args:
-            hooks_config: Hook configuration dictionary
-            agent_id: If provided, register as agent hooks; otherwise as global hooks
+            hooks_config: Hook configuration dictionary. Supports two formats:
+
+                List format (extends existing hooks):
+                    PreToolUse:
+                      - matcher: "*"
+                        handler: "mymodule.my_hook"
+
+                Override format (replaces existing hooks for this agent):
+                    PreToolUse:
+                      override: true
+                      hooks:
+                        - matcher: "*"
+                          handler: "mymodule.my_hook"
+
+            agent_id: If provided, register as agent-specific hooks.
+                     If None, register as global hooks that apply to all agents.
         """
         hook_type_map = {
             "PreToolUse": HookType.PRE_TOOL_USE,
@@ -712,22 +620,17 @@ class GeneralHookManager:
         hook_handler_type = config.get("type", "python")
         matcher = config.get("matcher", "*")
         timeout = config.get("timeout", 30)
+        fail_closed = config.get("fail_closed", False)
         name = f"{hook_handler_type}_{handler}"
 
-        if hook_handler_type == "command":
-            return ExternalCommandHook(
-                name=name,
-                handler=handler,
-                matcher=matcher,
-                timeout=timeout,
-            )
-        else:  # python
-            return PythonCallableHook(
-                name=name,
-                handler=handler,
-                matcher=matcher,
-                timeout=timeout,
-            )
+        # Only python hooks supported currently
+        return PythonCallableHook(
+            name=name,
+            handler=handler,
+            matcher=matcher,
+            timeout=timeout,
+            fail_closed=fail_closed,
+        )
 
     def clear_hooks(self) -> None:
         """Clear all registered hooks."""
@@ -772,6 +675,11 @@ class MidStreamInjectionHook(PatternHook):
         """Set the injection callback dynamically.
 
         The callback can be either sync or async - both are supported.
+
+        Args:
+            callback: A callable that returns:
+                - str: Content to inject into the tool result
+                - None: No injection (hook passes through)
         """
         self._injection_callback = callback
 
@@ -975,7 +883,6 @@ __all__ = [
     # New general hook framework
     "PatternHook",
     "PythonCallableHook",
-    "ExternalCommandHook",
     "GeneralHookManager",
     # Built-in hooks
     "MidStreamInjectionHook",

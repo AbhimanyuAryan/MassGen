@@ -299,42 +299,6 @@ Python Callable Hook
    hook = PythonCallableHook("audit", my_audit_hook, matcher="*")
    manager.register_global_hook(HookType.PRE_TOOL_USE, hook)
 
-External Command Hook
-~~~~~~~~~~~~~~~~~~~~~
-
-Hooks can also be external scripts that receive JSON on stdin and return JSON on stdout:
-
-.. code-block:: python
-
-   from massgen.mcp_tools.hooks import ExternalCommandHook
-
-   hook = ExternalCommandHook(
-       "security_check",
-       command="/path/to/security_hook.py",
-       matcher="Write|Edit|Bash"
-   )
-
-The script receives:
-
-.. code-block:: json
-
-   {
-     "hook_type": "PreToolUse",
-     "tool_name": "Write",
-     "tool_input": {"file_path": "/etc/passwd", "content": "..."},
-     "agent_id": "agent_1"
-   }
-
-And returns:
-
-.. code-block:: json
-
-   {
-     "allowed": false,
-     "decision": "deny",
-     "reason": "Cannot write to system files"
-   }
-
 Pattern Matching
 ~~~~~~~~~~~~~~~~
 
@@ -367,20 +331,39 @@ Global vs Per-Agent
          hooks:
            PreToolUse:
              - matcher: "Write"
-               handler: "custom_write_hook.py"
-               type: "command"
+               handler: "massgen.hooks.validate_writes"
+               type: "python"
+               fail_closed: true  # Deny on hook errors
            PostToolUse:
              override: true  # Only use per-agent hooks
              hooks:
-               - handler: "agent1_logging.py"
-                 type: "command"
+               - handler: "massgen.hooks.log_outputs"
+                 type: "python"
 
 Error Handling
 ~~~~~~~~~~~~~~
 
-- **Timeout**: Fail open (allow) - don't block agent on slow hooks
-- **Import errors**: Fail closed (deny) - configuration error
-- **Runtime errors**: Fail open with logging - don't crash agent
+By default, hooks **fail open** (allow tool execution) on errors to avoid blocking agents.
+For security-critical hooks, you can configure **fail closed** behavior:
+
+.. code-block:: yaml
+
+   hooks:
+     PreToolUse:
+       - matcher: "Write|Delete"
+         handler: "massgen.hooks.security_check"
+         fail_closed: true  # Deny tool execution if hook fails
+
+**Default behavior (fail_closed: false)**:
+
+- **Timeout**: Allow - don't block agent on slow hooks
+- **Runtime errors**: Allow with logging - don't crash agent
+- **Import errors**: Always deny - configuration error
+
+**With fail_closed: true**:
+
+- **Timeout**: Deny - block tool if hook can't complete
+- **Runtime errors**: Deny - block tool if hook crashes
 
 Timing Considerations
 ---------------------

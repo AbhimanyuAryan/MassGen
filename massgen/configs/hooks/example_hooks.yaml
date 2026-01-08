@@ -9,26 +9,23 @@
 # - Per-agent (under `backend.hooks:`): Apply to specific agent only
 #
 # Per-agent hooks can either extend or override global hooks.
+#
+# NOTE: The handler paths below are examples. Replace with your own
+# Python module paths (e.g., "myproject.hooks.my_hook_function").
 
 # Global hooks - apply to all agents
 hooks:
   PreToolUse:
     # Audit all tool calls with a Python callable
     - matcher: "*"
-      handler: "massgen.hooks.audit_tool_calls"
+      handler: "myproject.hooks.audit_tool_calls"  # Replace with your module
       type: python
       timeout: 5
-
-    # Block dangerous commands via external script
-    - matcher: "execute_command|mcp__bash"
-      handler: "./scripts/security_check.py"
-      type: command
-      timeout: 10
 
   PostToolUse:
     # Log all tool outputs
     - matcher: "*"
-      handler: "massgen.hooks.log_tool_output"
+      handler: "myproject.hooks.log_tool_output"  # Replace with your module
       type: python
 
 agents:
@@ -42,14 +39,9 @@ agents:
         PreToolUse:
           # Additional security check for this agent
           - matcher: "mcp__file_write|mcp__file_delete"
-            handler: "massgen.hooks.require_file_approval"
+            handler: "myproject.hooks.require_file_approval"
             type: python
-
-        PostToolUse:
-          # Custom logging for this agent
-          - matcher: "*"
-            handler: "./scripts/agent_specific_logger.py"
-            type: command
+            fail_closed: true  # Deny if hook fails (security-critical)
 
   - id: "unrestricted_agent"
     backend:
@@ -62,7 +54,7 @@ agents:
           override: true  # Disable global PreToolUse hooks
           hooks:
             - matcher: "*"
-              handler: "massgen.hooks.allow_all"
+              handler: "myproject.hooks.allow_all"
               type: python
 
         # PostToolUse not overridden - global hooks still apply
