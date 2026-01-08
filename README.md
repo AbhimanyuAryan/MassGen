@@ -322,7 +322,7 @@ pip install -e ".[external]"
 # Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
 massgen --setup
 
-# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below 
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
 ./scripts/init.sh
 
 # If you would like to install other dependencies later
@@ -345,7 +345,7 @@ uv pip install -e .
 # Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
 uv run massgen --setup
 
-# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below 
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
 uv run ./scripts/init.sh
 
 # If you would like to install other dependencies later
