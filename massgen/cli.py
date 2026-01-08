@@ -37,6 +37,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import questionary
 import yaml
 from dotenv import load_dotenv
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.panel import Panel
@@ -62,6 +65,7 @@ from .dspy_paraphraser import (
 from .frontend.coordination_ui import CoordinationUI
 from .logger_config import _DEBUG_MODE, logger, save_execution_metadata, setup_logging
 from .orchestrator import Orchestrator
+from .path_completer import AtPathCompleter
 from .utils import get_backend_type_from_model
 
 # Session storage is internal state management - HARDCODED, NOT CONFIGURABLE
@@ -209,21 +213,133 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
-def read_multiline_input(prompt: str) -> str:
-    """Read user input with support for multi-line input using triple quotes.
+# Global PromptSession instance (reused across prompts for better terminal handling)
+_prompt_session: Optional[PromptSession] = None
 
+
+def _get_prompt_session() -> PromptSession:
+    """Get or create the PromptSession instance with AtPathCompleter."""
+    global _prompt_session
+    if _prompt_session is None:
+        _prompt_session = PromptSession(
+            completer=AtPathCompleter(),
+            complete_while_typing=True,
+        )
+    return _prompt_session
+
+
+async def read_multiline_input_async(
+    prompt: str,
+    enable_path_completion: bool = True,
+    use_ansi_prompt: bool = False,
+) -> str:
+    """Async version of read_multiline_input for use in async contexts.
+
+    Uses prompt_toolkit's async prompt_async() method which works correctly
+    inside an already-running event loop.
+
+    Args:
+        prompt: The prompt string (can contain ANSI codes if use_ansi_prompt=True)
+        enable_path_completion: Whether to enable @path autocomplete
+        use_ansi_prompt: If True, interpret prompt as ANSI-formatted text
+    """
+    try:
+        session = _get_prompt_session()
+        # Wrap prompt in ANSI() if it contains escape codes
+        formatted_prompt = ANSI(prompt) if use_ansi_prompt else prompt
+        with patch_stdout():
+            if not enable_path_completion:
+                first_line = (await session.prompt_async(formatted_prompt, completer=None)).strip()
+            else:
+                first_line = (await session.prompt_async(formatted_prompt)).strip()
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as e:
+        import sys
+
+        print(f"\n[DEBUG] prompt_toolkit async failed: {e}", file=sys.stderr)
+        # Fallback to basic input - run in executor to not block
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        # Strip ANSI codes for fallback
+        plain_prompt = prompt if not use_ansi_prompt else "User: "
+        first_line = await loop.run_in_executor(None, lambda: input(plain_prompt).strip())
+
+    # Check for multi-line delimiters
+    if first_line.startswith('"""'):
+        delimiter = '"""'
+        content = first_line[3:]
+    elif first_line.startswith("'''"):
+        delimiter = "'''"
+        content = first_line[3:]
+    else:
+        return first_line
+
+    # Check if closing delimiter is on the same line
+    if delimiter in content:
+        return content[: content.index(delimiter)]
+
+    # Collect multi-line input
+    lines = [content] if content else []
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            line = await loop.run_in_executor(None, input)
+        except (EOFError, KeyboardInterrupt):
+            raise
+        if delimiter in line:
+            final_part = line[: line.index(delimiter)]
+            if final_part:
+                lines.append(final_part)
+            break
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def read_multiline_input(prompt: str, enable_path_completion: bool = True) -> str:
+    """Read user input with support for multi-line input and @path completion.
+
+    Uses prompt_toolkit PromptSession to provide inline file completion when user types @.
     If input starts with ''' or \""", continues reading until closing quotes.
     Otherwise returns single line input.
 
+    Note: This synchronous version will fallback to basic input() if called from
+    within an async context. Use read_multiline_input_async() instead in async code.
+
     Args:
         prompt: The prompt to display to the user
+        enable_path_completion: If True, enable @path autocomplete (default True)
 
     Returns:
         The complete user input (single or multi-line)
     """
-    # Ensure terminal is in a good state for input
-    _restore_terminal_for_input()
-    first_line = input(prompt).strip()
+    # Check if we're in an async context
+    try:
+        import asyncio
+
+        asyncio.get_running_loop()
+        # We're in an async context - can't use sync prompt
+        # Fallback to basic input
+        first_line = input(prompt).strip()
+    except RuntimeError:
+        # No running loop - safe to use sync prompt
+        try:
+            session = _get_prompt_session()
+            if not enable_path_completion:
+                first_line = session.prompt(prompt, completer=None).strip()
+            else:
+                first_line = session.prompt(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            raise
+        except Exception as e:
+            import sys
+
+            print(f"\n[DEBUG] prompt_toolkit failed: {e}", file=sys.stderr)
+            first_line = input(prompt).strip()
 
     # Check for multi-line delimiters
     if first_line.startswith('"""'):
@@ -1424,6 +1540,71 @@ def validate_context_paths(config: Dict[str, Any]) -> None:
             errors.append(f"  - {path}")
         errors.append("\nPlease update your configuration with valid paths.")
         raise ConfigurationError("\n".join(errors))
+
+
+def inject_prompt_context_paths(
+    prompt: str,
+    config: Dict[str, Any],
+) -> Tuple[str, Dict[str, Any]]:
+    """Parse @references from prompt and inject into config.
+
+    Extracts @path and @path:w references from the prompt, validates that
+    the paths exist, and injects them into config["orchestrator"]["context_paths"].
+
+    This always displays extracted paths to the user for transparency.
+
+    Args:
+        prompt: User's raw prompt potentially containing @references.
+        config: MassGen configuration dict (modified in-place).
+
+    Returns:
+        Tuple of (cleaned_prompt, modified_config).
+
+    Raises:
+        ConfigurationError: If any referenced paths don't exist.
+    """
+    from .prompt_parser import PromptParserError, parse_prompt_for_context
+
+    try:
+        parsed = parse_prompt_for_context(prompt)
+    except PromptParserError as e:
+        raise ConfigurationError(str(e)) from e
+
+    if not parsed.context_paths:
+        return prompt, config
+
+    # Display extracted paths to user (always, for transparency)
+    print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
+    for ctx in parsed.context_paths:
+        perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+        print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+
+    # Show consolidation suggestions
+    for suggestion in parsed.suggestions:
+        print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
+
+    print()
+
+    # Inject into config
+    if "orchestrator" not in config:
+        config["orchestrator"] = {}
+    if "context_paths" not in config["orchestrator"]:
+        config["orchestrator"]["context_paths"] = []
+
+    # Add extracted paths (avoiding duplicates)
+    existing_paths = {p.get("path") for p in config["orchestrator"]["context_paths"]}
+    for ctx in parsed.context_paths:
+        if ctx["path"] not in existing_paths:
+            config["orchestrator"]["context_paths"].append(ctx)
+            existing_paths.add(ctx["path"])
+        else:
+            # If path exists but with different permission, upgrade to write if needed
+            for existing in config["orchestrator"]["context_paths"]:
+                if existing.get("path") == ctx["path"] and ctx["permission"] == "write":
+                    existing["permission"] = "write"
+                    break
+
+    return parsed.cleaned_prompt, config
 
 
 def relocate_filesystem_paths(config: Dict[str, Any]) -> None:
@@ -4358,7 +4539,7 @@ def print_help_messages():
 
 
 async def run_interactive_mode(
-    agents: Dict[str, SingleAgent],
+    agents: Optional[Dict[str, SingleAgent]],
     ui_config: Dict[str, Any],
     original_config: Dict[str, Any] = None,
     orchestrator_cfg: Dict[str, Any] = None,
@@ -4368,13 +4549,20 @@ async def run_interactive_mode(
     restore_session_if_exists: bool = False,
     debug: bool = False,
     raw_config_for_metadata: Dict[str, Any] = None,
+    # Parameters for deferred agent creation
+    enable_rate_limit: bool = True,
+    session_storage_base: Optional[str] = None,
     **kwargs,
 ):
     """Run MassGen in interactive mode with conversation history.
 
     Args:
+        agents: Dict of agents. If None, agents will be created after first prompt
+            (allows @path references in first prompt to be included in Docker mounts).
         initial_question: Optional first question to auto-submit when entering interactive mode
         raw_config_for_metadata: Raw config (unexpanded env vars) for safe logging to metadata files
+        enable_rate_limit: Whether to enable rate limiting for agent creation
+        session_storage_base: Base directory for session storage (for Docker mounts)
     """
 
     # Use Rich console for better display
@@ -4415,36 +4603,53 @@ async def run_interactive_mode(
     config_table.add_column("Label", style="bold cyan", no_wrap=True)
     config_table.add_column("Value", style="white")
 
-    # Determine mode
+    # Determine mode (agents may be None if deferred creation)
     ui_config.get("use_orchestrator_for_single_agent", True)
-    if len(agents) == 1:
+    if agents is None:
+        # Deferred agent creation - show config-based info
+        agent_configs = original_config.get("agents", [])
+        if not agent_configs and "agent" in original_config:
+            agent_configs = [original_config["agent"]]
+        num_agents = len(agent_configs)
+        if num_agents == 1:
+            mode = "Single Agent"
+            mode_icon = "🤖"
+        else:
+            mode = f"Multi-Agent ({num_agents} agents)"
+            mode_icon = "🤝"
+        config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
+        config_table.add_row("  └─ Status:", "[dim]Agents will be created after first prompt[/dim]")
+    elif len(agents) == 1:
         mode = "Single Agent"
         mode_icon = "🤖"
+        config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
+        # Add agents info
+        for agent_id, agent in agents.items():
+            model = agent.config.backend_params.get("model", "unknown")
+            backend_name = agent.backend.__class__.__name__.replace("Backend", "")
+            display = f"{model} [dim]({backend_name})[/dim]"
+            config_table.add_row(f"  ├─ {agent_id}:", display)
     else:
         mode = f"Multi-Agent ({len(agents)} agents)"
         mode_icon = "🤝"
-
-    config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
-
-    # Add agents info
-    if len(agents) <= 3:
-        # Show all agents if 3 or fewer
-        for agent_id, agent in agents.items():
-            # Get model name from config
-            model = agent.config.backend_params.get("model", "unknown")
-            backend_name = agent.backend.__class__.__name__.replace("Backend", "")
-            # Show model with backend in parentheses
-            display = f"{model} [dim]({backend_name})[/dim]"
-            config_table.add_row(f"  ├─ {agent_id}:", display)
-    else:
-        # Show count and first 2 agents
-        agent_list = list(agents.items())
-        for i, (agent_id, agent) in enumerate(agent_list[:2]):
-            model = agent.config.backend_params.get("model", "unknown")
-            backend_name = agent.backend.__class__.__name__.replace("Backend", "")
-            display = f"{model} [dim]({backend_name})[/dim]"
-            config_table.add_row(f"  ├─ {agent_id}:", display)
-        config_table.add_row("  └─ ...", f"[dim]and {len(agents) - 2} more[/dim]")
+        config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
+        # Add agents info
+        if len(agents) <= 3:
+            # Show all agents if 3 or fewer
+            for agent_id, agent in agents.items():
+                model = agent.config.backend_params.get("model", "unknown")
+                backend_name = agent.backend.__class__.__name__.replace("Backend", "")
+                display = f"{model} [dim]({backend_name})[/dim]"
+                config_table.add_row(f"  ├─ {agent_id}:", display)
+        else:
+            # Show count and first 2 agents
+            agent_list = list(agents.items())
+            for i, (agent_id, agent) in enumerate(agent_list[:2]):
+                model = agent.config.backend_params.get("model", "unknown")
+                backend_name = agent.backend.__class__.__name__.replace("Backend", "")
+                display = f"{model} [dim]({backend_name})[/dim]"
+                config_table.add_row(f"  ├─ {agent_id}:", display)
+            config_table.add_row("  └─ ...", f"[dim]and {len(agents) - 2} more[/dim]")
 
     # Create main panel with configuration
     config_panel = Panel(
@@ -4567,7 +4772,7 @@ async def run_interactive_mode(
                             },
                         )
 
-                    if context_workspaces_to_add:
+                    if context_workspaces_to_add and agents is not None:
                         # Check if any agents have session pre-mount enabled
                         # Session pre-mount allows us to skip container recreation
                         agents_with_session_mount = [
@@ -4724,7 +4929,12 @@ async def run_interactive_mode(
                     rich_console.print(f"\n[bold blue]👤 User:[/bold blue] {question}")
                     initial_question = None  # Clear so we prompt on subsequent turns
                 else:
-                    question = read_multiline_input(f"\n{BRIGHT_BLUE}👤 User:{RESET} ")
+                    # Use async version since we're in an async context
+                    # Pass ANSI-formatted prompt to prompt_toolkit
+                    question = await read_multiline_input_async(
+                        f"\n{BRIGHT_BLUE}👤 User:{RESET} ",
+                        use_ansi_prompt=True,
+                    )
 
                 # Handle slash commands
                 if question.startswith("/"):
@@ -4735,9 +4945,10 @@ async def run_interactive_mode(
                         break
                     elif command in ["/reset", "/clear"]:
                         conversation_history = []
-                        # Reset all agents
-                        for agent in agents.values():
-                            agent.reset()
+                        # Reset all agents (if they've been created)
+                        if agents is not None:
+                            for agent in agents.values():
+                                agent.reset()
                         print(
                             f"{BRIGHT_YELLOW}🔄 Conversation history cleared!{RESET}",
                             flush=True,
@@ -4794,22 +5005,41 @@ async def run_interactive_mode(
                         print("            Your multi-line", flush=True)
                         print("            input here", flush=True)
                         print('            """', flush=True)
+                        print(f"\n{BRIGHT_CYAN}📂 @Path Syntax:{RESET}", flush=True)
+                        print(
+                            "   Use @path to include files as context:",
+                            flush=True,
+                        )
+                        print("   @path/to/file     - Read-only access", flush=True)
+                        print("   @path/to/file:w   - Write access", flush=True)
+                        print("   @path/to/dir/     - Directory access", flush=True)
                         continue
                     elif command == "/status":
                         print(f"\n{BRIGHT_CYAN}📊 Current Status:{RESET}", flush=True)
-                        print(
-                            f"   Agents: {len(agents)} ({', '.join(agents.keys())})",
-                            flush=True,
-                        )
-                        use_orch_single = ui_config.get(
-                            "use_orchestrator_for_single_agent",
-                            True,
-                        )
-                        if len(agents) == 1:
-                            mode_display = "Single Agent (Orchestrator)" if use_orch_single else "Single Agent (Direct)"
+                        if agents is not None:
+                            print(
+                                f"   Agents: {len(agents)} ({', '.join(agents.keys())})",
+                                flush=True,
+                            )
+                            use_orch_single = ui_config.get(
+                                "use_orchestrator_for_single_agent",
+                                True,
+                            )
+                            if len(agents) == 1:
+                                mode_display = "Single Agent (Orchestrator)" if use_orch_single else "Single Agent (Direct)"
+                            else:
+                                mode_display = "Multi-Agent"
+                            print(f"   Mode: {mode_display}", flush=True)
                         else:
-                            mode_display = "Multi-Agent"
-                        print(f"   Mode: {mode_display}", flush=True)
+                            # Agents not yet created (deferred creation)
+                            agent_configs = original_config.get("agents", [])
+                            if not agent_configs and "agent" in original_config:
+                                agent_configs = [original_config["agent"]]
+                            print(
+                                f"   Agents: {len(agent_configs)} (pending creation after first prompt)",
+                                flush=True,
+                            )
+                            print("   Mode: Deferred creation", flush=True)
                         print(
                             f"   History: {len(conversation_history)//2} exchanges",
                             flush=True,
@@ -4926,8 +5156,9 @@ async def run_interactive_mode(
 
                 if question.lower() in ["reset", "clear"]:
                     conversation_history = []
-                    for agent in agents.values():
-                        agent.reset()
+                    if agents:
+                        for agent in agents.values():
+                            agent.reset()
                     print(f"{BRIGHT_YELLOW}🔄 Conversation history cleared!{RESET}")
                     continue
 
@@ -4936,6 +5167,86 @@ async def run_interactive_mode(
                         "Please enter a question or type /help for commands.",
                         flush=True,
                     )
+                    continue
+
+                # Parse @references from question and inject as context paths
+                from .prompt_parser import PromptParserError, parse_prompt_for_context
+
+                new_paths = []  # Track new paths for later use
+                try:
+                    parsed = parse_prompt_for_context(question)
+                    if parsed.context_paths:
+                        # Display extracted paths
+                        print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
+                        for ctx in parsed.context_paths:
+                            perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+                            print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+                        for suggestion in parsed.suggestions:
+                            print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
+
+                        # Use cleaned question
+                        question = parsed.cleaned_prompt
+
+                        # Check for new paths that need agent recreation
+                        existing_paths = set()
+                        if orchestrator_cfg:
+                            for p in orchestrator_cfg.get("context_paths", []):
+                                if isinstance(p, dict):
+                                    existing_paths.add(p.get("path"))
+                                else:
+                                    existing_paths.add(p)
+
+                        new_paths = [ctx for ctx in parsed.context_paths if ctx["path"] not in existing_paths]
+
+                        if new_paths:
+                            # Update original_config with new paths
+                            if "orchestrator" not in original_config:
+                                original_config["orchestrator"] = {}
+                            if "context_paths" not in original_config["orchestrator"]:
+                                original_config["orchestrator"]["context_paths"] = []
+
+                            for ctx in new_paths:
+                                original_config["orchestrator"]["context_paths"].append(ctx)
+                                existing_paths.add(ctx["path"])
+
+                            # Update orchestrator_cfg reference
+                            orchestrator_cfg = original_config.get("orchestrator", {})
+
+                    # If agents haven't been created yet (deferred creation), create them now
+                    if agents is None:
+                        print(f"{BRIGHT_YELLOW}🚀 Creating agents...{RESET}")
+                        agents = create_agents_from_config(
+                            original_config,
+                            orchestrator_cfg,
+                            enable_rate_limit=enable_rate_limit,
+                            config_path=config_path,
+                            memory_session_id=memory_session_id,
+                            debug=debug,
+                            filesystem_session_id=memory_session_id,
+                            session_storage_base=session_storage_base or SESSION_STORAGE,
+                        )
+                        if not agents:
+                            print(f"{BRIGHT_RED}❌ Failed to create agents{RESET}", flush=True)
+                            continue
+                        print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
+                    elif new_paths:
+                        # Agents exist but we have new paths - need to recreate
+                        print(f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}")
+                        agents = create_agents_from_config(
+                            original_config,
+                            orchestrator_cfg,
+                            enable_rate_limit=enable_rate_limit,
+                            config_path=config_path,
+                            memory_session_id=memory_session_id,
+                            debug=debug,
+                            filesystem_session_id=memory_session_id,
+                            session_storage_base=session_storage_base or SESSION_STORAGE,
+                        )
+                        print(f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}")
+                    if parsed.context_paths:
+                        print()  # Add spacing after context path info
+                except PromptParserError as e:
+                    print(f"\n{BRIGHT_RED}❌ {e}{RESET}", flush=True)
                     continue
 
                 print(f"\n🔄 {BRIGHT_YELLOW}Processing...{RESET}", flush=True)
@@ -5398,22 +5709,37 @@ async def main(args):
                     f"📝 Skipping session registry (--no-session-registry): {memory_session_id}",
                 )
 
-        agents = create_agents_from_config(
-            config,
-            orchestrator_cfg,
-            enable_rate_limit=enable_rate_limit,
-            config_path=str(resolved_path) if resolved_path else None,
-            memory_session_id=memory_session_id,
-            debug=args.debug,
-            # Session mount support for multi-turn Docker (pre-mount session dir)
-            filesystem_session_id=memory_session_id,
-            session_storage_base=SESSION_STORAGE,
-        )
+        # Parse @references from prompt BEFORE creating agents
+        # This allows context_paths to be set up before FilesystemManager initialization
+        if args.question:
+            args.question, config = inject_prompt_context_paths(args.question, config)
+            # Update orchestrator_cfg with any new context_paths
+            orchestrator_cfg = config.get("orchestrator", {})
 
-        if not agents:
-            raise ConfigurationError("No agents configured")
+        # For interactive mode without initial question, defer agent creation until first prompt
+        # This allows @path references in the first prompt to be included in Docker mounts
+        is_interactive_without_question = not args.question and not getattr(args, "interactive_with_initial_question", None)
 
-        if args.debug:
+        if is_interactive_without_question:
+            # Defer agent creation - will be done in run_interactive_mode after first prompt
+            agents = None
+        else:
+            agents = create_agents_from_config(
+                config,
+                orchestrator_cfg,
+                enable_rate_limit=enable_rate_limit,
+                config_path=str(resolved_path) if resolved_path else None,
+                memory_session_id=memory_session_id,
+                debug=args.debug,
+                # Session mount support for multi-turn Docker (pre-mount session dir)
+                filesystem_session_id=memory_session_id,
+                session_storage_base=SESSION_STORAGE,
+            )
+
+            if not agents:
+                raise ConfigurationError("No agents configured")
+
+        if args.debug and agents:
             logger.debug(f"Created {len(agents)} agent(s): {list(agents.keys())}")
 
         # Create timeout config from settings and put it in kwargs
@@ -5471,8 +5797,8 @@ async def main(args):
                 config_file_path = str(resolved_path) if args.config and resolved_path else None
                 # Check if we have an initial question from config builder
                 initial_q = getattr(args, "interactive_with_initial_question", None)
-                # Remove config_path from kwargs to avoid duplicate argument
-                interactive_kwargs = {k: v for k, v in kwargs.items() if k != "config_path"}
+                # Remove config_path and enable_rate_limit from kwargs to avoid duplicate argument
+                interactive_kwargs = {k: v for k, v in kwargs.items() if k not in ("config_path", "enable_rate_limit")}
                 await run_interactive_mode(
                     agents,
                     ui_config,
@@ -5484,6 +5810,8 @@ async def main(args):
                     restore_session_if_exists=restore_existing_session,
                     debug=args.debug,
                     raw_config_for_metadata=raw_config_for_metadata,
+                    enable_rate_limit=enable_rate_limit,
+                    session_storage_base=SESSION_STORAGE,
                     **interactive_kwargs,
                 )
         finally:
@@ -5497,64 +5825,66 @@ async def main(args):
                     logger.debug(f"Marked session as completed: {memory_session_id}")
 
             # Cleanup all agents' filesystem managers (including Docker containers)
-            agents_with_docker = [
-                (agent_id, agent)
-                for agent_id, agent in agents.items()
-                if hasattr(agent, "backend")
-                and hasattr(agent.backend, "filesystem_manager")
-                and agent.backend.filesystem_manager
-                and hasattr(agent.backend.filesystem_manager, "docker_manager")
-                and agent.backend.filesystem_manager.docker_manager
-            ]
+            # Note: agents may be None if deferred creation was used but no prompt was entered
+            if agents:
+                agents_with_docker = [
+                    (agent_id, agent)
+                    for agent_id, agent in agents.items()
+                    if hasattr(agent, "backend")
+                    and hasattr(agent.backend, "filesystem_manager")
+                    and agent.backend.filesystem_manager
+                    and hasattr(agent.backend.filesystem_manager, "docker_manager")
+                    and agent.backend.filesystem_manager.docker_manager
+                ]
 
-            if agents_with_docker:
-                # Show spinner while cleaning up Docker containers in parallel
-                from concurrent.futures import ThreadPoolExecutor, as_completed
+                if agents_with_docker:
+                    # Show spinner while cleaning up Docker containers in parallel
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                from rich.status import Status
+                    from rich.status import Status
 
-                def cleanup_agent(
-                    agent_id: str,
-                    agent,
-                ) -> tuple[str, Optional[Exception]]:
-                    """Cleanup a single agent's Docker container."""
-                    try:
-                        agent.backend.filesystem_manager.cleanup()
-                        return (agent_id, None)
-                    except Exception as e:
-                        return (agent_id, e)
+                    def cleanup_agent(
+                        agent_id: str,
+                        agent,
+                    ) -> tuple[str, Optional[Exception]]:
+                        """Cleanup a single agent's Docker container."""
+                        try:
+                            agent.backend.filesystem_manager.cleanup()
+                            return (agent_id, None)
+                        except Exception as e:
+                            return (agent_id, e)
 
-                with Status(
-                    f"[bold cyan]Cleaning up {len(agents_with_docker)} Docker container(s)...",
-                    spinner="dots",
-                ):
-                    with ThreadPoolExecutor(
-                        max_workers=len(agents_with_docker),
-                    ) as executor:
-                        futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
-                        for future in as_completed(futures):
-                            agent_id, error = future.result()
-                            if error:
-                                logger.warning(
-                                    f"[CLI] Cleanup failed for agent {agent_id}: {error}",
-                                )
-
-                print("✅ Docker cleanup complete", flush=True)
-
-            # Cleanup non-Docker filesystem managers (quick, no spinner needed)
-            for agent_id, agent in agents.items():
-                if (agent_id, agent) not in agents_with_docker:
-                    if hasattr(agent, "backend") and hasattr(
-                        agent.backend,
-                        "filesystem_manager",
+                    with Status(
+                        f"[bold cyan]Cleaning up {len(agents_with_docker)} Docker container(s)...",
+                        spinner="dots",
                     ):
-                        if agent.backend.filesystem_manager:
-                            try:
-                                agent.backend.filesystem_manager.cleanup()
-                            except Exception as e:
-                                logger.warning(
-                                    f"[CLI] Cleanup failed for agent {agent_id}: {e}",
-                                )
+                        with ThreadPoolExecutor(
+                            max_workers=len(agents_with_docker),
+                        ) as executor:
+                            futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                            for future in as_completed(futures):
+                                agent_id, error = future.result()
+                                if error:
+                                    logger.warning(
+                                        f"[CLI] Cleanup failed for agent {agent_id}: {error}",
+                                    )
+
+                    print("✅ Docker cleanup complete", flush=True)
+
+                # Cleanup non-Docker filesystem managers (quick, no spinner needed)
+                for agent_id, agent in agents.items():
+                    if (agent_id, agent) not in agents_with_docker:
+                        if hasattr(agent, "backend") and hasattr(
+                            agent.backend,
+                            "filesystem_manager",
+                        ):
+                            if agent.backend.filesystem_manager:
+                                try:
+                                    agent.backend.filesystem_manager.cleanup()
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                    )
 
     except ConfigurationError as e:
         print(f"❌ Configuration error: {e}", flush=True)

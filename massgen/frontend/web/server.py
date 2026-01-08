@@ -28,7 +28,10 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
-from massgen.filesystem_manager._constants import SKIP_DIRS_FOR_LOGGING
+from massgen.filesystem_manager._constants import (
+    SKIP_DIRS_FOR_LOGGING,
+    get_language_for_extension,
+)
 from massgen.frontend.displays.web_display import WebDisplay
 
 # Set up logging for workspace browser debugging
@@ -2155,55 +2158,8 @@ def create_app(
             }
             mime_type = mime_fallbacks.get(suffix, "application/octet-stream")
 
-        # Map extensions to syntax highlighting languages
-        extension_to_language = {
-            ".py": "python",
-            ".js": "javascript",
-            ".jsx": "javascript",
-            ".ts": "typescript",
-            ".tsx": "typescript",
-            ".json": "json",
-            ".yaml": "yaml",
-            ".yml": "yaml",
-            ".md": "markdown",
-            ".html": "html",
-            ".htm": "html",
-            ".css": "css",
-            ".scss": "scss",
-            ".less": "less",
-            ".sh": "bash",
-            ".bash": "bash",
-            ".zsh": "bash",
-            ".sql": "sql",
-            ".rs": "rust",
-            ".go": "go",
-            ".java": "java",
-            ".c": "c",
-            ".cpp": "cpp",
-            ".h": "c",
-            ".hpp": "cpp",
-            ".rb": "ruby",
-            ".php": "php",
-            ".swift": "swift",
-            ".kt": "kotlin",
-            ".scala": "scala",
-            ".r": "r",
-            ".R": "r",
-            ".lua": "lua",
-            ".pl": "perl",
-            ".xml": "xml",
-            ".toml": "toml",
-            ".ini": "ini",
-            ".cfg": "ini",
-            ".conf": "ini",
-            ".dockerfile": "dockerfile",
-            ".gitignore": "gitignore",
-            ".env": "dotenv",
-            ".txt": "plaintext",
-            ".log": "plaintext",
-        }
-
-        language = extension_to_language.get(suffix, "plaintext")
+        # Get language from shared constants (EXTENSION_TO_LANGUAGE)
+        language = get_language_for_extension(suffix)
 
         # Special case for Dockerfile without extension
         if file_path.name.lower() == "dockerfile":
@@ -3499,6 +3455,38 @@ def create_app(
                         continue
 
                     if question:
+                        # Parse @path references from question
+                        context_paths = []
+                        try:
+                            from massgen.prompt_parser import (
+                                PromptParserError,
+                                parse_prompt_for_context,
+                            )
+
+                            parsed = parse_prompt_for_context(question)
+                            if parsed.context_paths:
+                                context_paths = parsed.context_paths
+                                question = parsed.cleaned_prompt
+                                # Notify client about extracted paths
+                                await websocket.send_json(
+                                    {
+                                        "type": "context_paths_extracted",
+                                        "paths": context_paths,
+                                        "session_id": session_id,
+                                    },
+                                )
+                        except PromptParserError as e:
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "message": f"Path error: {e}",
+                                },
+                            )
+                            continue
+                        except ImportError:
+                            # prompt_parser not available, continue without parsing
+                            pass
+
                         # Send immediate acknowledgment that we received the prompt
                         await websocket.send_json(
                             {
@@ -3510,7 +3498,7 @@ def create_app(
                         )
 
                         task = asyncio.create_task(
-                            run_coordination(session_id, question, cfg_path),
+                            run_coordination(session_id, question, cfg_path, context_paths),
                         )
                         manager.tasks[session_id] = task
                         await websocket.send_json(
@@ -3549,6 +3537,38 @@ def create_app(
                         )
                         continue
 
+                    # Parse @path references from follow-up question
+                    context_paths = []
+                    try:
+                        from massgen.prompt_parser import (
+                            PromptParserError,
+                            parse_prompt_for_context,
+                        )
+
+                        parsed = parse_prompt_for_context(followup_question)
+                        if parsed.context_paths:
+                            context_paths = parsed.context_paths
+                            followup_question = parsed.cleaned_prompt
+                            # Notify client about extracted paths
+                            await websocket.send_json(
+                                {
+                                    "type": "context_paths_extracted",
+                                    "paths": context_paths,
+                                    "session_id": session_id,
+                                },
+                            )
+                    except PromptParserError as e:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": f"Path error: {e}",
+                            },
+                        )
+                        continue
+                    except ImportError:
+                        # prompt_parser not available, continue without parsing
+                        pass
+
                     # Get session info from previous turn
                     session_log_dir = manager.session_log_dirs.get(session_id)
                     current_turn = manager.session_turns.get(session_id, 0)
@@ -3581,6 +3601,7 @@ def create_app(
                             config_path=cfg_path,
                             session_log_dir=session_log_dir,
                             turn_number=next_turn,
+                            context_paths=context_paths,
                         ),
                     )
                     manager.tasks[session_id] = task
@@ -4037,6 +4058,7 @@ async def run_coordination_with_history(
     config_path: str,
     session_log_dir: Path,
     turn_number: int,
+    context_paths: Optional[list] = None,
 ) -> None:
     """Run coordination with conversation history from previous turns.
 
@@ -4049,6 +4071,7 @@ async def run_coordination_with_history(
         session_id: WebSocket session identifier
         question: The follow-up question
         config_path: Path to the config file
+        context_paths: Optional list of context paths from @path syntax
         session_log_dir: Path to the session log directory (e.g., .massgen/massgen_logs/log_xxx)
         turn_number: The turn number for this coordination (2, 3, etc.)
     """
@@ -4129,6 +4152,16 @@ async def run_coordination_with_history(
 
         config, raw_config_for_metadata = load_config_file(str(resolved_path))
 
+        # Inject context paths from @path syntax if provided
+        if context_paths:
+            if "orchestrator" not in config:
+                config["orchestrator"] = {}
+            if "context_paths" not in config["orchestrator"]:
+                config["orchestrator"]["context_paths"] = []
+            # Add the new paths (accumulate with existing)
+            for ctx in context_paths:
+                config["orchestrator"]["context_paths"].append(ctx)
+
         # Extract orchestrator config dict from YAML
         orchestrator_cfg = config.get("orchestrator", {})
 
@@ -4172,6 +4205,8 @@ async def run_coordination_with_history(
                 config_path=str(resolved_path),
                 memory_session_id=session_id,
                 progress_callback=progress_callback,
+                filesystem_session_id=session_id,
+                session_storage_base=".massgen/sessions",
             ),
         )
 
@@ -4443,6 +4478,7 @@ async def run_coordination(
     session_id: str,
     question: str,
     config_path: Optional[str] = None,
+    context_paths: Optional[list] = None,
 ) -> None:
     """Run coordination with web display.
 
@@ -4450,6 +4486,7 @@ async def run_coordination(
         session_id: Session identifier
         question: Question for coordination
         config_path: Optional path to config YAML
+        context_paths: Optional list of context paths from @path syntax
     """
     import traceback
 
@@ -4506,6 +4543,16 @@ async def run_coordination(
 
         config, raw_config_for_metadata = load_config_file(str(resolved_path))
 
+        # Inject context paths from @path syntax if provided
+        if context_paths:
+            if "orchestrator" not in config:
+                config["orchestrator"] = {}
+            if "context_paths" not in config["orchestrator"]:
+                config["orchestrator"]["context_paths"] = []
+            # Add the new paths (accumulate with existing)
+            for ctx in context_paths:
+                config["orchestrator"]["context_paths"].append(ctx)
+
         # Extract orchestrator config dict from YAML
         orchestrator_cfg = config.get("orchestrator", {})
 
@@ -4549,6 +4596,8 @@ async def run_coordination(
                 config_path=str(resolved_path),
                 memory_session_id=session_id,
                 progress_callback=progress_callback,
+                filesystem_session_id=session_id,
+                session_storage_base=".massgen/sessions",
             ),
         )
 
