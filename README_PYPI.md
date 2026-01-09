@@ -248,7 +248,12 @@ This collaborative approach ensures that the final output leverages collective i
 pip install massgen
 
 # Or with uv (faster)
+pip install uv
+uv venv && source .venv/bin/activate
 uv pip install massgen
+
+# If you install massgen in uv, make sure you either activate your venv using source .venv/bin/activate
+# Or include "uv run" before all commands
 ```
 
 **Quickstart Setup** (Fastest way to get running):
@@ -276,7 +281,7 @@ The `--quickstart` command will:
 
 For more control, use the full configuration wizard:
 ```bash
-massgen --init
+uv run massgen --init
 ```
 
 This guides you through use case selection (Research, Code, Q&A, etc.) and advanced configuration options.
@@ -284,44 +289,74 @@ This guides you through use case selection (Research, Code, Q&A, etc.) and advan
 **After setup:**
 ```bash
 # Interactive mode
-massgen
+uv run massgen
 
 # Single query
-massgen "Your question here"
+uv run massgen "Your question here"
 
 # With example configurations
-massgen --config @examples/basic/multi/three_agents_default "Your question"
+uv run massgen --config @examples/basic/multi/three_agents_default "Your question"
 ```
 
 → See [Installation Guide](https://docs.massgen.ai/en/latest/quickstart/installation.html) for complete setup instructions.
 
 **Method 2: Development Installation** (for contributors):
 
+**Clone the repository**
 ```bash
-# Clone the repository
 git clone https://github.com/Leezekun/MassGen.git
 cd MassGen
+```
 
-# Install in editable mode with pip
-pip install -e .
+**Install in editable mode with pip**
 
-# Or with uv (faster)
+**Option 1 (recommended): Installing with uv (faster)**
+
+```bash
+uv venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 uv pip install -e .
+
+# If you install massgen in uv, make sure you either activate your venv using source .venv/bin/activate
+# Or include "uv run" before all commands
+
+# Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
+uv run massgen --setup
+
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
+uv run ./scripts/init.sh
+
+# If you would like to install other dependencies later
+# Here is a light-weighted setup script which only installs skills (works on all platforms)
+uv run massgen --setup-skills
+
+# Or use the bash script (Unix/Linux/macOS only)
+uv run ./scripts/init_skills.sh
+```
+
+**Option 2: Using traditional Python env**
+
+```bash
+pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
 
-# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+# Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
+massgen --setup
+
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
 ./scripts/init.sh
 
-# Or just install skills (works on all platforms)
+# If you would like to install other dependencies later
+# Here is a light-weighted setup script which only installs skills (works on all platforms)
 massgen --setup-skills
 
 # Or use the bash script (Unix/Linux/macOS only)
 ./scripts/init_skills.sh
 ```
 
-> **Note:** The `--setup-skills` command works cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
+> **Note:** The `--setup` and `--setup-skills` commands work cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
 
 <details>
 <summary><b>Alternative Installation Methods</b> (click to expand)</summary>
@@ -374,6 +409,18 @@ sudo ~/.lmstudio/bin/lms bootstrap
 cmd /c %USERPROFILE%\.lmstudio\bin\lms.exe bootstrap
 ```
 
+**After setup:**
+```bash
+# Interactive mode
+uv run massgen
+
+# Single query
+uv run massgen "Your question here"
+
+# With example configurations
+uv run massgen --config @examples/basic/multi/three_agents_default "Your question"
+```
+
 ### 2. 🔐 API Configuration
 
 **Create a `.env` file in your working directory with your API keys:**
@@ -398,7 +445,7 @@ MassGen automatically loads API keys from `.env` in your current directory.
 
 **Get API keys:**
  - [OpenAI](https://platform.openai.com/api-keys) | [Claude](https://docs.anthropic.com/en/api/overview) | [Gemini](https://ai.google.dev/gemini-api/docs) | [Grok](https://docs.x.ai/docs/overview)
- - [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/) | [Cerebras](https://inference-docs.cerebras.ai/introduction) | [More providers...](https://docs.massgen.ai/en/latest/reference/supported_models.html)
+ - [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/) | [Cerebras](https://inference-docs.cerebras.ai/introduction) | [OpenRouter](https://openrouter.ai/docs/api/api-reference/api-keys/create-keys) | [More providers...](https://docs.massgen.ai/en/latest/reference/supported_models.html)
 
 ### 3. 🧩 Supported Models and Tools
 
