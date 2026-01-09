@@ -46,6 +46,129 @@ Quick Start
 
    Weaker models may struggle with complex file operations, error handling, and workspace management.
 
+Inline Context Paths with @syntax
+---------------------------------
+
+MassGen supports ``@path`` syntax in prompts to include files and directories as context paths dynamically, without modifying your YAML config.
+
+**Basic Syntax:**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Syntax
+     - Effect
+   * - ``@path/to/file``
+     - Add file as read-only context
+   * - ``@path/to/file:w``
+     - Add file as write context
+   * - ``@path/to/dir/``
+     - Add directory as read-only context
+   * - ``@path/to/dir/:w``
+     - Add directory as write context
+   * - ``\@literal``
+     - Escaped @ (not parsed as reference)
+
+**Examples:**
+
+.. code-block:: bash
+
+   # Review a specific file (read-only)
+   massgen "Review @src/main.py for security issues"
+
+   # Refactor a file (write access)
+   massgen "Refactor @src/config.py:w to use dataclasses"
+
+   # Use one file as reference, modify another
+   massgen "Use @docs/spec.md as reference to update @src/impl.py:w"
+
+   # Multiple files
+   massgen "Compare @src/old.py with @src/new.py and create a migration guide"
+
+   # Directory access
+   massgen "Review all files in @src/components/ for consistency"
+
+**Features:**
+
+* **Path Validation**: Paths are validated before execution - you'll get a clear error if a path doesn't exist
+* **Home Directory Expansion**: Use ``~`` for home directory (e.g., ``@~/projects/myapp``)
+* **Relative Paths**: Paths are resolved relative to your current working directory
+* **Smart Suggestions**: If you reference 3+ files from the same directory, MassGen suggests using the parent directory instead
+* **Permission Merging**: ``@`` paths are merged with any ``context_paths`` in your YAML config
+
+**Interactive Mode with Tab Completion:**
+
+In interactive mode, MassGen provides inline file path completion when you type ``@``. Press **Tab** to see file suggestions:
+
+.. code-block:: text
+
+   👤 User: Review @src/ma<Tab>
+                   ┌──────────────────┐
+                   │ src/main.py      │  ← Press Tab to autocomplete
+                   │ src/manager.py   │
+                   │ src/makefile     │
+                   └──────────────────┘
+
+When you submit a prompt with ``@`` paths, MassGen will automatically update agent permissions:
+
+.. code-block:: text
+
+   👤 User: Review @src/utils.py for bugs
+
+   📂 Context paths from prompt:
+      📖 /path/to/src/utils.py (read)
+      🔄 Updating agents with new context paths...
+      ✅ Agents updated with new context paths
+
+   🔄 Processing...
+
+**Path Accumulation Across Turns:**
+
+Context paths from ``@`` syntax accumulate across turns in a session. If you reference ``@src/main.py`` in turn 1, you can still discuss it in turn 5 without re-specifying the path:
+
+.. code-block:: text
+
+   Turn 1: "Review @src/main.py"
+   → Agent can access: src/main.py
+
+   Turn 2: "Now check @tests/test_main.py too"
+   → Agent can access: src/main.py, tests/test_main.py (both!)
+
+   Turn 3: "Fix the bug we discussed"
+   → Agent can still access: src/main.py, tests/test_main.py
+
+**Permission Upgrade:**
+
+If you reference the same path with different permissions, the higher permission (write) takes precedence:
+
+.. code-block:: text
+
+   Turn 1: @src/main.py      → read access
+   Turn 2: @src/main.py:w    → upgraded to write access!
+
+**Programmatic API:**
+
+For the Python API, ``@`` parsing is opt-in:
+
+.. code-block:: python
+
+   import massgen
+
+   # Opt-in to @path parsing
+   result = await massgen.run(
+       query="Review @src/main.py for issues",
+       model="claude-sonnet-4",
+       parse_at_references=True,  # Enable @path parsing
+   )
+
+   # Or manually parse and handle paths
+   from massgen.path_handling import parse_prompt_for_context
+
+   parsed = parse_prompt_for_context("Review @src/main.py")
+   print(parsed.context_paths)  # [{'path': '/abs/path/to/src/main.py', 'permission': 'read'}]
+   print(parsed.cleaned_prompt)  # "Review"
+
 Configuration
 -------------
 

@@ -272,6 +272,7 @@ async def run(
     output_file: str = None,
     verbose: bool = False,
     conversation_history: list = None,
+    parse_at_references: bool = False,
     **kwargs,
 ) -> dict:
     """Run MassGen query programmatically.
@@ -294,6 +295,9 @@ async def run(
         verbose: If True, show progress output to stdout (default: False for quiet mode)
         conversation_history: List of prior messages for multi-turn context (optional)
             Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
+        parse_at_references: If True, parse @path and @path:w references from query
+            and add them as context_paths (default: False for explicit control).
+            Example: "Review @src/main.py" extracts src/main.py as read-only context.
         **kwargs: Additional configuration options:
             - system_message: Custom system prompt for agents
             - base_url: Custom API endpoint
@@ -440,6 +444,41 @@ async def run(
 
     # Use the determined config
     config_dict = final_config_dict
+
+    # Parse @references from query if opt-in
+    if parse_at_references:
+        from .prompt_parser import PromptParserError, parse_prompt_for_context
+
+        try:
+            parsed = parse_prompt_for_context(query)
+            if parsed.context_paths:
+                # Inject into config
+                if "orchestrator" not in config_dict:
+                    config_dict["orchestrator"] = {}
+                if "context_paths" not in config_dict["orchestrator"]:
+                    config_dict["orchestrator"]["context_paths"] = []
+
+                # Add extracted paths (avoiding duplicates)
+                existing_paths = {p.get("path") for p in config_dict["orchestrator"]["context_paths"]}
+                for ctx in parsed.context_paths:
+                    if ctx["path"] not in existing_paths:
+                        config_dict["orchestrator"]["context_paths"].append(ctx)
+                        existing_paths.add(ctx["path"])
+
+                # Use cleaned query
+                query = parsed.cleaned_prompt
+
+                # Show extracted paths if verbose
+                if verbose:
+                    print("\n📂 Context paths from query:")
+                    for ctx in parsed.context_paths:
+                        perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+                        print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+                    for suggestion in parsed.suggestions:
+                        print(f"   💡 {suggestion}")
+                    print()
+        except PromptParserError as e:
+            raise ValueError(str(e)) from e
 
     # Extract orchestrator config
     orchestrator_cfg = config_dict.get("orchestrator", {})
