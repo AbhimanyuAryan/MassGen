@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.35 Features](#-latest-features-v0135)
+- [v0.1.36 Features](#-latest-features-v0136)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.35)](#recent-achievements-v0135)
-- [Previous Achievements (v0.0.3 - v0.1.34)](#previous-achievements-v003---v0134)
+- [Recent Achievements (v0.1.36)](#recent-achievements-v0136)
+- [Previous Achievements (v0.0.3 - v0.1.35)](#previous-achievements-v003---v0135)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.36 Roadmap](#v0136-roadmap)
+- [v0.1.37 Roadmap](#v0137-roadmap)
 </details>
 
 <details open>
@@ -155,17 +155,16 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.35)
+## 🆕 Latest Features (v0.1.36)
 
-**🎉 Released: January 7, 2026** | **Next Update: January 9, 2026**
+**🎉 Released: January 9, 2026** | **Next Update: January 12, 2026**
 
-**What's New in v0.1.35:**
-- **📊 Log Analysis CLI** - New `massgen logs analyze` command with prompt mode and multi-agent self-analysis using MassGen
-- **🔍 Logfire Workflow Attributes** - Comprehensive observability with round context, vote reasoning, and local file references
-- **🔧 Direct MCP Servers** - New `direct_mcp_servers` config to keep specific MCPs as protocol tools when using code-based tools
-- **🐛 Tool Handling Fixes** - Unknown tools handled gracefully, vote-only mode improvements, Grok and Gemini backend fixes
+**What's New in v0.1.36:**
+- **🪝 Hook Framework** - PreToolUse/PostToolUse hooks for intercepting tool execution with pattern matching, global and per-agent registration via YAML
+- **📁 Unified @path Context Handling** - Inline file picker with autocomplete syntax for context injection
+- **🔗 Claude Code Hooks Integration** - Native Claude Code hooks compatibility within MassGen's hook framework
 
-**Try v0.1.35 Features:**
+**Try v0.1.36 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
@@ -173,18 +172,14 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# List your runs and see which have been analyzed
-uv run massgen logs list
+# Use hook framework with global and per-agent hooks
+# See massgen/configs/hooks/example_hooks.yaml for full configuration
+uv run massgen --config massgen/configs/hooks/example_hooks.yaml \
+  "Create a document and save it to a file"
 
-# Generate an analysis prompt (defaults to most recent log)
-uv run massgen logs analyze
-
-# Run multi-agent self-analysis on your logs
-uv run massgen logs analyze --mode self
-
-# Use direct MCP servers with code-based tools for multi-agent log analysis
-uv run massgen --config massgen/configs/analysis/log_analysis_cli.yaml \
-  "Use the massgen-log-analyzer skill to analyze the log directory at .massgen/massgen_logs/log_20260107_123456. Read all relevant files and produce an ANALYSIS_REPORT.md"
+# Hooks can intercept tool calls:
+# - PreToolUse: Audit, block, or modify tool arguments
+# - PostToolUse: Log outputs or inject content into results
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1219,31 +1214,27 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.35)
+### Recent Achievements (v0.1.36)
 
-**🎉 Released: January 7, 2026**
+**🎉 Released: January 9, 2026**
 
-#### Log Analysis CLI
-- **`massgen logs analyze` Command**: AI-assisted log analysis with prompt mode (for coding CLIs) and self-analysis mode (3-agent team)
-- **Per-Turn Reports**: Analysis reports at `turn_N/ANALYSIS_REPORT.md` with enhanced `massgen logs list` showing "Analyzed" status
+#### Hook Framework
+- **PreToolUse/PostToolUse Events**: Intercept tool execution with pattern-based matching on tool names
+- **Global and Per-Agent Hooks**: Register hooks at top-level (all agents) or per-agent with override capability
+- **Python Callable Hooks**: Define hooks as Python functions with timeout enforcement and fail-open/closed behavior
+- **Built-in Hooks**: `MidStreamInjectionHook` for cross-agent updates and `HighPriorityTaskReminderHook` for system reminders
 
-#### Logfire Workflow Observability
-- **Round Context**: `massgen.round.intent`, `available_answers`, `answer_previews` for understanding coordination decisions
-- **Vote Context**: Extended `massgen.vote.reason` (500 chars) and `answer_label_mapping` for vote analysis
-- **Local File References**: `massgen.log_path`, `agent.log_path`, `answer_path` for hybrid Logfire + local access
+#### Unified @path Context Handling
+- **Inline File Picker**: Autocomplete syntax for injecting file context into conversations
+- **Path Validation**: Automatic validation ensures context paths exist and are directories
 
-#### Direct MCP Servers
-- **`direct_mcp_servers` Config**: Keep specific MCP servers as protocol tools when using `enable_code_based_tools: true`
-- **Subagent Inheritance**: Child agents automatically inherit direct MCP server configuration
+#### Claude Code Hooks Integration
+- **Native Compatibility**: Claude Code hooks work seamlessly within MassGen's hook framework
+- **Hook Result Aggregation**: Multiple hooks combine results (any deny blocks, injections combine)
 
-#### Tool Handling Fixes
-- **Unknown Tools**: Malformed tool names (e.g., Gemini's `default_api:` prefix) no longer cause agent termination
-- **Vote-Only Mode**: Fixed agents wasting rounds with rejected `new_answer` calls when at `max_new_answers_per_agent`
-- **Grok & Gemini**: Backend-specific tool handling and parameter fixes
+### Previous Achievements (v0.0.3 - v0.1.35)
 
-**New Files:** `massgen/configs/analysis/log_analysis.yaml`, `log_analysis_cli.yaml`
-
-### Previous Achievements (v0.0.3 - v0.1.34)
+✅ **Log Analysis CLI & Logfire Observability (v0.1.35)**: `massgen logs analyze` command with prompt mode and multi-agent self-analysis, Logfire workflow attributes for round context and vote reasoning, `direct_mcp_servers` config for keeping specific MCPs as protocol tools, improved tool handling for unknown tools and vote-only mode fixes
 
 ✅ **OpenAI-Compatible Server & Model Discovery (v0.1.34)**: Local HTTP server with `massgen serve` compatible with any OpenAI SDK client, dynamic model discovery for Groq and Together backends via authenticated API calls, WebUI file diffs and answer refresh polling, subagent status tracking and cancellation recovery improvements
 
@@ -1457,9 +1448,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.36 Roadmap
+### v0.1.37 Roadmap
 
-Version 0.1.36 focuses on OpenAI Responses API improvements and computer use model support:
+Version 0.1.37 focuses on OpenAI Responses API improvements and computer use model support:
 
 #### Planned Features
 - **OpenAI Responses /compact Endpoint** (@ncrispino): Use OpenAI's native `/compact` endpoint for context compression instead of custom summarization
@@ -1469,7 +1460,7 @@ Key technical approach:
 - **Native Context Compression**: Leverage OpenAI's API-level compression for better token efficiency
 - **Alternative Computer Use Model**: Fara-7B integration with existing computer use infrastructure
 
-For detailed milestones and technical specifications, see the [full v0.1.36 roadmap](ROADMAP_v0.1.36.md).
+For detailed milestones and technical specifications, see the [full v0.1.37 roadmap](ROADMAP_v0.1.37.md).
 
 ---
 

@@ -227,7 +227,30 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.35 - Latest
+### v0.1.36 - Latest
+**New Features:** Hook Framework, Unified @path Context Handling, Claude Code Hooks Integration
+
+**Key Features:**
+- **Hook Framework**: PreToolUse/PostToolUse hooks for intercepting tool execution with pattern matching, global and per-agent registration via YAML
+- **Unified @path Context Handling**: Inline file picker with autocomplete syntax for context injection
+- **Claude Code Hooks Integration**: Native Claude Code hooks compatibility within MassGen's hook framework
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Use hook framework with global and per-agent hooks
+# See massgen/configs/hooks/example_hooks.yaml for full configuration
+uv run massgen --config massgen/configs/hooks/example_hooks.yaml \
+  "Create a document and save it to a file"
+
+# Hooks can intercept tool calls:
+# - PreToolUse: Audit, block, or modify tool arguments
+# - PostToolUse: Log outputs or inject content into results
+```
+
+### v0.1.35
 **New Features:** Log Analysis CLI, Logfire Workflow Observability, Direct MCP Servers, Tool Handling Fixes
 
 **Key Features:**
