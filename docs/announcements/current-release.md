@@ -31,9 +31,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.36, adding @path Context Handling & Hook Framework!
-
-Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code). Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Plus: Claude Code native hooks integration and improved Docker resource management.
+We're excited to release MassGen v0.1.36, adding @path Context Handling & Hook Framework!🚀 Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code). Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Plus: Claude Code native hooks integration and improved Docker resource management.
 
 **Key Features:**
 
