@@ -1454,7 +1454,8 @@ class CustomToolAndMCPBackend(LLMBackend):
             logic before reaching this method.
         """
         tool_name = call.get("name", "")
-        call_id = call.get("call_id", str(uuid.uuid4()))
+        call_id = call.get("call_id") or str(uuid.uuid4())
+        call["call_id"] = call_id  # Ensure call_id is always set for downstream usage
         arguments_str = call.get("arguments", "{}")
 
         # Create metrics tracker at start
@@ -1526,6 +1527,8 @@ class CustomToolAndMCPBackend(LLMBackend):
                     arguments_str = pre_result.modified_args
                     # Update the call dict too for downstream processing
                     call["arguments"] = arguments_str
+                    # Update metrics to reflect actual input that will run
+                    metric.input_chars = len(arguments_str)
 
             # Yield tool called status
             yield StreamChunk(
