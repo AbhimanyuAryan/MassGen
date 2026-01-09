@@ -285,6 +285,10 @@ class ConfigValidator:
                 "Use 'agent: {...}' for a single agent",
             )
 
+        # Validate global hooks if present
+        if "hooks" in config:
+            self._validate_hooks(config["hooks"], "hooks", result)
+
     def _validate_agents(self, config: Dict[str, Any], result: ValidationResult) -> None:
         """Validate agent configurations (Level 2)."""
         # Get agents list (normalize single agent to list)
@@ -492,6 +496,10 @@ class ConfigValidator:
                 "Strict tool use will be automatically disabled at runtime. ",
             )
 
+        # Validate hooks if present
+        if "hooks" in backend_config:
+            self._validate_hooks(backend_config["hooks"], f"{location}.hooks", result)
+
     def _validate_tool_filtering(
         self,
         backend_config: Dict[str, Any],
@@ -552,6 +560,146 @@ class ConfigValidator:
                             f"{location}.disallowed_tools[{i}]",
                             "Use string tool patterns",
                         )
+
+    def _validate_hooks(
+        self,
+        hooks_config: Dict[str, Any],
+        location: str,
+        result: ValidationResult,
+    ) -> None:
+        """Validate hooks configuration.
+
+        Hooks can be defined at two levels:
+        - Global (top-level `hooks:`) - applies to all agents
+        - Per-agent (in `backend.hooks:`) - can extend or override global hooks
+        """
+        if not isinstance(hooks_config, dict):
+            result.add_error(
+                f"'hooks' must be a dictionary, got {type(hooks_config).__name__}",
+                location,
+                "Use hook types like 'PreToolUse' and 'PostToolUse'",
+            )
+            return
+
+        valid_hook_types = {"PreToolUse", "PostToolUse"}
+
+        for hook_type, hook_list in hooks_config.items():
+            if hook_type == "override":
+                # Skip override flag
+                continue
+
+            if hook_type not in valid_hook_types:
+                result.add_warning(
+                    f"Unknown hook type: '{hook_type}'",
+                    f"{location}.{hook_type}",
+                    f"Use one of: {', '.join(sorted(valid_hook_types))}",
+                )
+                continue
+
+            # Handle both list format and dict format (with override)
+            hooks_to_validate = hook_list
+            if isinstance(hook_list, dict):
+                hooks_to_validate = hook_list.get("hooks", [])
+                if "override" in hook_list and not isinstance(hook_list["override"], bool):
+                    result.add_error(
+                        "'override' must be a boolean",
+                        f"{location}.{hook_type}.override",
+                        "Use 'true' or 'false'",
+                    )
+
+            if not isinstance(hooks_to_validate, list):
+                result.add_error(
+                    f"'{hook_type}' must be a list of hooks",
+                    f"{location}.{hook_type}",
+                    "Use a list of hook configurations",
+                )
+                continue
+
+            # Validate each hook in the list
+            for i, hook_config in enumerate(hooks_to_validate):
+                self._validate_single_hook(
+                    hook_config,
+                    f"{location}.{hook_type}[{i}]",
+                    result,
+                )
+
+    def _validate_single_hook(
+        self,
+        hook_config: Dict[str, Any],
+        location: str,
+        result: ValidationResult,
+    ) -> None:
+        """Validate a single hook configuration."""
+        if not isinstance(hook_config, dict):
+            result.add_error(
+                f"Hook must be a dictionary, got {type(hook_config).__name__}",
+                location,
+                "Use 'handler', 'matcher', 'type', and 'timeout' fields",
+            )
+            return
+
+        # Validate required field: handler
+        if "handler" not in hook_config:
+            result.add_error(
+                "Hook missing required field 'handler'",
+                location,
+                "Add 'handler: \"module.function\"' or 'handler: \"path/to/script.py\"'",
+            )
+        else:
+            handler = hook_config["handler"]
+            if not isinstance(handler, str):
+                result.add_error(
+                    f"'handler' must be a string, got {type(handler).__name__}",
+                    f"{location}.handler",
+                    "Use a module path or file path",
+                )
+
+        # Validate optional field: type
+        if "type" in hook_config:
+            hook_type = hook_config["type"]
+            valid_types = {"python"}
+            if hook_type not in valid_types:
+                result.add_error(
+                    f"Invalid hook type: '{hook_type}'",
+                    f"{location}.type",
+                    f"Use one of: {', '.join(sorted(valid_types))}",
+                )
+
+        # Validate optional field: matcher
+        if "matcher" in hook_config:
+            matcher = hook_config["matcher"]
+            if not isinstance(matcher, str):
+                result.add_error(
+                    f"'matcher' must be a string, got {type(matcher).__name__}",
+                    f"{location}.matcher",
+                    "Use a glob pattern like '*' or 'Write|Edit'",
+                )
+
+        # Validate optional field: timeout
+        if "timeout" in hook_config:
+            timeout = hook_config["timeout"]
+            if not isinstance(timeout, (int, float)):
+                result.add_error(
+                    f"'timeout' must be a number, got {type(timeout).__name__}",
+                    f"{location}.timeout",
+                    "Use a number of seconds like 30 or 60",
+                )
+            elif timeout <= 0:
+                result.add_error(
+                    f"'timeout' must be positive, got {timeout}",
+                    f"{location}.timeout",
+                    "Use a positive number of seconds",
+                )
+
+        # Validate optional field: fail_closed
+        if "fail_closed" in hook_config:
+            fail_closed = hook_config["fail_closed"]
+            if not isinstance(fail_closed, bool):
+                result.add_error(
+                    f"'fail_closed' must be a boolean, got {type(fail_closed).__name__}",
+                    f"{location}.fail_closed",
+                    "Use true or false",
+                )
 
     def _validate_orchestrator(self, orchestrator_config: Dict[str, Any], result: ValidationResult) -> None:
         """Validate orchestrator configuration (Level 5)."""

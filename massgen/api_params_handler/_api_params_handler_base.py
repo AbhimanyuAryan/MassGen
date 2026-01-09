@@ -115,6 +115,11 @@ class APIParamsHandlerBase(ABC):
             # Multimodal tools (handled by base_with_custom_tool_and_mcp.py)
             "enable_multimodal_tools",
             "multimodal_config",
+            # Hook framework (handled by base class)
+            "hooks",
+            # Debug options (not passed to API)
+            "debug_delay_seconds",
+            "debug_delay_after_n_tools",
         }
 
     def build_base_api_params(

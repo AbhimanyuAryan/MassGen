@@ -49,6 +49,12 @@ from .logger_config import (
     log_tool_call,
     set_log_attempt,
 )
+from .mcp_tools.hooks import (
+    GeneralHookManager,
+    HighPriorityTaskReminderHook,
+    HookType,
+    MidStreamInjectionHook,
+)
 from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
 from .persona_generator import PersonaGenerator
@@ -1417,33 +1423,6 @@ class Orchestrator(ChatAgent):
             return modified_messages
 
         return messages
-
-    def _extract_tool_reminder(self, tool_result_content: str) -> Optional[str]:
-        """
-        Extract reminder message from tool result if present.
-
-        Tools can include a "reminder" field in their JSON response to trigger
-        contextual reminders for agents (e.g., "save learnings to memory after
-        completing high-priority tasks").
-
-        Args:
-            tool_result_content: JSON string from tool execution result
-
-        Returns:
-            Reminder message if present, None otherwise
-        """
-        try:
-            import json
-
-            result_data = json.loads(tool_result_content)
-            if isinstance(result_data, dict) and "reminder" in result_data:
-                reminder = result_data["reminder"]
-                if reminder and isinstance(reminder, str):
-                    return reminder
-        except (json.JSONDecodeError, TypeError, ValueError):
-            # Tool result is not valid JSON or doesn't contain reminder
-            pass
-        return None
 
     def _merge_agent_memories_to_winner(self, winning_agent_id: str) -> None:
         """
@@ -3265,6 +3244,7 @@ Your answer:"""
         self,
         agent_id: str,
         new_answers: Dict[str, str],
+        existing_answers: Optional[Dict[str, str]] = None,
     ) -> str:
         """Build compact injection content for appending to tool results.
 
@@ -3275,39 +3255,347 @@ Your answer:"""
         Args:
             agent_id: The agent receiving the injection
             new_answers: Dict mapping agent_id to their NEW answer content
+            existing_answers: Dict of answers agent already knew about (to detect updates)
 
         Returns:
             Formatted string to append to tool result content
         """
+        existing_answers = existing_answers or {}
+
         # Normalize workspace paths for this agent's perspective
         normalized = self._normalize_workspace_paths_in_answers(
             new_answers,
             viewing_agent_id=agent_id,
         )
 
-        # Create anonymous mapping (consistent with CURRENT ANSWERS format)
-        agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(sorted(new_answers.keys()), 1)}
+        # Get viewing agent's temporary workspace path
+        temp_workspace_base = None
+        viewing_agent = self.agents.get(agent_id)
+        if viewing_agent and viewing_agent.backend.filesystem_manager:
+            temp_workspace_base = str(viewing_agent.backend.filesystem_manager.agent_temporary_workspace)
 
-        # Format answers compactly
+        # Create anonymous mapping (consistent with CURRENT ANSWERS format across all agents)
+        all_agent_ids = sorted(self.agents.keys())
+        agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(all_agent_ids, 1)}
+
+        # Format answers with workspace paths
         lines = []
+        updated_agents = []
+        new_agents = []
+
         for aid, answer in normalized.items():
-            anon_id = agent_mapping[aid]
+            anon_id = agent_mapping.get(aid, f"agent_{aid}")
+            is_update = aid in existing_answers
+
+            if is_update:
+                updated_agents.append(anon_id)
+            else:
+                new_agents.append(anon_id)
+
             # Truncate long answers for injection context
             truncated = answer[:500] + "..." if len(answer) > 500 else answer
-            lines.append(f"  [{anon_id}]: {truncated}")
+
+            # Include workspace path for file access
+            workspace_path = os.path.join(temp_workspace_base, anon_id) if temp_workspace_base else f"temp_workspaces/{anon_id}"
+            lines.append(f"  [{anon_id}] (workspace: {workspace_path}):")
+            lines.append(f"    {truncated}")
+            lines.append("")
+
+        # Build header based on what changed
+        if updated_agents and new_agents:
+            header = f"[UPDATE: {', '.join(new_agents)} submitted new answer(s); {', '.join(updated_agents)} updated their answer(s)]"
+        elif updated_agents:
+            header = f"[UPDATE: {', '.join(updated_agents)} updated their answer(s)]"
+        else:
+            header = f"[UPDATE: {', '.join(new_agents)} submitted new answer(s)]"
 
         injection_parts = [
             "",
-            "---",
-            "[UPDATE: New answers arrived while you were working]",
+            "=" * 60,
+            "⚠️  IMPORTANT: NEW ANSWER RECEIVED - ACTION REQUIRED",
+            "=" * 60,
+            "",
+            header,
             "",
             *lines,
+            "=" * 60,
+            "REQUIRED ACTION - You MUST do one of the following:",
+            "=" * 60,
             "",
-            "Continue your work, build on these, or vote if you agree.",
-            "---",
+            "1. **ADD A TASK** to your plan: 'Evaluate agent answer(s) and decide next action'",
+            "   - Use update_task_status or create a new task to track this evaluation",
+            "   - Read their workspace files (paths above) to understand their solution",
+            "   - Compare their approach to yours",
+            "",
+            "2. **THEN CHOOSE ONE**:",
+            "   a) VOTE for their answer if it's complete and correct (use vote tool)",
+            "   b) BUILD on their work - improve/extend it and submit YOUR enhanced answer",
+            "   c) MERGE approaches - combine the best parts of their work with yours",
+            "   d) CONTINUE your own approach if you believe it's better",
+            "",
+            "DO NOT ignore this update - you must explicitly evaluate and decide!",
+            "=" * 60,
         ]
 
         return "\n".join(injection_parts)
+
+    def _setup_hook_manager_for_agent(
+        self,
+        agent_id: str,
+        agent: ChatAgent,
+        answers: Dict[str, str],
+    ) -> None:
+        """Set up hooks for agent - uses native adapter for Claude Code, GeneralHookManager for others.
+
+        This routes hook setup based on backend capabilities:
+        - Backends with native hook support (Claude Code): Use NativeHookAdapter
+        - Standard backends: Use GeneralHookManager
+
+        Both paths set up the same hooks:
+        1. MidStreamInjectionHook - injects answers from other agents into tool results
+        2. HighPriorityTaskReminderHook - reminds to document high-priority task completions
+
+        Args:
+            agent_id: The agent identifier
+            agent: The ChatAgent instance
+            answers: Dict of existing answers when agent started (used to detect new answers)
+        """
+        # Check if backend supports native hooks (e.g., Claude Code)
+        if hasattr(agent.backend, "supports_native_hooks") and agent.backend.supports_native_hooks():
+            self._setup_native_hooks_for_agent(agent_id, agent, answers)
+            return
+
+        # Fall back to GeneralHookManager for standard backends
+        if not hasattr(agent.backend, "set_general_hook_manager"):
+            return
+
+        # Create hook manager
+        manager = GeneralHookManager()
+
+        # Create mid-stream injection hook with closure-based callback
+        mid_stream_hook = MidStreamInjectionHook()
+
+        # Define the injection callback (captures agent_id and answers)
+        # This is async to allow copying snapshots before injection
+        async def get_injection_content() -> Optional[str]:
+            """Check if mid-stream injection is needed and return content."""
+            if not self._check_restart_pending(agent_id):
+                return None
+
+            # In vote-only mode, skip injection and force a full restart instead.
+            # Mid-stream injection can't update tool schemas, so agents in vote-only mode
+            # wouldn't be able to vote for newly discovered answers (the vote enum is fixed
+            # at stream start). A full restart gives them updated tool schemas.
+            if self._is_vote_only_mode(agent_id):
+                return None  # Let restart happen instead
+
+            # Get CURRENT answers from agent_states
+            current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+
+            # Filter to only NEW answers (ones that didn't exist when this agent started)
+            new_answers = {aid: ans for aid, ans in current_answers.items() if aid not in answers}
+
+            if not new_answers:
+                return None
+
+            # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
+            # This prevents premature convergence where agents immediately adopt the first answer
+            if self.agent_states[agent_id].injection_count == 0:
+                return None  # Use traditional approach for first injection
+
+            # Copy snapshots from new answer agents to temp workspace BEFORE building injection
+            # This ensures the workspace files are available when the agent tries to access them
+            logger.info(f"[Orchestrator] Copying snapshots for mid-stream injection to {agent_id}")
+            await self._copy_all_snapshots_to_temp_workspace(agent_id)
+
+            # Build injection content (pass existing answers to detect updates vs new)
+            injection = self._build_tool_result_injection(agent_id, new_answers, existing_answers=answers)
+
+            # Debug: Log what's in the temp workspace for each injected agent
+            viewing_agent = self.agents.get(agent_id)
+            if viewing_agent and viewing_agent.backend.filesystem_manager:
+                temp_workspace_base = str(viewing_agent.backend.filesystem_manager.agent_temporary_workspace)
+                all_agent_ids = sorted(self.agents.keys())
+                agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(all_agent_ids, 1)}
+                for aid in new_answers.keys():
+                    anon_id = agent_mapping.get(aid, f"agent_{aid}")
+                    workspace_path = os.path.join(temp_workspace_base, anon_id)
+                    if os.path.exists(workspace_path):
+                        try:
+                            files = os.listdir(workspace_path)
+                            logger.debug(f"[Orchestrator] Injection workspace {workspace_path} contains: {files}")
+                        except OSError as e:
+                            logger.debug(f"[Orchestrator] Could not list workspace {workspace_path}: {e}")
+                    else:
+                        logger.debug(f"[Orchestrator] Injection workspace {workspace_path} does NOT exist!")
+
+            # Clear restart_pending since injection satisfies the update need
+            self.agent_states[agent_id].restart_pending = False
+
+            # Increment injection count
+            self.agent_states[agent_id].injection_count += 1
+
+            # Track the injection
+            logger.info(
+                f"[Orchestrator] Mid-stream injection for {agent_id}: {len(new_answers)} new answer(s)",
+            )
+            # Log the actual injection content at debug level (may contain sensitive data)
+            preview = injection[:2000] + ("..." if len(injection) > 2000 else "")
+            logger.debug(f"[Orchestrator] Injection content (truncated):\n{preview}")
+            self.coordination_tracker.track_agent_action(
+                agent_id,
+                ActionType.UPDATE_INJECTED,
+                f"Mid-stream: {len(new_answers)} answer(s)",
+            )
+
+            # Update agent's context labels
+            self.coordination_tracker.update_agent_context_with_new_answers(
+                agent_id,
+                list(new_answers.keys()),
+            )
+
+            return injection
+
+        # Set callback on hook
+        mid_stream_hook.set_callback(get_injection_content)
+
+        # Register mid-stream injection hook first (maintains current behavior order)
+        manager.register_global_hook(HookType.POST_TOOL_USE, mid_stream_hook)
+
+        # Register high-priority task reminder hook
+        reminder_hook = HighPriorityTaskReminderHook()
+        manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+
+        # Register user-configured hooks from agent backend config
+        if hasattr(agent.backend, "config") and agent.backend.config:
+            agent_hooks = agent.backend.config.get("hooks")
+            if agent_hooks:
+                manager.register_hooks_from_config(agent_hooks, agent_id=agent_id)
+                logger.debug(f"[Orchestrator] Registered user-configured hooks for {agent_id}")
+
+        # Set manager on backend
+        agent.backend.set_general_hook_manager(manager)
+        logger.debug(f"[Orchestrator] Set up hook manager for {agent_id} with mid-stream and reminder hooks")
+
+    def _setup_native_hooks_for_agent(
+        self,
+        agent_id: str,
+        agent: ChatAgent,
+        answers: Dict[str, str],
+    ) -> None:
+        """Set up native hooks for backends that support them (e.g., Claude Code).
+
+        This converts MassGen hooks to the backend's native format using the
+        NativeHookAdapter interface. The hooks are then executed natively by
+        the backend rather than through MassGen's GeneralHookManager.
+
+        Args:
+            agent_id: The agent identifier
+            agent: The ChatAgent instance
+            answers: Dict of existing answers when agent started (used to detect new answers)
+        """
+        # Get the native hook adapter from the backend
+        adapter = agent.backend.get_native_hook_adapter()
+        if not adapter:
+            logger.warning(f"[Orchestrator] Backend supports native hooks but adapter unavailable for {agent_id}")
+            return
+
+        # Create a GeneralHookManager to hold MassGen hooks
+        # (We'll convert these to native format)
+        manager = GeneralHookManager()
+
+        # Create mid-stream injection hook with closure-based callback
+        mid_stream_hook = MidStreamInjectionHook()
+
+        # Define the injection callback (same logic as GeneralHookManager path)
+        async def get_injection_content() -> Optional[str]:
+            """Check if mid-stream injection is needed and return content."""
+            if not self._check_restart_pending(agent_id):
+                return None
+
+            # In vote-only mode, skip injection and force a full restart instead.
+            if self._is_vote_only_mode(agent_id):
+                return None
+
+            # Get CURRENT answers from agent_states
+            current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+
+            # Filter to only NEW answers
+            new_answers = {aid: ans for aid, ans in current_answers.items() if aid not in answers}
+
+            if not new_answers:
+                return None
+
+            # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
+            if self.agent_states[agent_id].injection_count == 0:
+                return None
+
+            # Copy snapshots from new answer agents to temp workspace
+            logger.info(f"[Orchestrator] Copying snapshots for mid-stream injection to {agent_id}")
+            await self._copy_all_snapshots_to_temp_workspace(agent_id)
+
+            # Build injection content
+            injection = self._build_tool_result_injection(agent_id, new_answers, existing_answers=answers)
+
+            # Clear restart_pending since injection satisfies the update need
+            self.agent_states[agent_id].restart_pending = False
+
+            # Increment injection count
+            self.agent_states[agent_id].injection_count += 1
+
+            # Track the injection
+            logger.info(
+                f"[Orchestrator] Mid-stream injection (native) for {agent_id}: {len(new_answers)} new answer(s)",
+            )
+            self.coordination_tracker.track_agent_action(
+                agent_id,
+                ActionType.UPDATE_INJECTED,
+                f"Mid-stream (native): {len(new_answers)} answer(s)",
+            )
+
+            # Update agent's context labels
+            self.coordination_tracker.update_agent_context_with_new_answers(
+                agent_id,
+                list(new_answers.keys()),
+            )
+
+            return injection
+
+        # Set callback on hook
+        mid_stream_hook.set_callback(get_injection_content)
+
+        # Register mid-stream injection hook
+        manager.register_global_hook(HookType.POST_TOOL_USE, mid_stream_hook)
+
+        # Register high-priority task reminder hook
+        reminder_hook = HighPriorityTaskReminderHook()
+        manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+
+        # Register user-configured hooks from agent backend config
+        agent_hooks = agent.backend.config.get("hooks")
+        if agent_hooks:
+            manager.register_hooks_from_config(agent_hooks, agent_id=agent_id)
+
+        # Create context factory for hooks
+        def context_factory() -> Dict[str, Any]:
+            return {
+                "session_id": getattr(self, "session_id", ""),
+                "orchestrator_id": getattr(self, "orchestrator_id", ""),
+                "agent_id": agent_id,
+            }
+
+        # Convert to native format using adapter
+        native_config = adapter.build_native_hooks_config(
+            manager,
+            agent_id=agent_id,
+            context_factory=context_factory,
+        )
+
+        # Set native hooks config on backend
+        agent.backend.set_native_hooks_config(native_config)
+        logger.info(
+            f"[Orchestrator] Set up native hooks for {agent_id}: " f"PreToolUse={len(native_config.get('PreToolUse', []))}, " f"PostToolUse={len(native_config.get('PostToolUse', []))} hooks",
+        )
 
     def _normalize_workspace_paths_in_answers(self, answers: Dict[str, str], viewing_agent_id: Optional[str] = None) -> Dict[str, str]:
         """Normalize absolute workspace paths in agent answers to accessible temporary workspace paths.
@@ -3987,64 +4275,8 @@ Your answer:"""
                 else:
                     logger.info(f"[Orchestrator] Backend planning mode DISABLED for {agent_id} - MCP tools allowed")
 
-            # Set up mid-stream injection callback for tool result updates
-            # This allows injecting new answers into tool results without interrupting the stream
-            def get_injection_content() -> Optional[str]:
-                """Check if mid-stream injection is needed and return content."""
-                if not self._check_restart_pending(agent_id):
-                    return None
-
-                # In vote-only mode, skip injection and force a full restart instead.
-                # Mid-stream injection can't update tool schemas, so agents in vote-only mode
-                # wouldn't be able to vote for newly discovered answers (the vote enum is fixed
-                # at stream start). A full restart gives them updated tool schemas.
-                if self._is_vote_only_mode(agent_id):
-                    return None  # Let restart happen instead
-
-                # Get CURRENT answers from agent_states
-                current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
-
-                # Filter to only NEW answers (ones that didn't exist when this agent started)
-                new_answers = {aid: ans for aid, ans in current_answers.items() if aid not in answers}
-
-                if not new_answers:
-                    return None
-
-                # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
-                # This prevents premature convergence where agents immediately adopt the first answer
-                if self.agent_states[agent_id].injection_count == 0:
-                    return None  # Use traditional approach for first injection
-
-                # Build injection content
-                injection = self._build_tool_result_injection(agent_id, new_answers)
-
-                # Clear restart_pending since injection satisfies the update need
-                self.agent_states[agent_id].restart_pending = False
-
-                # Increment injection count
-                self.agent_states[agent_id].injection_count += 1
-
-                # Track the injection
-                logger.info(
-                    f"[Orchestrator] Mid-stream injection for {agent_id}: " f"{len(new_answers)} new answer(s)",
-                )
-                self.coordination_tracker.track_agent_action(
-                    agent_id,
-                    ActionType.UPDATE_INJECTED,
-                    f"Mid-stream: {len(new_answers)} answer(s)",
-                )
-
-                # Update agent's context labels
-                self.coordination_tracker.update_agent_context_with_new_answers(
-                    agent_id,
-                    list(new_answers.keys()),
-                )
-
-                return injection
-
-            # Set the callback on the backend
-            if hasattr(agent.backend, "set_mid_stream_injection_callback"):
-                agent.backend.set_mid_stream_injection_callback(get_injection_content)
+            # Set up hook manager for mid-stream injection and reminder extraction
+            self._setup_hook_manager_for_agent(agent_id, agent, answers)
 
             # Build proper conversation messages with system + user messages
             max_attempts = 3
@@ -4118,8 +4350,8 @@ Your answer:"""
                         yield ("done", None)
                         return
                     # else: injection_count >= 1, mid-stream callback will handle via tool results
-                    # Clear the flag since callback will inject on next tool call
-                    self.agent_states[agent_id].restart_pending = False
+                    # Do NOT clear restart_pending here - the callback checks this flag
+                    # and will clear it after injecting content (see get_injection_content)
 
                 # TODO: Need to still log this redo enforcement msg in the context.txt, and this & others in the coordination tracker.
 
@@ -4652,9 +4884,8 @@ Your answer:"""
             yield ("error", f"Agent execution failed: {str(e)}")
             yield ("done", None)
         finally:
-            # Clean up mid-stream injection callback
-            if hasattr(agent.backend, "set_mid_stream_injection_callback"):
-                agent.backend.set_mid_stream_injection_callback(None)
+            # Hook manager cleanup is automatic - no explicit cleanup needed
+            # The GeneralHookManager is recreated for each agent run
 
             # Add outcome attributes to agent execution span
             if _agent_outcome:

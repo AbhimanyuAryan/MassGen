@@ -322,3 +322,132 @@ TOOL_RESULT_EVICTION_PREVIEW_TOKENS = 2_000
 
 # Directory name for evicted results (within agent workspace)
 EVICTED_RESULTS_DIR = ".tool_results"
+
+# =============================================================================
+# FILE EXTENSION TO LANGUAGE MAPPING
+# =============================================================================
+
+# Map file extensions to syntax highlighting/language identifiers
+# Used by web UI for code highlighting and CLI for file type display
+EXTENSION_TO_LANGUAGE = {
+    # Python
+    ".py": "python",
+    ".pyi": "python",
+    ".pyw": "python",
+    # JavaScript/TypeScript
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    # Web
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".sass": "sass",
+    ".less": "less",
+    # Data formats
+    ".json": "json",
+    ".jsonc": "json",
+    ".json5": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".xml": "xml",
+    ".toml": "toml",
+    ".ini": "ini",
+    ".cfg": "ini",
+    ".conf": "ini",
+    # Shell
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "zsh",
+    ".fish": "fish",
+    ".ps1": "powershell",
+    ".psm1": "powershell",
+    ".bat": "batch",
+    ".cmd": "batch",
+    # Systems programming
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cxx": "cpp",
+    ".cc": "cpp",
+    ".hpp": "cpp",
+    ".hxx": "cpp",
+    ".rs": "rust",
+    ".go": "go",
+    ".zig": "zig",
+    # JVM
+    ".java": "java",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".scala": "scala",
+    ".groovy": "groovy",
+    ".gradle": "groovy",
+    # .NET
+    ".cs": "csharp",
+    ".fs": "fsharp",
+    ".vb": "vb",
+    # Mobile
+    ".swift": "swift",
+    ".m": "objective-c",
+    ".mm": "objective-cpp",
+    # Scripting
+    ".rb": "ruby",
+    ".php": "php",
+    ".pl": "perl",
+    ".pm": "perl",
+    ".lua": "lua",
+    ".r": "r",
+    ".R": "r",
+    ".jl": "julia",
+    # Functional
+    ".hs": "haskell",
+    ".lhs": "haskell",
+    ".ml": "ocaml",
+    ".mli": "ocaml",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".erl": "erlang",
+    ".clj": "clojure",
+    ".cljs": "clojure",
+    ".lisp": "lisp",
+    ".el": "lisp",
+    ".scm": "scheme",
+    ".rkt": "racket",
+    # Database
+    ".sql": "sql",
+    ".psql": "sql",
+    ".mysql": "sql",
+    # Documentation
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".rst": "rst",
+    ".tex": "latex",
+    ".adoc": "asciidoc",
+    # Config files
+    ".dockerfile": "dockerfile",
+    ".gitignore": "gitignore",
+    ".env": "dotenv",
+    ".editorconfig": "ini",
+    # Plain text
+    ".txt": "plaintext",
+    ".log": "plaintext",
+    ".text": "plaintext",
+}
+
+
+def get_language_for_extension(extension: str) -> str:
+    """Get the language identifier for a file extension.
+
+    Args:
+        extension: File extension including dot (e.g., '.py', '.js').
+
+    Returns:
+        Language identifier string, or 'plaintext' if unknown.
+    """
+    return EXTENSION_TO_LANGUAGE.get(extension.lower(), "plaintext")

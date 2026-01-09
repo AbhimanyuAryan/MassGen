@@ -50,6 +50,9 @@ uv run pre-commit run --all-files
 
 # Validate all configs
 uv run python scripts/validate_all_configs.py
+
+# Build Web UI (required after modifying webui/src/*)
+cd webui && npm run build
 ```
 
 ## Architecture Overview
@@ -234,6 +237,35 @@ Docker execution mode auto-excludes tools missing required API keys.
   from dotenv import load_dotenv
   load_dotenv()  # Load before importing os.getenv()
   ```
+
+### Integration Testing Across Backends
+
+When creating integration tests that involve backend functionality (hooks, tool execution, streaming, compression, etc.), **test across all 5 standard backends**:
+
+| Backend | Type | Model | API Style |
+|---------|------|-------|-----------|
+| Claude | `claude` | `claude-haiku-4-5-20251001` | anthropic |
+| OpenAI | `openai` | `gpt-4o-mini` | openai |
+| Gemini | `gemini` | `gemini-3-flash-preview` | gemini |
+| OpenRouter | `chatcompletion` | `openai/gpt-4o-mini` | openai |
+| Grok | `grok` | `grok-3-mini` | openai |
+
+**Reference scripts**:
+- `scripts/test_hook_backends.py` - Hook framework integration tests
+- `scripts/test_compression_backends.py` - Context compression tests
+
+**Integration test pattern**:
+```python
+BACKEND_CONFIGS = {
+    "claude": {"type": "claude", "model": "claude-haiku-4-5-20251001"},
+    "openai": {"type": "openai", "model": "gpt-4o-mini"},
+    "gemini": {"type": "gemini", "model": "gemini-3-flash-preview"},
+    "openrouter": {"type": "chatcompletion", "model": "openai/gpt-4o-mini", "base_url": "..."},
+    "grok": {"type": "grok", "model": "grok-3-mini"},
+}
+```
+
+Use `--verbose` flag to show detailed output (injection content, message formats, etc.).
 
 ## Key Files for New Contributors
 

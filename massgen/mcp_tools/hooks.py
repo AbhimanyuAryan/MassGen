@@ -1,20 +1,33 @@
 # -*- coding: utf-8 -*-
 """
-Hook system for MCP tool call interception.
+Hook system for tool call interception in the MassGen multi-agent framework.
 
-This module provides the infrastructure for intercepting MCP tool calls
-across different backend architectures:
+This module provides the infrastructure for intercepting tool calls
+across different backend architectures (OpenAI, Claude, Gemini, etc.).
 
-1. Function-based backends (OpenAI, Claude, etc.) - use FunctionHook
-2. Session-based backends (Gemini) - use PermissionClientSession
+Hook Types:
+- PRE_TOOL_USE: Fires before tool execution (can block or modify)
+- POST_TOOL_USE: Fires after tool execution (can inject content)
 
-The actual permission logic is implemented in filesystem_manager.py
+Hook Registration:
+- Global hooks: Apply to all agents (top-level `hooks:` in config)
+- Per-agent hooks: Apply to specific agents (in `backend.hooks:`)
+- Per-agent hooks can extend or override global hooks
+
+Built-in Hooks:
+- MidStreamInjectionHook: Injects cross-agent updates during tool execution
+- HighPriorityTaskReminderHook: Injects reminders for completed high-priority tasks
 """
 
+import asyncio
+import fnmatch
+import importlib
+import json
 from abc import ABC, abstractmethod
-from datetime import timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from ..logger_config import logger
 
@@ -34,17 +47,120 @@ except ImportError:
 class HookType(Enum):
     """Types of function call hooks."""
 
+    # Legacy hook types (for backward compatibility)
     PRE_CALL = "pre_call"
-    # Future: POST_CALL = "post_call"
+    POST_CALL = "post_call"
+
+    # New general hook types
+    PRE_TOOL_USE = "PreToolUse"
+    POST_TOOL_USE = "PostToolUse"
 
 
+@dataclass
+class HookEvent:
+    """Input data provided to all hooks.
+
+    This dataclass represents the context passed to hook handlers,
+    containing information about the tool call and agent state.
+    """
+
+    hook_type: str  # "PreToolUse" or "PostToolUse"
+    session_id: str
+    orchestrator_id: str
+    agent_id: Optional[str]
+    timestamp: datetime
+    tool_name: str
+    tool_input: Dict[str, Any]
+    tool_output: Optional[str] = None  # Only populated for PostToolUse
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "hook_type": self.hook_type,
+            "session_id": self.session_id,
+            "orchestrator_id": self.orchestrator_id,
+            "agent_id": self.agent_id,
+            "timestamp": self.timestamp.isoformat(),
+            "tool_name": self.tool_name,
+            "tool_input": self.tool_input,
+            "tool_output": self.tool_output,
+        }
+
+    def to_json(self) -> str:
+        """Convert to JSON string."""
+        return json.dumps(self.to_dict())
+
+
+@dataclass
 class HookResult:
-    """Result of a hook execution."""
+    """Result of a hook execution.
 
-    def __init__(self, allowed: bool, metadata: Optional[Dict[str, Any]] = None, modified_args: Optional[str] = None):
-        self.allowed = allowed
-        self.metadata = metadata or {}
-        self.modified_args = modified_args
+    This dataclass is backward compatible with the old HookResult class
+    while adding new fields for the general hook framework.
+
+    The `hook_errors` field tracks any errors that occurred during hook execution
+    when using fail-open behavior. This allows callers to be aware of partial
+    failures even when the overall result is "allow".
+    """
+
+    # Legacy fields (for backward compatibility)
+    allowed: bool = True
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    modified_args: Optional[str] = None
+
+    # New fields for general hook framework
+    decision: Literal["allow", "deny", "ask"] = "allow"
+    reason: Optional[str] = None
+    updated_input: Optional[Dict[str, Any]] = None  # For PreToolUse
+    inject: Optional[Dict[str, Any]] = None  # For PostToolUse injection
+
+    # Error tracking for fail-open scenarios
+    hook_errors: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        """Sync legacy and new fields for compatibility."""
+        # Sync decision with allowed
+        if not self.allowed:
+            self.decision = "deny"
+        elif self.decision == "deny":
+            self.allowed = False
+
+    def add_error(self, error: str) -> None:
+        """Add an error message to track partial failures in fail-open mode."""
+        self.hook_errors.append(error)
+
+    def has_errors(self) -> bool:
+        """Check if any errors occurred during hook execution."""
+        return len(self.hook_errors) > 0
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "HookResult":
+        """Create HookResult from dictionary (e.g., from JSON)."""
+        return cls(
+            allowed=data.get("allowed", True),
+            metadata=data.get("metadata", {}),
+            modified_args=data.get("modified_args"),
+            decision=data.get("decision", "allow"),
+            reason=data.get("reason"),
+            updated_input=data.get("updated_input"),
+            inject=data.get("inject"),
+            hook_errors=data.get("hook_errors", []),
+        )
+
+    @classmethod
+    def allow(cls) -> "HookResult":
+        """Create a result that allows the operation."""
+        return cls(allowed=True, decision="allow")
+
+    @classmethod
+    def deny(cls, reason: Optional[str] = None) -> "HookResult":
+        """Create a result that denies the operation."""
+        return cls(allowed=False, decision="deny", reason=reason)
+
+    @classmethod
+    def ask(cls, reason: Optional[str] = None) -> "HookResult":
+        """Create a result that requires user confirmation."""
+        return cls(allowed=True, decision="ask", reason=reason)
 
 
 class FunctionHook(ABC):
@@ -109,6 +225,600 @@ class FunctionHookManager:
         """Clear all registered hooks."""
         self._hooks.clear()
         self._global_hooks = {hook_type: [] for hook_type in HookType}
+
+
+# =============================================================================
+# New General Hook Framework
+# =============================================================================
+
+
+class PatternHook(FunctionHook):
+    """Base class for hooks that support pattern-based tool matching."""
+
+    def __init__(
+        self,
+        name: str,
+        matcher: str = "*",
+        timeout: int = 30,
+    ):
+        """
+        Initialize a pattern-based hook.
+
+        Args:
+            name: Hook identifier
+            matcher: Glob pattern for tool name matching (e.g., "*", "Write|Edit", "mcp__*")
+            timeout: Execution timeout in seconds
+        """
+        super().__init__(name)
+        self.matcher = matcher
+        self.timeout = timeout
+        self._patterns = self._parse_matcher(matcher)
+
+    def _parse_matcher(self, matcher: str) -> List[str]:
+        """Parse matcher into list of patterns (supports | for OR)."""
+        if not matcher:
+            return ["*"]
+        return [p.strip() for p in matcher.split("|") if p.strip()]
+
+    def matches(self, tool_name: str) -> bool:
+        """Check if this hook matches the given tool name."""
+        for pattern in self._patterns:
+            if fnmatch.fnmatch(tool_name, pattern):
+                return True
+        return False
+
+
+class PythonCallableHook(PatternHook):
+    """Hook that invokes a Python callable.
+
+    The callable can be specified as:
+    - A module path string (e.g., "massgen.hooks.my_hook")
+    - A direct callable (function or async function)
+
+    The callable receives a HookEvent and returns a HookResult (or dict).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        handler: Union[str, Callable],
+        matcher: str = "*",
+        timeout: int = 30,
+        fail_closed: bool = False,
+    ):
+        """
+        Initialize a Python callable hook.
+
+        Args:
+            name: Hook identifier
+            handler: Module path string or callable
+            matcher: Glob pattern for tool name matching
+            timeout: Execution timeout in seconds
+            fail_closed: If True, deny tool execution on hook errors/timeouts.
+                        If False (default), allow execution on errors (fail-open).
+        """
+        super().__init__(name, matcher, timeout)
+        self._handler_path = handler if isinstance(handler, str) else None
+        self._callable: Optional[Callable] = handler if callable(handler) else None
+        self.fail_closed = fail_closed
+
+    def _import_callable(self, path: str) -> Callable:
+        """Import a callable from a module path."""
+        parts = path.rsplit(".", 1)
+        if len(parts) != 2:
+            raise ImportError(f"Invalid callable path: {path}")
+        module_path, func_name = parts
+        module = importlib.import_module(module_path)
+        return getattr(module, func_name)
+
+    async def execute(
+        self,
+        function_name: str,
+        arguments: str,
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> HookResult:
+        """Execute the Python callable hook."""
+        if not self.matches(function_name):
+            return HookResult.allow()
+
+        # Lazy load callable
+        if self._callable is None and self._handler_path:
+            try:
+                self._callable = self._import_callable(self._handler_path)
+            except Exception as e:
+                logger.error(f"[PythonCallableHook] Failed to import {self._handler_path}: {e}")
+                # Fail closed on import error
+                return HookResult.deny(reason=f"Hook import failed: {e}")
+
+        if self._callable is None:
+            return HookResult.allow()
+
+        # Build HookEvent
+        ctx = context or {}
+        try:
+            tool_input = json.loads(arguments) if arguments else {}
+        except json.JSONDecodeError:
+            tool_input = {"raw": arguments}
+
+        event = HookEvent(
+            hook_type=ctx.get("hook_type", "PreToolUse"),
+            session_id=ctx.get("session_id", ""),
+            orchestrator_id=ctx.get("orchestrator_id", ""),
+            agent_id=ctx.get("agent_id"),
+            timestamp=datetime.now(timezone.utc),
+            tool_name=function_name,
+            tool_input=tool_input,
+            tool_output=ctx.get("tool_output"),
+        )
+
+        try:
+            # Execute with timeout
+            if asyncio.iscoroutinefunction(self._callable):
+                result = await asyncio.wait_for(
+                    self._callable(event),
+                    timeout=self.timeout,
+                )
+            else:
+                # Sync callable - run in executor
+                loop = asyncio.get_event_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._callable, event),
+                    timeout=self.timeout,
+                )
+
+            return self._normalize_result(result)
+
+        except asyncio.TimeoutError:
+            logger.warning(f"[PythonCallableHook] Hook {self.name} timed out for {function_name}")
+            if self.fail_closed:
+                return HookResult.deny(reason=f"Hook {self.name} timed out")
+            return HookResult.allow()
+        except Exception as e:
+            logger.error(f"[PythonCallableHook] Hook {self.name} failed: {e}")
+            if self.fail_closed:
+                return HookResult.deny(reason=f"Hook {self.name} failed: {e}")
+            return HookResult.allow()
+
+    def _normalize_result(self, result: Any) -> HookResult:
+        """Normalize hook result to HookResult."""
+        if isinstance(result, HookResult):
+            return result
+        if isinstance(result, dict):
+            return HookResult.from_dict(result)
+        if result is None:
+            return HookResult.allow()
+        # Unknown type - treat as allow
+        logger.warning(f"[PythonCallableHook] Unknown result type: {type(result)}")
+        return HookResult.allow()
+
+
+class GeneralHookManager:
+    """Extended hook manager supporting pattern-based matching and global/per-agent hooks.
+
+    This manager supports:
+    - Global hooks that apply to all agents
+    - Per-agent hooks that can extend or override global hooks
+    - Pattern-based matching on tool names
+    - Aggregation of results from multiple hooks
+    """
+
+    def __init__(self):
+        self._global_hooks: Dict[HookType, List[PatternHook]] = {
+            HookType.PRE_TOOL_USE: [],
+            HookType.POST_TOOL_USE: [],
+        }
+        self._agent_hooks: Dict[str, Dict[HookType, List[PatternHook]]] = {}
+        self._agent_overrides: Dict[str, Dict[HookType, bool]] = {}
+
+    def register_global_hook(self, hook_type: HookType, hook: PatternHook) -> None:
+        """Register a hook that applies to all agents."""
+        if hook_type not in self._global_hooks:
+            self._global_hooks[hook_type] = []
+        self._global_hooks[hook_type].append(hook)
+        logger.debug(f"[GeneralHookManager] Registered global {hook_type.value} hook: {hook.name}")
+
+    def register_agent_hook(
+        self,
+        agent_id: str,
+        hook_type: HookType,
+        hook: PatternHook,
+        override: bool = False,
+    ) -> None:
+        """Register a hook for a specific agent.
+
+        Args:
+            agent_id: The agent identifier
+            hook_type: Type of hook (PRE_TOOL_USE or POST_TOOL_USE)
+            hook: The hook to register
+            override: If True, disable global hooks for this event type
+        """
+        if agent_id not in self._agent_hooks:
+            self._agent_hooks[agent_id] = {
+                HookType.PRE_TOOL_USE: [],
+                HookType.POST_TOOL_USE: [],
+            }
+            self._agent_overrides[agent_id] = {
+                HookType.PRE_TOOL_USE: False,
+                HookType.POST_TOOL_USE: False,
+            }
+
+        if hook_type not in self._agent_hooks[agent_id]:
+            self._agent_hooks[agent_id][hook_type] = []
+
+        self._agent_hooks[agent_id][hook_type].append(hook)
+
+        if override:
+            self._agent_overrides[agent_id][hook_type] = True
+
+        logger.debug(
+            f"[GeneralHookManager] Registered {hook_type.value} hook for agent {agent_id}: {hook.name}" f"{' (override)' if override else ''}",
+        )
+
+    def get_hooks_for_agent(
+        self,
+        agent_id: Optional[str],
+        hook_type: HookType,
+    ) -> List[PatternHook]:
+        """Get all applicable hooks for an agent.
+
+        If the agent has override=True for this hook type, only agent hooks are returned.
+        Otherwise, global hooks are returned first, then agent hooks.
+        """
+        hooks = []
+
+        # Check if agent overrides global hooks for this type
+        if agent_id and agent_id in self._agent_overrides:
+            if self._agent_overrides[agent_id].get(hook_type, False):
+                # Override - only use agent hooks
+                return list(self._agent_hooks.get(agent_id, {}).get(hook_type, []))
+
+        # Add global hooks first
+        hooks.extend(self._global_hooks.get(hook_type, []))
+
+        # Add agent-specific hooks
+        if agent_id and agent_id in self._agent_hooks:
+            hooks.extend(self._agent_hooks[agent_id].get(hook_type, []))
+
+        return hooks
+
+    async def execute_hooks(
+        self,
+        hook_type: HookType,
+        function_name: str,
+        arguments: str,
+        context: Dict[str, Any],
+        tool_output: Optional[str] = None,
+    ) -> HookResult:
+        """Execute all matching hooks and aggregate results.
+
+        For PreToolUse:
+        - Any deny = deny
+        - Modified inputs chain (each hook sees previous modifications)
+
+        For PostToolUse:
+        - All injection content is collected
+
+        Args:
+            hook_type: The type of hook (PRE_TOOL_USE or POST_TOOL_USE)
+            function_name: Name of the tool being called
+            arguments: JSON string of tool arguments
+            context: Additional context (session_id, agent_id, etc.)
+            tool_output: Tool output string (only for POST_TOOL_USE)
+
+        Returns:
+            Aggregated HookResult from all matching hooks
+        """
+        agent_id = context.get("agent_id")
+        hooks = self.get_hooks_for_agent(agent_id, hook_type)
+
+        # Add tool_output to context for PostToolUse hooks
+        if tool_output is not None:
+            context["tool_output"] = tool_output
+
+        if not hooks:
+            return HookResult.allow()
+
+        # Filter to matching hooks
+        matching_hooks = [h for h in hooks if h.matches(function_name)]
+
+        if not matching_hooks:
+            return HookResult.allow()
+
+        final_result = HookResult.allow()
+        modified_args = arguments
+        all_injections: List[Dict[str, Any]] = []
+
+        for hook in matching_hooks:
+            try:
+                # Update context with current args
+                ctx = dict(context)
+                result = await hook.execute(function_name, modified_args, ctx)
+
+                # Handle deny - short circuit
+                if not result.allowed or result.decision == "deny":
+                    return HookResult.deny(
+                        reason=result.reason or result.metadata.get("reason", f"Denied by hook {hook.name}"),
+                    )
+
+                # Handle ask decision
+                if result.decision == "ask":
+                    final_result.decision = "ask"
+                    final_result.reason = result.reason
+
+                # Chain modified arguments
+                if result.modified_args is not None:
+                    modified_args = result.modified_args
+                elif result.updated_input is not None:
+                    modified_args = json.dumps(result.updated_input)
+
+                # Collect injections
+                if result.inject:
+                    all_injections.append(result.inject)
+
+                # Propagate any errors from the individual hook result
+                if result.has_errors():
+                    for err in result.hook_errors:
+                        final_result.add_error(err)
+
+            except Exception as e:
+                error_msg = f"Hook '{hook.name}' failed unexpectedly: {e}"
+                logger.error(f"[GeneralHookManager] {error_msg}", exc_info=True)
+                # Track the error but fail open (allow tool execution to proceed)
+                # This ensures users can see which hooks failed even in fail-open mode
+                final_result.add_error(error_msg)
+
+                # Check if hook requires fail-closed behavior
+                if hasattr(hook, "fail_closed") and hook.fail_closed:
+                    return HookResult.deny(reason=error_msg)
+
+        # Build final result
+        final_result.modified_args = modified_args if modified_args != arguments else None
+        if all_injections:
+            # Combine injections
+            combined_content = "\n".join(inj.get("content", "") for inj in all_injections if inj.get("content"))
+            if combined_content:
+                final_result.inject = {
+                    "content": combined_content,
+                    "strategy": all_injections[-1].get("strategy", "tool_result"),
+                }
+
+        return final_result
+
+    def register_hooks_from_config(
+        self,
+        hooks_config: Dict[str, Any],
+        agent_id: Optional[str] = None,
+    ) -> None:
+        """Register hooks from YAML configuration.
+
+        Args:
+            hooks_config: Hook configuration dictionary. Supports two formats:
+
+                List format (extends existing hooks):
+                    PreToolUse:
+                      - matcher: "*"
+                        handler: "mymodule.my_hook"
+
+                Override format (replaces existing hooks for this agent):
+                    PreToolUse:
+                      override: true
+                      hooks:
+                        - matcher: "*"
+                          handler: "mymodule.my_hook"
+
+            agent_id: If provided, register as agent-specific hooks.
+                     If None, register as global hooks that apply to all agents.
+        """
+        hook_type_map = {
+            "PreToolUse": HookType.PRE_TOOL_USE,
+            "PostToolUse": HookType.POST_TOOL_USE,
+        }
+
+        for hook_type_name, hook_configs in hooks_config.items():
+            if hook_type_name == "override":
+                continue
+
+            hook_type = hook_type_map.get(hook_type_name)
+            if not hook_type:
+                logger.warning(f"[GeneralHookManager] Unknown hook type: {hook_type_name}")
+                continue
+
+            # Handle override flag
+            override = False
+            if isinstance(hook_configs, dict):
+                override = hook_configs.get("override", False)
+                hook_configs = hook_configs.get("hooks", [])
+
+            for config in hook_configs:
+                hook = self._create_hook_from_config(config)
+                if hook:
+                    if agent_id:
+                        self.register_agent_hook(agent_id, hook_type, hook, override)
+                    else:
+                        self.register_global_hook(hook_type, hook)
+
+    def _create_hook_from_config(self, config: Dict[str, Any]) -> Optional[PatternHook]:
+        """Create a hook instance from configuration."""
+        handler = config.get("handler")
+        if not handler:
+            logger.warning("[GeneralHookManager] Hook config missing 'handler'")
+            return None
+
+        hook_handler_type = config.get("type", "python")
+        matcher = config.get("matcher", "*")
+        timeout = config.get("timeout", 30)
+        fail_closed = config.get("fail_closed", False)
+        name = f"{hook_handler_type}_{handler}"
+
+        # Only python hooks supported currently
+        return PythonCallableHook(
+            name=name,
+            handler=handler,
+            matcher=matcher,
+            timeout=timeout,
+            fail_closed=fail_closed,
+        )
+
+    def clear_hooks(self) -> None:
+        """Clear all registered hooks."""
+        self._global_hooks = {
+            HookType.PRE_TOOL_USE: [],
+            HookType.POST_TOOL_USE: [],
+        }
+        self._agent_hooks.clear()
+        self._agent_overrides.clear()
+
+
+# =============================================================================
+# Built-in Hooks for Migration
+# =============================================================================
+
+
+class MidStreamInjectionHook(PatternHook):
+    """Built-in PostToolUse hook for mid-stream injection.
+
+    This hook checks for pending updates from other agents during tool execution
+    and injects their content into the tool result.
+
+    Used by the orchestrator to inject answers from other agents mid-stream.
+    """
+
+    def __init__(
+        self,
+        name: str = "mid_stream_injection",
+        injection_callback: Optional[Callable[[], Optional[str]]] = None,
+    ):
+        """
+        Initialize the mid-stream injection hook.
+
+        Args:
+            name: Hook identifier
+            injection_callback: Callable that returns injection content or None
+        """
+        super().__init__(name, matcher="*", timeout=5)
+        self._injection_callback = injection_callback
+
+    def set_callback(self, callback: Callable[[], Optional[str]]) -> None:
+        """Set the injection callback dynamically.
+
+        The callback can be either sync or async - both are supported.
+
+        Args:
+            callback: A callable that returns:
+                - str: Content to inject into the tool result
+                - None: No injection (hook passes through)
+        """
+        self._injection_callback = callback
+
+    async def execute(
+        self,
+        function_name: str,
+        arguments: str,
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> HookResult:
+        """Execute the mid-stream injection hook.
+
+        This is a critical infrastructure hook for multi-agent coordination.
+        Errors are tracked in the result so callers can be aware of injection failures.
+        """
+        if not self._injection_callback:
+            return HookResult.allow()
+
+        try:
+            # Get injection content from callback (supports both sync and async)
+            result = self._injection_callback()
+            if asyncio.iscoroutine(result):
+                content = await result
+            else:
+                content = result
+
+            if content:
+                logger.debug(f"[MidStreamInjectionHook] Injecting content for {function_name}")
+                return HookResult(
+                    allowed=True,
+                    inject={
+                        "content": content,
+                        "strategy": "tool_result",
+                    },
+                )
+        except Exception as e:
+            # Log as error (not warning) since this is critical infrastructure
+            error_msg = f"Injection callback failed: {e}"
+            logger.error(f"[MidStreamInjectionHook] {error_msg}", exc_info=True)
+            # Return allow but track the error so callers know injection was skipped
+            # This is fail-open behavior but with visibility into the failure
+            result = HookResult.allow()
+            result.add_error(error_msg)
+            result.metadata["injection_skipped"] = True
+            return result
+
+        return HookResult.allow()
+
+
+class HighPriorityTaskReminderHook(PatternHook):
+    """PostToolUse hook that injects reminder when high-priority task is completed.
+
+    Instead of tools returning reminder keys, this hook inspects tool output
+    and injects reminders based on conditions (consistent hook pattern).
+
+    This hook matches update_task_status and checks if a high-priority
+    task was completed, then injects a reminder to document learnings.
+    """
+
+    def __init__(self, name: str = "high_priority_task_reminder"):
+        """Initialize the high-priority task reminder hook."""
+        # Match update_task_status - the tool that sets status to "completed"
+        super().__init__(name, matcher="*update_task_status", timeout=5)
+
+    def _format_reminder(self) -> str:
+        """Format the high-priority task completion reminder."""
+        separator = "=" * 60
+        reminder_text = (
+            "✓ High-priority task completed! Document decisions to optimize future work:\n"
+            "  • Which skills/tools were effective (or not)? → memory/long_term/skill_effectiveness.md\n"
+            "  • What approach worked (or failed) and why? → memory/long_term/approach_patterns.md\n"
+            "  • What would prevent mistakes on similar tasks? → memory/long_term/lessons_learned.md\n"
+            "  • User preferences revealed? → memory/short_term/user_prefs.md"
+        )
+        return f"\n{separator}\n⚠️  SYSTEM REMINDER\n{separator}\n\n{reminder_text}\n\n{separator}\n"
+
+    async def execute(
+        self,
+        function_name: str,
+        arguments: str,
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> HookResult:
+        """Execute the high-priority task reminder hook."""
+        # Check pattern match first (only fires for update_task_status)
+        if not self.matches(function_name):
+            return HookResult.allow()
+
+        tool_output = (context or {}).get("tool_output")
+        if not tool_output:
+            return HookResult.allow()
+
+        try:
+            # Parse tool output to check task details
+            result_dict = json.loads(tool_output)
+            if isinstance(result_dict, dict):
+                task = result_dict.get("task", {})
+                # Check if high-priority task was completed
+                if task.get("priority") == "high" and task.get("status") == "completed":
+                    logger.debug(f"[HighPriorityTaskReminderHook] Injecting reminder for {function_name}")
+                    return HookResult(
+                        allowed=True,
+                        inject={
+                            "content": self._format_reminder(),
+                            "strategy": "user_message",
+                        },
+                    )
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        return HookResult.allow()
 
 
 class PermissionClientSession(ClientSession):
@@ -203,10 +913,21 @@ def convert_sessions_to_permission_sessions(sessions: List[ClientSession], permi
 
 
 __all__ = [
+    # Core types
     "HookType",
+    "HookEvent",
     "HookResult",
+    # Legacy hook infrastructure
     "FunctionHook",
     "FunctionHookManager",
+    # New general hook framework
+    "PatternHook",
+    "PythonCallableHook",
+    "GeneralHookManager",
+    # Built-in hooks
+    "MidStreamInjectionHook",
+    "HighPriorityTaskReminderHook",
+    # Session-based hooks
     "PermissionClientSession",
     "convert_sessions_to_permission_sessions",
 ]

@@ -1,0 +1,35 @@
+# Debug config for testing mid-stream injection with delay
+# Run with: uv run massgen --config massgen/configs/debug/injection_delay_test.yaml "Create a simple poem and write it into a file"
+
+agents:
+  - id: "agent_a"
+    backend:
+      type: "gemini"
+      model: "gemini-3-flash-preview"
+      cwd: "workspace1"  # Required for filesystem mode
+      enable_mcp_command_line: true
+      command_line_execution_mode: "docker"
+      command_line_docker_enable_sudo: true
+
+  - id: "agent_b"
+    backend:
+      # type: "gemini"
+      # model: "gemini-3-flash-preview"
+      type: "claude_code"
+      model: "claude-sonnet-4-5"
+      cwd: "workspace2"  # Required for filesystem mode
+      enable_mcp_command_line: true
+      command_line_execution_mode: "docker"
+      command_line_docker_enable_sudo: true
+      debug_delay_seconds: 30  # Delay in seconds after N tool calls
+      debug_delay_after_n_tools: 2  # Apply delay after 2 tool calls (allows agent_a to finish first)
+
+orchestrator:
+  snapshot_storage: "snapshots"
+  agent_temporary_workspace: "temp_workspaces"
+  max_new_answers_per_agent: 3
+
+  coordination:
+    # Enable task planning
+    enable_agent_task_planning: true
+    task_planning_filesystem_mode: true

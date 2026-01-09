@@ -10,7 +10,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from ..filesystem_manager import FilesystemManager, PathPermissionManagerHook
 from ..mcp_tools.hooks import FunctionHookManager, HookType
@@ -157,6 +157,7 @@ class LLMBackend(ABC):
                     "enable_audio_generation": kwargs.get("enable_audio_generation", False),
                     "exclude_file_operation_mcps": kwargs.get("exclude_file_operation_mcps", False),
                     "use_mcpwrapped_for_tool_filtering": kwargs.get("use_mcpwrapped_for_tool_filtering", False),
+                    "use_no_roots_wrapper": kwargs.get("use_no_roots_wrapper", False),
                     "enable_code_based_tools": kwargs.get("enable_code_based_tools", False),
                     "custom_tools_path": kwargs.get("custom_tools_path"),
                     "auto_discover_custom_tools": kwargs.get("auto_discover_custom_tools", False),
@@ -264,6 +265,8 @@ class LLMBackend(ABC):
             "command_line_docker_credentials",
             "command_line_docker_packages",
             "exclude_file_operation_mcps",
+            "use_mcpwrapped_for_tool_filtering",
+            "use_no_roots_wrapper",
             # Code-based tools (CodeAct paradigm)
             "enable_code_based_tools",
             "custom_tools_path",
@@ -290,6 +293,11 @@ class LLMBackend(ABC):
             "video_generation_model",
             "audio_generation_backend",
             "audio_generation_model",
+            # Hook framework (handled by base class)
+            "hooks",
+            # Debug options (not passed to API)
+            "debug_delay_seconds",
+            "debug_delay_after_n_tools",
         }
 
     @abstractmethod
@@ -822,32 +830,8 @@ class LLMBackend(ABC):
         """
         pass  # Default implementation for stateless backends
 
-    def set_mid_stream_injection_callback(
-        self,
-        callback: Optional[Callable[[], Optional[str]]] = None,
-    ) -> None:
-        """Set callback for mid-stream injection into tool results.
-
-        The callback is invoked after each tool execution completes. If it
-        returns a non-None string, that string is appended to the tool result
-        content before adding to messages. This enables injecting updates
-        (e.g., new answers from other agents) without interrupting the stream.
-
-        Args:
-            callback: Callable that returns injection content or None
-        """
-        self._mid_stream_injection_callback = callback
-
-    def get_mid_stream_injection(self) -> Optional[str]:
-        """Get pending mid-stream injection content, if any.
-
-        Returns:
-            Injection content to append to next tool result, or None
-        """
-        callback = getattr(self, "_mid_stream_injection_callback", None)
-        if callback:
-            return callback()
-        return None
+    # Note: Mid-stream injection is now handled via the hook framework.
+    # See MidStreamInjectionHook in mcp_tools/hooks.py
 
     def set_planning_mode(self, enabled: bool) -> None:
         """
