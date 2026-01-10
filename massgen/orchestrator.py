@@ -27,7 +27,7 @@ import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from ._broadcast_channel import BroadcastChannel
 from .agent_config import AgentConfig
@@ -38,6 +38,7 @@ from .coordination_tracker import CoordinationTracker
 
 if TYPE_CHECKING:
     from .dspy_paraphraser import QuestionParaphraser
+    from .subagent.models import SubagentResult
 
 from .logger_config import get_log_session_dir  # Import to get log directory
 from .logger_config import logger  # Import logger directly for INFO logging
@@ -54,6 +55,7 @@ from .mcp_tools.hooks import (
     HighPriorityTaskReminderHook,
     HookType,
     MidStreamInjectionHook,
+    SubagentCompleteHook,
 )
 from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
@@ -251,6 +253,18 @@ class Orchestrator(ChatAgent):
         # Coordination state tracking for cleanup
         self._active_streams: Dict = {}
         self._active_tasks: Dict = {}
+
+        # Async subagent completion tracking
+        # Stores pending results for each parent agent until they can be injected
+        # Format: {parent_agent_id: [(subagent_id, SubagentResult), ...]}
+        self._pending_subagent_results: Dict[str, List[Tuple[str, "SubagentResult"]]] = {}
+
+        # Async subagent configuration (parsed from coordination_config)
+        async_subagent_config = {}
+        if hasattr(self.config, "coordination_config"):
+            async_subagent_config = getattr(self.config.coordination_config, "async_subagents", {}) or {}
+        self._async_subagents_enabled = async_subagent_config.get("enabled", True)
+        self._async_subagent_injection_strategy = async_subagent_config.get("injection_strategy", "tool_result")
 
         # Agent startup rate limiting (per model)
         # Load from centralized configuration file instead of hardcoding
@@ -3339,6 +3353,50 @@ Your answer:"""
 
         return "\n".join(injection_parts)
 
+    def _on_subagent_complete(
+        self,
+        parent_agent_id: str,
+        subagent_id: str,
+        result: "SubagentResult",
+    ) -> None:
+        """Callback invoked when a background subagent completes.
+
+        This is registered with SubagentManager and called asynchronously when
+        any background subagent finishes execution. The result is queued for
+        injection into the parent agent's context via SubagentCompleteHook.
+
+        Args:
+            parent_agent_id: ID of the parent agent that spawned the subagent
+            subagent_id: ID of the completed subagent
+            result: The SubagentResult from execution
+        """
+        if parent_agent_id not in self._pending_subagent_results:
+            self._pending_subagent_results[parent_agent_id] = []
+        self._pending_subagent_results[parent_agent_id].append((subagent_id, result))
+        logger.info(
+            f"[Orchestrator] Background subagent {subagent_id} completed for {parent_agent_id} " f"(status={result.status}, success={result.success})",
+        )
+
+    def _get_pending_subagent_results(self, agent_id: str) -> List[Tuple[str, "SubagentResult"]]:
+        """Get and clear pending subagent results for an agent.
+
+        This is called by SubagentCompleteHook to retrieve pending results
+        for injection. Results are cleared after retrieval to prevent
+        duplicate injections.
+
+        Args:
+            agent_id: The agent to get pending results for
+
+        Returns:
+            List of (subagent_id, SubagentResult) tuples, or empty list
+        """
+        pending = self._pending_subagent_results.get(agent_id, [])
+        if pending:
+            # Clear after retrieval to prevent duplicate injection
+            self._pending_subagent_results[agent_id] = []
+            logger.debug(f"[Orchestrator] Retrieved {len(pending)} pending subagent result(s) for {agent_id}")
+        return pending
+
     def _setup_hook_manager_for_agent(
         self,
         agent_id: str,
@@ -3466,6 +3524,20 @@ Your answer:"""
         reminder_hook = HighPriorityTaskReminderHook()
         manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
+        # Register subagent completion hook for async result injection
+        if self._async_subagents_enabled:
+            subagent_hook = SubagentCompleteHook(
+                injection_strategy=self._async_subagent_injection_strategy,
+            )
+
+            # Create a closure that captures agent_id for pending results retrieval
+            def make_pending_getter(aid: str):
+                return lambda: self._get_pending_subagent_results(aid)
+
+            subagent_hook.set_pending_results_getter(make_pending_getter(agent_id))
+            manager.register_global_hook(HookType.POST_TOOL_USE, subagent_hook)
+            logger.debug(f"[Orchestrator] Registered SubagentCompleteHook for {agent_id}")
+
         # Register user-configured hooks from agent backend config
         if hasattr(agent.backend, "config") and agent.backend.config:
             agent_hooks = agent.backend.config.get("hooks")
@@ -3475,7 +3547,7 @@ Your answer:"""
 
         # Set manager on backend
         agent.backend.set_general_hook_manager(manager)
-        logger.debug(f"[Orchestrator] Set up hook manager for {agent_id} with mid-stream and reminder hooks")
+        logger.debug(f"[Orchestrator] Set up hook manager for {agent_id} with mid-stream, reminder, and subagent hooks")
 
     def _setup_native_hooks_for_agent(
         self,
@@ -3570,6 +3642,20 @@ Your answer:"""
         # Register high-priority task reminder hook
         reminder_hook = HighPriorityTaskReminderHook()
         manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+
+        # Register subagent completion hook for async result injection
+        if self._async_subagents_enabled:
+            subagent_hook = SubagentCompleteHook(
+                injection_strategy=self._async_subagent_injection_strategy,
+            )
+
+            # Create a closure that captures agent_id for pending results retrieval
+            def make_pending_getter(aid: str):
+                return lambda: self._get_pending_subagent_results(aid)
+
+            subagent_hook.set_pending_results_getter(make_pending_getter(agent_id))
+            manager.register_global_hook(HookType.POST_TOOL_USE, subagent_hook)
+            logger.debug(f"[Orchestrator] Registered SubagentCompleteHook (native) for {agent_id}")
 
         # Register user-configured hooks from agent backend config
         agent_hooks = agent.backend.config.get("hooks")
@@ -3679,8 +3765,28 @@ Your answer:"""
 
         return normalized_content
 
+    def _flush_pending_subagent_results(self) -> None:
+        """Flush any pending subagent results before coordination ends.
+
+        Called during cleanup to log warnings about subagents that completed
+        after the parent agent finished, or are still running when coordination ends.
+        """
+        if not hasattr(self, "_pending_subagent_results"):
+            return
+
+        for agent_id, pending in self._pending_subagent_results.items():
+            if pending:
+                logger.warning(
+                    f"[Orchestrator] {len(pending)} async subagent result(s) for {agent_id} " f"were not delivered (parent finished before injection). " f"IDs: {[p[0] for p in pending]}",
+                )
+                # Clear the pending results since they won't be delivered
+                self._pending_subagent_results[agent_id] = []
+
     async def _cleanup_active_coordination(self) -> None:
         """Force cleanup of active coordination streams and tasks on timeout."""
+        # Flush any pending subagent results that weren't delivered
+        self._flush_pending_subagent_results()
+
         # Cancel and cleanup active tasks
         if hasattr(self, "_active_tasks") and self._active_tasks:
             for agent_id, task in self._active_tasks.items():

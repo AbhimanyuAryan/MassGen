@@ -12,7 +12,7 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import yaml
 
@@ -110,6 +110,8 @@ class SubagentManager:
         # Track active subprocess handles for graceful cancellation
         self._active_processes: Dict[str, asyncio.subprocess.Process] = {}
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        # Callbacks to invoke when background subagents complete
+        self._completion_callbacks: List[Callable[[str, SubagentResult], None]] = []
 
         logger.info(
             f"[SubagentManager] Initialized for parent {parent_agent_id}, "
@@ -129,6 +131,56 @@ class SubagentManager:
         """
         effective_timeout = timeout if timeout is not None else self.default_timeout
         return max(self.min_timeout, min(self.max_timeout, effective_timeout))
+
+    def register_completion_callback(
+        self,
+        callback: Callable[[str, "SubagentResult"], None],
+    ) -> None:
+        """
+        Register a callback to be invoked when any background subagent completes.
+
+        The callback receives the subagent_id and SubagentResult when a background
+        subagent finishes execution (success, timeout, or error). This is used
+        to notify the Orchestrator about completed async subagents so results
+        can be injected into the parent agent's context.
+
+        Args:
+            callback: Function that takes (subagent_id: str, result: SubagentResult)
+
+        Example:
+            def on_complete(subagent_id: str, result: SubagentResult):
+                print(f"Subagent {subagent_id} completed: {result.status}")
+
+            manager.register_completion_callback(on_complete)
+        """
+        self._completion_callbacks.append(callback)
+        logger.debug(
+            f"[SubagentManager] Registered completion callback, " f"total callbacks: {len(self._completion_callbacks)}",
+        )
+
+    def _invoke_completion_callbacks(
+        self,
+        subagent_id: str,
+        result: "SubagentResult",
+    ) -> None:
+        """
+        Invoke all registered completion callbacks for a finished subagent.
+
+        Errors in individual callbacks are caught and logged but don't
+        prevent other callbacks from executing.
+
+        Args:
+            subagent_id: ID of the completed subagent
+            result: The subagent's execution result
+        """
+        for callback in self._completion_callbacks:
+            try:
+                callback(subagent_id, result)
+            except Exception as e:
+                logger.error(
+                    f"[SubagentManager] Completion callback error for {subagent_id}: {e}",
+                    exc_info=True,
+                )
 
     def _create_workspace(self, subagent_id: str) -> Path:
         """
@@ -1064,12 +1116,11 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        NOTE: Not supported yet, currently all subagents are blocking.
-
         Spawn a subagent in the background (non-blocking).
 
-        Returns immediately with subagent info. Use get_subagent_status() or
-        get_subagent_result() to check progress.
+        Returns immediately with subagent info. When the subagent completes,
+        registered completion callbacks are invoked to notify about results.
+        Use get_subagent_status() or get_subagent_result() to check progress.
 
         Args:
             task: The task for the subagent
@@ -1172,6 +1223,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             else:
                 state.status = "failed"
             state.result = result
+
+            # Invoke registered completion callbacks to notify about async completion
+            self._invoke_completion_callbacks(config.id, result)
 
             # Log conversation on success
             if result.success and result.answer:

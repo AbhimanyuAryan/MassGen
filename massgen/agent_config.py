@@ -97,6 +97,13 @@ class CoordinationConfig:
         subagent_orchestrator: Configuration for subagent orchestrator mode. When enabled, subagents
                               use a full Orchestrator with multiple agents. This enables multi-agent coordination within
                               subagent execution.
+        async_subagents: Configuration for async subagent execution. When enabled, agents can spawn
+                        subagents with async_=True to run in the background while continuing work.
+                        Results are automatically injected when subagents complete.
+                        - enabled: bool (default True) - Whether to allow async subagent execution
+                        - injection_strategy: str (default "tool_result") - How to inject results:
+                          - "tool_result": Append result to next tool call output
+                          - "user_message": Inject as separate user message
     """
 
     enable_planning_mode: bool = False
@@ -126,6 +133,8 @@ class CoordinationConfig:
     subagent_max_timeout: int = 600  # Maximum 10 minutes
     subagent_max_concurrent: int = 3
     subagent_orchestrator: Optional["SubagentOrchestratorConfig"] = None
+    # Async subagent execution configuration
+    async_subagents: Optional[Dict[str, Any]] = None  # {enabled: bool, injection_strategy: str}
 
     def __post_init__(self):
         """Validate configuration after initialization."""

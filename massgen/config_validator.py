@@ -782,6 +782,37 @@ class ConfigValidator:
                             "Use a value like 0, 1, 2, etc.",
                         )
 
+                # Validate async_subagents if present
+                if "async_subagents" in coordination:
+                    async_config = coordination["async_subagents"]
+                    if not isinstance(async_config, dict):
+                        result.add_error(
+                            f"'async_subagents' must be a dictionary, got {type(async_config).__name__}",
+                            f"{location}.coordination.async_subagents",
+                            "Use async_subagents: {enabled: true, injection_strategy: 'tool_result'}",
+                        )
+                    else:
+                        # Validate enabled field
+                        if "enabled" in async_config:
+                            enabled = async_config["enabled"]
+                            if not isinstance(enabled, bool):
+                                result.add_error(
+                                    f"'async_subagents.enabled' must be a boolean, got {type(enabled).__name__}",
+                                    f"{location}.coordination.async_subagents.enabled",
+                                    "Use 'true' or 'false'",
+                                )
+
+                        # Validate injection_strategy field
+                        if "injection_strategy" in async_config:
+                            strategy = async_config["injection_strategy"]
+                            valid_strategies = ["tool_result", "user_message"]
+                            if strategy not in valid_strategies:
+                                result.add_error(
+                                    f"Invalid async_subagents.injection_strategy: '{strategy}'",
+                                    f"{location}.coordination.async_subagents.injection_strategy",
+                                    f"Use one of: {', '.join(valid_strategies)}",
+                                )
+
         # Validate voting_sensitivity if present
         if "voting_sensitivity" in orchestrator_config:
             voting_sensitivity = orchestrator_config["voting_sensitivity"]

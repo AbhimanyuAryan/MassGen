@@ -219,6 +219,7 @@ async def create_server() -> fastmcp.FastMCP:
     def spawn_subagents(
         tasks: List[Dict[str, Any]],
         context: str,
+        async_: bool = False,
         # NOTE: timeout_seconds parameter intentionally removed from MCP interface.
         # Allowing models to set custom timeouts could cause issues:
         # - Models might set very short timeouts and want to retry
@@ -247,15 +248,18 @@ async def create_server() -> fastmcp.FastMCP:
                    - "context_files": (optional) files to share
             context: (REQUIRED) Project/goal description so subagents understand the work.
                      Example: "Building a Bob Dylan tribute website with bio, discography, timeline"
+            async_: (optional) If True, spawn subagents in the background and return immediately.
+                    Results will be automatically injected into your context when subagents complete.
+                    Default is False (blocking - waits for all subagents to complete).
 
-        TIMEOUT HANDLING:
+        TIMEOUT HANDLING (for blocking mode, async_=False):
         Subagents that timeout will attempt to recover any completed work:
         - "completed_but_timeout": Full answer recovered (success=True, use the answer)
         - "partial": Some work done but incomplete (check workspace for partial files)
         - "timeout": No recoverable work (check workspace anyway for any files)
         The "workspace" path is ALWAYS provided, even on timeout/error.
 
-        Returns:
+        Returns (async_=False, blocking mode):
             {{
                 "success": bool,
                 "results": [
@@ -272,8 +276,23 @@ async def create_server() -> fastmcp.FastMCP:
                 "summary": {{"total": N, "completed": N, "timeout": N}}
             }}
 
+        Returns (async_=True, background mode):
+            {{
+                "success": bool,
+                "mode": "async",
+                "subagents": [
+                    {{
+                        "subagent_id": "...",
+                        "status": "running",
+                        "workspace": "/path/to/subagent/workspace",
+                        "status_file": "/path/to/status.json"  # For manual polling if needed
+                    }}
+                ],
+                "note": "Results will be automatically injected when subagents complete."
+            }}
+
         Examples:
-            # CORRECT: Independent parallel tasks with context
+            # BLOCKING: Independent parallel tasks with context (waits for completion)
             spawn_subagents(
                 tasks=[
                     {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio"}},
@@ -281,6 +300,13 @@ async def create_server() -> fastmcp.FastMCP:
                     {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs"}}
                 ],
                 context="Building a Bob Dylan tribute website with biography, discography, songs, and quotes pages"
+            )
+
+            # ASYNC: Spawn background subagent and continue working
+            spawn_subagents(
+                tasks=[{{"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research"}}],
+                context="Building secure authentication system",
+                async_=True  # Returns immediately, result injected later
             )
 
             # WRONG: Sequential dependency (task 2 needs task 1's output)
@@ -324,37 +350,67 @@ async def create_server() -> fastmcp.FastMCP:
                         "error": f"Task at index {i} missing required 'task' field",
                     }
 
-            # Run the async spawn safely (handles both sync and nested async contexts)
-            from massgen.utils import run_async_safely
+            # Branch based on async mode
+            if async_:
+                # ASYNC MODE: Spawn subagents in background and return immediately
+                # Results will be injected via SubagentCompleteHook when they complete
+                spawned = []
+                for task_config in tasks:
+                    # Build the context string for the subagent (same as blocking mode)
+                    # Context is prepended to the task in spawn_parallel, so we do the same here
+                    task_with_context = f"CONTEXT: {context}\n\nTASK: {task_config['task']}"
 
-            results = run_async_safely(
-                manager.spawn_parallel(
-                    tasks=tasks,
-                    context=context,
-                    timeout_seconds=_default_timeout,  # Use configured default, not model-specified
-                ),
-            )
+                    info = manager.spawn_subagent_background(
+                        task=task_with_context,
+                        subagent_id=task_config.get("subagent_id"),
+                        context_files=task_config.get("context_files"),
+                        timeout_seconds=_default_timeout,
+                    )
+                    spawned.append(info)
 
-            # Save registry to filesystem
-            _save_subagents_to_filesystem()
+                # Save registry to filesystem
+                _save_subagents_to_filesystem()
 
-            # Compute summary
-            completed = sum(1 for r in results if r.status == "completed")
-            failed = sum(1 for r in results if r.status == "error")
-            timeout = sum(1 for r in results if r.status == "timeout")
-            all_success = all(r.success for r in results)
+                return {
+                    "success": True,
+                    "operation": "spawn_subagents",
+                    "mode": "async",
+                    "subagents": spawned,
+                    "note": "Results will be automatically injected when subagents complete.",
+                }
 
-            return {
-                "success": all_success,
-                "operation": "spawn_subagents",
-                "results": [r.to_dict() for r in results],
-                "summary": {
-                    "total": len(results),
-                    "completed": completed,
-                    "failed": failed,
-                    "timeout": timeout,
-                },
-            }
+            else:
+                # BLOCKING MODE: Wait for all subagents to complete (existing behavior)
+                from massgen.utils import run_async_safely
+
+                results = run_async_safely(
+                    manager.spawn_parallel(
+                        tasks=tasks,
+                        context=context,
+                        timeout_seconds=_default_timeout,  # Use configured default, not model-specified
+                    ),
+                )
+
+                # Save registry to filesystem
+                _save_subagents_to_filesystem()
+
+                # Compute summary
+                completed = sum(1 for r in results if r.status == "completed")
+                failed = sum(1 for r in results if r.status == "error")
+                timeout = sum(1 for r in results if r.status == "timeout")
+                all_success = all(r.success for r in results)
+
+                return {
+                    "success": all_success,
+                    "operation": "spawn_subagents",
+                    "results": [r.to_dict() for r in results],
+                    "summary": {
+                        "total": len(results),
+                        "completed": completed,
+                        "failed": failed,
+                        "timeout": timeout,
+                    },
+                }
 
         except Exception as e:
             logger.error(f"[SubagentMCP] Error spawning subagents: {e}")

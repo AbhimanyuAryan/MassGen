@@ -499,6 +499,118 @@ Subagent costs are automatically aggregated in the parent's metrics:
      }
    }
 
+Async Subagent Execution
+------------------------
+
+By default, ``spawn_subagents`` blocks until all subagents complete. For long-running tasks,
+you can use async mode to spawn subagents in the background while the parent agent continues working.
+
+Enabling Async Mode
+~~~~~~~~~~~~~~~~~~~
+
+Pass ``async_=True`` to spawn subagents in the background:
+
+.. code-block:: json
+
+   {
+     "tool": "spawn_subagents",
+     "arguments": {
+       "tasks": [
+         {"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research"}
+       ],
+       "context": "Building secure authentication system",
+       "async_": true
+     }
+   }
+
+The tool returns immediately with running status:
+
+.. code-block:: json
+
+   {
+     "success": true,
+     "mode": "async",
+     "subagents": [
+       {
+         "subagent_id": "oauth-research",
+         "status": "running",
+         "workspace": "/path/to/subagents/oauth-research/workspace",
+         "status_file": "/path/to/logs/oauth-research/full_logs/status.json"
+       }
+     ],
+     "note": "Results will be automatically injected when subagents complete."
+   }
+
+Automatic Result Injection
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When an async subagent completes, its result is automatically injected into the parent agent's context
+on the next tool call. The parent doesn't need to poll or wait—results appear seamlessly:
+
+.. code-block:: text
+
+   ============================================================
+   ASYNC SUBAGENT RESULTS (1 completed)
+   ============================================================
+   <subagent_result id="oauth-research" status="completed">
+     <execution_time>45.2s</execution_time>
+     <workspace>/path/to/subagents/oauth-research/workspace</workspace>
+     <token_usage input="1500" output="800" />
+     <answer success="true">
+   OAuth 2.0 best practices include:
+   1. Always use HTTPS
+   2. Use short-lived access tokens
+   ...
+     </answer>
+   </subagent_result>
+   ============================================================
+
+Configuration
+~~~~~~~~~~~~~
+
+Configure async subagent behavior in your YAML config:
+
+.. code-block:: yaml
+
+   orchestrator:
+     coordination:
+       enable_subagents: true
+       async_subagents:
+         enabled: true  # Allow async spawning (default: true)
+         injection_strategy: "tool_result"  # How to inject results
+
+**Injection Strategies:**
+
+* ``tool_result`` (default): Append result to the next tool call's output. Best for seamless integration.
+* ``user_message``: Inject as a separate user message. May be useful for very long results.
+
+When to Use Async Mode
+~~~~~~~~~~~~~~~~~~~~~~
+
+Use async mode when:
+
+* **Long-running research tasks**: Spawn research while continuing other work
+* **Independent background work**: Tasks that don't block the main workflow
+* **Parallel exploration**: Start multiple research directions simultaneously
+
+Do NOT use async mode when:
+
+* **Results needed immediately**: If you need the result before proceeding
+* **Sequential dependencies**: If subsequent work depends on the subagent output
+* **Critical path tasks**: If the subagent task is on the critical path
+
+Example: Async Research
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: text
+
+   Parent Agent Workflow:
+   1. Spawn async subagent for OAuth research
+   2. Continue working on database schema
+   3. (Subagent completes in background)
+   4. On next tool call, OAuth research results injected
+   5. Use research to inform authentication implementation
+
 Best Practices
 --------------
 
