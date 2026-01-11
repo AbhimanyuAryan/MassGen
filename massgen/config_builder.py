@@ -1130,9 +1130,9 @@ class ConfigBuilder:
                 },
             }
 
-            # Add workspace for Claude Code (use global index for unique workspace names)
+            # Add workspace for Claude Code (unique suffix added at runtime in cli.py)
             if provider_info.get("type") == "claude_code":
-                agent["backend"]["cwd"] = f"workspace{start_index + i + 1}"
+                agent["backend"]["cwd"] = "workspace"
 
             agents.append(agent)
 
@@ -1261,14 +1261,9 @@ class ConfigBuilder:
                 # Store skipped settings for later warning
                 cloned["_skipped_settings"] = skipped_settings
 
-        # Update workspace for filesystem-enabled agents to avoid conflicts
+        # Update workspace for filesystem-enabled agents (unique suffix added at runtime in cli.py)
         if "cwd" in cloned.get("backend", {}):
-            # Extract number from new_id (e.g., "agent_b" -> 2)
-            if "_" in new_id and len(new_id) > 0:
-                agent_letter = new_id.split("_")[-1]
-                if len(agent_letter) == 1 and agent_letter.isalpha():
-                    agent_num = ord(agent_letter.lower()) - ord("a") + 1
-                    cloned["backend"]["cwd"] = f"workspace{agent_num}"
+            cloned["backend"]["cwd"] = "workspace"
 
         return cloned
 
@@ -1437,7 +1432,7 @@ class ConfigBuilder:
                     if backend_type == "claude_code":
                         current_cwd = agent["backend"].get(
                             "cwd",
-                            f"workspace{agent_num}",
+                            "workspace",
                         )
                         custom_cwd = questionary.text(
                             "Workspace directory:",
@@ -1446,7 +1441,7 @@ class ConfigBuilder:
                         if custom_cwd:
                             agent["backend"]["cwd"] = custom_cwd
                     else:
-                        agent["backend"]["cwd"] = f"workspace{agent_num}"
+                        agent["backend"]["cwd"] = "workspace"
                     console.print(f"✅ Filesystem enabled: {agent['backend']['cwd']}")
                 else:
                     agent["backend"].pop("cwd", None)
@@ -1538,8 +1533,8 @@ class ConfigBuilder:
             [],
         ):
             if not agent["backend"].get("cwd"):
-                # Generate unique workspace name for each agent
-                agent["backend"]["cwd"] = f"workspace{agent_index}"
+                # Set base workspace name (unique suffix added at runtime in cli.py)
+                agent["backend"]["cwd"] = "workspace"
 
         # Auto-enable web search if recommended
         if "web_search" in recommended_tools:
@@ -1828,8 +1823,8 @@ class ConfigBuilder:
                     if enable_filesystem:
                         # For MCP-based filesystem, set cwd parameter
                         if not agent["backend"].get("cwd"):
-                            # Use agent index for workspace naming
-                            agent["backend"]["cwd"] = f"workspace{agent_num}"
+                            # Set base workspace name (unique suffix added at runtime in cli.py)
+                            agent["backend"]["cwd"] = "workspace"
 
                         console.print(
                             f"✅ Filesystem access enabled (via MCP): {agent['backend']['cwd']}",
@@ -4749,7 +4744,7 @@ class ConfigBuilder:
                 backend = {
                     "type": agent_type,
                     "model": model,
-                    "cwd": f"workspace{workspace_num}",
+                    "cwd": "workspace",
                     # Code-based tools (CodeAct paradigm)
                     "enable_code_based_tools": True,
                     "exclude_file_operation_mcps": True,
@@ -4787,7 +4782,7 @@ class ConfigBuilder:
                 backend = {
                     "type": agent_type,
                     "model": model,
-                    "cwd": f"workspace{workspace_num}",
+                    "cwd": "workspace",
                     # File operations via MCP (no code execution)
                     "exclude_file_operation_mcps": False,  # Keep file MCPs
                     # Note: enable_multimodal_tools is set at orchestrator level

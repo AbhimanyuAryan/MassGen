@@ -26,6 +26,7 @@ import asyncio
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -1479,7 +1480,7 @@ def create_simple_config(
 
     # Add required workspace configuration for Claude Code backend
     if backend_type == "claude_code":
-        backend_config["cwd"] = "workspace1"
+        backend_config["cwd"] = "workspace"
 
     # Use provided UI config or default to rich_terminal for CLI usage
     if ui_config is None:
@@ -5568,11 +5569,17 @@ async def main(args):
             # Set instance_id for Docker container naming
             backend_config["instance_id"] = instance_id
             # Apply unique suffix to workspace paths to prevent filesystem conflicts
+            # Each agent gets a unique suffix to prevent identity inference from workspace names
             if "cwd" in backend_config:
                 original_cwd = backend_config["cwd"]
-                # Append unique suffix to workspace path
-                # e.g., ".massgen/workspaces/workspace1" -> ".massgen/workspaces/workspace1_a1b2c3d4"
-                backend_config["cwd"] = f"{original_cwd}_{instance_id}"
+                # Strip trailing numbers from workspace names to prevent identity leakage
+                # e.g., "workspace1" -> "workspace", "workspace2" -> "workspace"
+                # This ensures agents can't infer identity from numbered workspace paths
+                base_name = re.sub(r"\d+$", "", original_cwd)
+                # Generate unique suffix per agent (not shared) to prevent identity leakage
+                # e.g., "workspace" -> "workspace_f7a3b2c1"
+                agent_workspace_suffix = uuid.uuid4().hex[:8]
+                backend_config["cwd"] = f"{base_name}_{agent_workspace_suffix}"
                 logger.debug(
                     f"Auto-generated unique workspace: {original_cwd} -> {backend_config['cwd']}",
                 )
