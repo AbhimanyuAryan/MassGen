@@ -9,16 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.37 (January 12, 2026)** - Execution Traces & Thinking Mode Improvements
+Execution trace files preserve full agent history for compression recovery and cross-agent coordination. Claude Code thinking mode support with streaming buffer integration. Gemini thinking mode fixes and standardized agent labeling across backends. OpenRouter documentation and workspace anonymization improvements.
+
 **v0.1.36 (January 9, 2026)** - Hook Framework & Unified @path Context Handling
 General hook framework for agent lifecycle events with PreToolUse/PostToolUse hooks, content injection strategies, and custom hook support. Unified `@path` syntax for inline context path references in CLI and Web UI with autocomplete file picker. Claude Code native hooks integration. Docker resource cleanup improvements when recreating agents for new path references.
 
 **v0.1.35 (January 7, 2026)** - Enhanced Log Analysis & Workflow Observability
 New `massgen logs analyze` command generates analysis prompts or launches multi-agent self-analysis using MassGen. Comprehensive Logfire attributes for workflow explanation including round context, vote context, and local file references. New `direct_mcp_servers` config option for code-based tools mode to keep specific MCP servers as direct protocol tools. Grok and Gemini tool fixes, vote-only mode improvements.
 
-**v0.1.34 (January 5, 2026)** - OpenAI-Compatible Server & Model Discovery
-Local OpenAI-compatible HTTP server enables integration with any OpenAI SDK client. Dynamic model discovery for Groq and Together backends fetches available models via authenticated API calls. WebUI improvements include file diffs, answer refresh polling, and workspace browser optimizations. Subagent reliability enhancements for status tracking, cancellation recovery, and error handling.
-
 ---
+
+## [0.1.37] - 2026-01-12
+
+### Added
+- **Execution Traces**: Full execution history preserved as searchable markdown files ([MAS-226](https://linear.app/massgen-ai/issue/MAS-226))
+  - **Trace file format**: Human-readable `execution_trace.md` saved alongside snapshots
+  - **Compression recovery**: Agents can read trace files to recover detailed history after context compression
+  - **Cross-agent access**: Other agents can access execution traces in temp workspaces to understand approaches
+  - **Full content preservation**: Tool calls, results, and reasoning blocks saved without truncation
+  - **Grep-friendly**: Searchable format for debugging and analysis
+
+- **Claude Code Thinking Mode**: Streaming buffer support for Claude Code reasoning
+  - Thinking content captured in streaming buffer for trace files
+  - Integration with execution trace system
+
+- **Voting Execution Traces**: Vote reasoning captured in execution trace files
+  - Full vote context preserved for analysis
+
+### Changed
+- **Standardized Agent Labeling**: Consistent agent identification across backends
+  - Unified labeling format for multi-agent coordination
+  - Improved workspace anonymization for cross-agent sharing
+
+- **Gemini Thinking Mode**: Fixed thinking/reasoning content handling
+  - Proper streaming buffer integration for Gemini reasoning blocks
+
+- **Streaming Buffer Improvements**: Enhanced reasoning content capture
+  - Better handling of thinking blocks across providers
+  - Improved trace file generation
+
+### Fixed
+- **Claude Code Backend**: Fixed skills and tool handling issues
+- **Config Builder**: Fixed configuration generation edge cases
+- **Round Timeout Handling**: Improved timeout behavior during coordination
+
+### Documentations, Configurations and Resources
+- **Timeouts Guide**: Updated `docs/source/reference/timeouts.rst` with comprehensive timeout documentation
+- **Backends Guide**: Updated `docs/source/user_guide/backends.rst` with OpenRouter support
+- **Logging Guide**: Updated `docs/source/user_guide/logging.rst` with execution trace information
+- **Debug Config**: New `massgen/configs/debug/round_timeout_test.yaml` for timeout testing
+- **OpenSpec**: New `openspec/changes/add-execution-traces/` with proposal and specs
+
+### Technical Details
+- **Major Focus**: Execution traces for context recovery, thinking mode improvements, standardized agent labeling
+- **Contributors**: @ncrispino, @chiwang, @HenryQi and the MassGen team
 
 ## [0.1.36] - 2026-01-09
 

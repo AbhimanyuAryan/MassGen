@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.36 Features](#-latest-features-v0136)
+- [v0.1.37 Features](#-latest-features-v0137)
 </details>
 
 <details open>
@@ -121,15 +121,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.36)](#recent-achievements-v0136)
-- [Previous Achievements (v0.0.3 - v0.1.35)](#previous-achievements-v003---v0135)
+- [Recent Achievements (v0.1.37)](#recent-achievements-v0137)
+- [Previous Achievements (v0.0.3 - v0.1.36)](#previous-achievements-v003---v0136)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.37 Roadmap](#v0137-roadmap)
+- [v0.1.38 Roadmap](#v0138-roadmap)
 </details>
 
 <details open>
@@ -154,31 +154,28 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.36)
+## 🆕 Latest Features (v0.1.37)
 
-**🎉 Released: January 9, 2026** | **Next Update: January 12, 2026**
+**🎉 Released: January 12, 2026** | **Next Update: January 14, 2026**
 
-**What's New in v0.1.36:**
-- **📁 @path Context Handling** - Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code)
-- **🪝 Hook Framework** - Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing
-- **🔗 Claude Code Integration** - Native Claude Code hooks compatibility and improved Docker resource management
+**What's New in v0.1.37:**
+- **📜 Execution Traces** - Full execution history preserved as searchable markdown files for compression recovery and cross-agent coordination
+- **🧠 Thinking Mode Improvements** - Claude Code streaming buffer support and Gemini reasoning content fixes
+- **🏷️ Standardized Agent Labeling** - Consistent agent identification across all backends with improved anonymization
 
-**Try v0.1.36 Features:**
+**Try v0.1.37 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Or with uv (faster)
-uv pip install massgen
+# Run a multi-agent task - execution traces are saved automatically
+uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "Explain the benefits of functional programming"
+# Check traces at: .massgen/massgen_logs/[log_dir]/[agent]/snapshots/execution_trace.md
 
-# Reference files with @path syntax - autocomplete file picker
-uv run massgen
-# Then type: Analyze @src/main.py and suggest improvements
-
-# Test hook framework with built-in hooks
-uv run massgen --config massgen/configs/debug/injection_delay_test.yaml \
-  "Create a simple poem and write it into a file"
-# View logs for MidStreamInjectionHook (cross-agent updates) and HighPriorityTaskReminderHook (system reminders)
+# Test round timeout behavior
+uv run massgen --config massgen/configs/debug/round_timeout_test.yaml \
+  "Write a short story"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1213,24 +1210,31 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.36)
+### Recent Achievements (v0.1.37)
 
-**🎉 Released: January 9, 2026**
+**🎉 Released: January 12, 2026**
 
-#### @path Context Handling
-- **Inline File Picker**: Reference files with `@path` syntax - type `@` to trigger autocomplete file picker (like Claude Code)
-- **Path Validation**: Automatic validation ensures context paths exist before injection
+#### Execution Traces
+- **Full History Preservation**: Human-readable `execution_trace.md` files saved alongside agent snapshots with complete tool calls, results, and reasoning
+- **Compression Recovery**: Agents read trace files to recover detailed history after context compression
+- **Cross-Agent Access**: Other agents can access execution traces in temp workspaces to understand approaches
 
-#### Hook Framework
-- **PreToolUse/PostToolUse Events**: Extend agent behavior with hooks for permission validation, content injection, and custom processing
-- **Global and Per-Agent Hooks**: Register hooks at top-level (all agents) or per-agent with override capability
-- **Built-in Hooks**: `MidStreamInjectionHook` for cross-agent updates and `HighPriorityTaskReminderHook` for system reminders
+#### Thinking Mode Improvements
+- **Claude Code Thinking**: Streaming buffer support for Claude Code reasoning content
+- **Gemini Thinking Fixes**: Proper reasoning content handling and streaming buffer integration
+- **Vote Reasoning Traces**: Full vote context captured in execution trace files
 
-#### Claude Code Integration
-- **Native Hooks Compatibility**: Claude Code hooks work seamlessly within MassGen's hook framework
-- **Improved Docker Resource Management**: Better container lifecycle and resource handling
+#### Standardized Agent Labeling
+- **Unified Format**: Consistent agent identification across all backends with improved workspace anonymization
 
-### Previous Achievements (v0.0.3 - v0.1.35)
+#### Bug Fixes
+- Fixed Claude Code skills and tool handling issues
+- Fixed configuration builder edge cases
+- Improved round timeout behavior during coordination
+
+### Previous Achievements (v0.0.3 - v0.1.36)
+
+✅ **@path Context Handling & Hook Framework (v0.1.36)**: Inline file picker with `@path` syntax and autocomplete, PreToolUse/PostToolUse hooks for permission validation and content injection, global and per-agent hook registration, built-in `MidStreamInjectionHook` and `HighPriorityTaskReminderHook`, Claude Code hooks compatibility, improved Docker resource management
 
 ✅ **Log Analysis CLI & Logfire Observability (v0.1.35)**: `massgen logs analyze` command with prompt mode and multi-agent self-analysis, Logfire workflow attributes for round context and vote reasoning, `direct_mcp_servers` config for keeping specific MCPs as protocol tools, improved tool handling for unknown tools and vote-only mode fixes
 
@@ -1446,9 +1450,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.37 Roadmap
+### v0.1.38 Roadmap
 
-Version 0.1.37 focuses on OpenAI Responses API improvements and computer use model support:
+Version 0.1.38 focuses on OpenAI Responses API improvements and computer use model support:
 
 #### Planned Features
 - **OpenAI Responses /compact Endpoint** (@ncrispino): Use OpenAI's native `/compact` endpoint for context compression instead of custom summarization
@@ -1458,7 +1462,7 @@ Key technical approach:
 - **Native Context Compression**: Leverage OpenAI's API-level compression for better token efficiency
 - **Alternative Computer Use Model**: Fara-7B integration with existing computer use infrastructure
 
-For detailed milestones and technical specifications, see the [full v0.1.37 roadmap](ROADMAP_v0.1.37.md).
+For detailed milestones and technical specifications, see the [full v0.1.38 roadmap](ROADMAP_v0.1.38.md).
 
 ---
 

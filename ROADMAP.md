@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.36
+**Current Version:** v0.1.37
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** January 9, 2026
+**Last Updated:** January 12, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,47 +42,52 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.37** | 01/12/26 | OpenAI Responses /compact Endpoint | @ncrispino | Use OpenAI's native compact endpoint instead of custom summarization |
+| **v0.1.38** | 01/14/26 | OpenAI Responses /compact Endpoint | @ncrispino | Use OpenAI's native compact endpoint instead of custom summarization |
 | | | Add Fara-7B for Computer Use | @ncrispino | Support for Fara-7B model for computer use tasks |
-| **v0.1.38** | 01/14/26 | Integrate Smart Semantic Search | @ncrispino | Advanced semantic search capabilities for improved retrieval |
+| **v0.1.39** | 01/16/26 | Integrate Smart Semantic Search | @ncrispino | Advanced semantic search capabilities for improved retrieval |
 | | | Add Model Selector for Log Analysis | @ncrispino | Choose model for `massgen logs analyze` self-analysis mode |
-| **v0.1.39** | 01/16/26 | Improve Log Sharing and Analysis | @ncrispino | Enhanced log sharing workflows and analysis tools |
+| **v0.1.40** | 01/19/26 | Improve Log Sharing and Analysis | @ncrispino | Enhanced log sharing workflows and analysis tools |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## ✅ v0.1.36 - Hook Framework & Unified @path Context Handling (COMPLETED)
+## ✅ v0.1.37 - Execution Traces & Thinking Mode Improvements (COMPLETED)
 
-**Released: January 9, 2026**
+**Released: January 12, 2026**
 
 ### Features
 
-- **Hook Framework**: General hook framework for agent lifecycle events ([MAS-215](https://linear.app/massgen-ai/issue/MAS-215), [PR #769](https://github.com/massgen/MassGen/pull/769))
-  - PreToolUse/PostToolUse hooks for permission validation and content injection
-  - Injection strategies: `tool_result` and `user_message`
-  - Built-in MidStreamInjectionHook and HighPriorityTaskReminderHook
-  - Custom Python callable hooks with glob-style pattern matching
-  - Configurable fail-open/fail-closed error handling
+- **Execution Traces**: Full execution history preserved as searchable markdown files ([MAS-226](https://linear.app/massgen-ai/issue/MAS-226), [PR #783](https://github.com/massgen/MassGen/pull/783))
+  - Human-readable `execution_trace.md` saved alongside snapshots
+  - Compression recovery - agents can read trace files to recover detailed history
+  - Cross-agent access - other agents can access traces in temp workspaces
+  - Full tool calls, results, and reasoning blocks without truncation
+  - Grep-friendly searchable format for debugging
 
-- **Unified `@path` Context Handling**: Inline context path references ([PR #771](https://github.com/massgen/MassGen/pull/771))
-  - Inline file picker with `@` trigger for autocomplete
-  - Syntax: `@path` (read), `@path:w` (write), `@dir/` (directory)
-  - Context accumulation across turns
-  - Deferred agent creation for Docker efficiency
+- **Claude Code Thinking Mode**: Streaming buffer support for Claude Code reasoning
+  - Thinking content captured in streaming buffer for trace files
+  - Integration with execution trace system
 
-- **Claude Code Native Hooks**: Integration with Claude Code's hook system
+- **Voting Execution Traces**: Vote reasoning captured in execution trace files
+
+### Changed
+
+- **Standardized Agent Labeling**: Consistent agent identification across backends
+- **Gemini Thinking Mode**: Fixed thinking/reasoning content handling
+- **Streaming Buffer Improvements**: Enhanced reasoning content capture
 
 ### Fixed
 
-- Docker resource cleanup when recreating agents for new `@path` references
-- Path handling consistency across CLI and Web UI
+- Claude Code backend skills and tool handling issues
+- Config builder configuration generation edge cases
+- Round timeout handling during coordination
 
 *See [Ongoing Work](#-ongoing-work--continuous-releases) section for detailed track information.*
 
 ---
 
-## 📋 v0.1.37 - OpenAI Compact Endpoint & Model Support
+## 📋 v0.1.38 - OpenAI Compact Endpoint & Model Support
 
 ### Features
 
@@ -104,7 +109,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.38 - Smart Semantic Search & Log Analysis Model Selector
+## 📋 v0.1.39 - Smart Semantic Search & Log Analysis Model Selector
 
 ### Features
 
@@ -126,7 +131,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.39 - Log Sharing & Analysis
+## 📋 v0.1.40 - Log Sharing & Analysis
 
 ### Features
 
@@ -754,5 +759,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** January 9, 2026
+**Last Updated:** January 12, 2026
 **Maintained By:** MassGen Team

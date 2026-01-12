@@ -227,7 +227,30 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.36 - Latest
+### v0.1.37 - Latest
+**New Features:** Execution Traces, Thinking Mode Improvements, Standardized Agent Labeling
+
+**Key Features:**
+- **Execution Traces**: Full execution history preserved as `execution_trace.md` for compression recovery and cross-agent coordination
+- **Thinking Mode Improvements**: Claude Code and Gemini reasoning content streaming buffer integration
+- **Standardized Agent Labeling**: Consistent agent identification across all backends
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Run a multi-agent task - execution traces are saved automatically
+uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "Explain the benefits of functional programming"
+# Check traces at: .massgen/massgen_logs/[log_dir]/[agent]/snapshots/execution_trace.md
+
+# Test round timeout behavior
+uv run massgen --config massgen/configs/debug/round_timeout_test.yaml \
+  "Write a short story"
+```
+
+### v0.1.36
 **New Features:** @path Context Handling, Hook Framework, Claude Code Integration
 
 **Key Features:**
@@ -237,9 +260,6 @@ Most configurations use environment variables for API keys:so
 
 **Try It:**
 ```bash
-# Install or upgrade
-pip install --upgrade massgen
-
 # Reference files with @path syntax - autocomplete file picker
 uv run massgen
 # Then type: Analyze @src/main.py and suggest improvements
