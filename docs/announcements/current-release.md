@@ -7,9 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.37, adding Execution Traces & Thinking Mode Improvements!
-
-Agents now preserve their full execution history as searchable markdown files, enabling compression recovery and cross-agent coordination. When context gets compressed, agents can read their trace files to recover details. Other agents can access execution traces to understand how solutions were reached. Plus: Claude Code and Gemini thinking mode improvements, standardized agent labeling, and OpenRouter documentation.
+We're excited to release MassGen v0.1.37, adding Execution Traces & Thinking Mode Improvements!🚀 Agents now preserve their full execution history as searchable markdown files, enabling compression recovery and cross-agent coordination. When context gets compressed, agents can read their trace files to recover details. Other agents can access execution traces to understand how solutions were reached. Plus: Claude Code and Gemini thinking mode improvements, standardized agent labeling, and OpenRouter documentation.
 
 ## Install
 
@@ -31,9 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.37, adding Execution Traces & Thinking Mode Improvements!
-
-Agents now preserve their full execution history as searchable markdown files, enabling compression recovery and cross-agent coordination. When context gets compressed, agents can read their trace files to recover details. Other agents can access execution traces to understand how solutions were reached. Plus: Claude Code and Gemini thinking mode improvements, standardized agent labeling, and OpenRouter documentation.
+We're excited to release MassGen v0.1.37, adding Execution Traces & Thinking Mode Improvements!🚀 Agents now preserve their full execution history as searchable markdown files, enabling compression recovery and cross-agent coordination. When context gets compressed, agents can read their trace files to recover details. Other agents can access execution traces to understand how solutions were reached. Plus: Claude Code and Gemini thinking mode improvements, standardized agent labeling, and OpenRouter documentation.
 
 **Key Features:**
 
