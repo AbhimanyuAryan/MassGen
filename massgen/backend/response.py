@@ -1578,8 +1578,9 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     result["content"] = [] if content == "" else [{"type": "text", "text": content}]
 
             return result
-        except Exception:
+        except Exception as e:
             # Final fallback: extract key attributes manually
+            logger.warning(f"[ResponseBackend] _convert_to_dict failed for {type(obj).__name__}, using fallback: {e}")
             return {key: getattr(obj, key, None) for key in dir(obj) if not key.startswith("_") and not callable(getattr(obj, key, None))}
 
     def get_provider_name(self) -> str:

@@ -5565,10 +5565,19 @@ async def main(args):
             # Each agent gets a unique suffix to prevent identity inference from workspace names
             if "cwd" in backend_config:
                 original_cwd = backend_config["cwd"]
-                # Strip trailing numbers from workspace names to prevent identity leakage
-                # e.g., "workspace1" -> "workspace", "workspace2" -> "workspace"
-                # This ensures agents can't infer identity from numbered workspace paths
-                base_name = re.sub(r"\d+$", "", original_cwd)
+                # Normalize only the final path component, and only for the common "workspaceN" pattern.
+                # This prevents identity leakage from numbered workspace paths while avoiding
+                # mangling arbitrary paths that legitimately end with digits.
+                from pathlib import PurePath
+
+                cwd_path = PurePath(original_cwd)
+                leaf = cwd_path.name
+                if re.fullmatch(r"workspace\d+", leaf):
+                    # Strip trailing numbers: "workspace1" -> "workspace"
+                    leaf = re.sub(r"\d+$", "", leaf)
+                    base_name = str(cwd_path.with_name(leaf))
+                else:
+                    base_name = str(cwd_path)
                 # Generate unique suffix per agent (not shared) to prevent identity leakage
                 # e.g., "workspace" -> "workspace_f7a3b2c1"
                 agent_workspace_suffix = uuid.uuid4().hex[:8]

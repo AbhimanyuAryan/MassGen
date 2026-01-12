@@ -31,7 +31,7 @@ class TimeoutConfig:
                                           a warning is injected telling the agent to submit. None = disabled.
         round_timeout_grace_seconds: Grace period after soft timeout before hard timeout kicks in.
                                      After hard timeout, non-terminal tool calls are blocked - only
-                                     vote and new_answer are allowed. Default: 60 seconds.
+                                     vote and new_answer are allowed. Default: 120 seconds.
     """
 
     orchestrator_timeout_seconds: int = 1800  # 30 minutes
@@ -895,6 +895,9 @@ class AgentConfig:
             "answer_novelty_requirement": self.answer_novelty_requirement,
             "timeout_config": {
                 "orchestrator_timeout_seconds": self.timeout_config.orchestrator_timeout_seconds,
+                "initial_round_timeout_seconds": self.timeout_config.initial_round_timeout_seconds,
+                "subsequent_round_timeout_seconds": self.timeout_config.subsequent_round_timeout_seconds,
+                "round_timeout_grace_seconds": self.timeout_config.round_timeout_grace_seconds,
             },
         }
 

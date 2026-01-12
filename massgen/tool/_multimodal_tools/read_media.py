@@ -230,14 +230,17 @@ async def read_media(
         if media_type == "image":
             from massgen.tool._multimodal_tools.understand_image import understand_image
 
-            result = await understand_image(
-                str(media_path),
-                prompt=default_prompt,
-                model=override_model or "gpt-4.1",
-                agent_cwd=agent_cwd,
-                allowed_paths=allowed_paths,
-                task_context=task_context,
-            )
+            # Only pass model if override specified (understand_image defaults to gpt-4.1)
+            image_kwargs = {
+                "prompt": default_prompt,
+                "agent_cwd": agent_cwd,
+                "allowed_paths": allowed_paths,
+                "task_context": task_context,
+            }
+            if override_model:
+                image_kwargs["model"] = override_model
+
+            result = await understand_image(str(media_path), **image_kwargs)
             return _add_warning_to_result(result)
         elif media_type == "audio":
             from massgen.tool._multimodal_tools.understand_audio import understand_audio

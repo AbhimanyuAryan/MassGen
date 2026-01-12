@@ -377,8 +377,8 @@ class TestWorkspaceUniqueness:
         """Create a ConfigBuilder instance for testing."""
         return ConfigBuilder()
 
-    def test_three_agents_get_workspace1_2_3(self, builder):
-        """Test that three agents get workspace1, workspace2, workspace3."""
+    def test_three_agents_get_workspace_base_name(self, builder):
+        """Test that all agents get 'workspace' base name (unique suffix added at runtime by cli.py)."""
         agents = [
             {"id": "agent_a", "backend": {"type": "openai", "model": "gpt-5"}},
             {"id": "agent_b", "backend": {"type": "gemini", "model": "gemini-2.5-pro"}},

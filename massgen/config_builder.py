@@ -4735,7 +4735,6 @@ class ConfigBuilder:
         def create_agent_backend(
             agent_type: str,
             model: str,
-            workspace_num: int,
             tools: Optional[Dict] = None,
         ) -> Dict:
             tools = tools or {}
@@ -4819,7 +4818,6 @@ class ConfigBuilder:
                 "backend": create_agent_backend(
                     agent_spec["type"],
                     agent_spec["model"],
-                    i + 1,
                     tools=agent_tools.get(agent_id, {}),
                 ),
             }

@@ -3471,27 +3471,8 @@ Your answer:"""
                 return None  # Use traditional approach for first injection
 
             # TIMING CONSTRAINT: Skip injection if too close to soft timeout
-            # If agent doesn't have enough time to consider the new answer, better to restart
-            # with fresh context so they get a full round to think about it
-            timeout_config = self.config.timeout_config
-            round_start = self.agent_states[agent_id].round_start_time
-            if round_start is not None:
-                current_round = self.coordination_tracker.get_agent_round(agent_id)
-                if current_round == 0:
-                    soft_timeout = timeout_config.initial_round_timeout_seconds
-                else:
-                    soft_timeout = timeout_config.subsequent_round_timeout_seconds
-
-                if soft_timeout is not None:
-                    elapsed = time.time() - round_start
-                    # Use grace_seconds as the "minimum thinking time" threshold
-                    min_thinking_time = timeout_config.round_timeout_grace_seconds
-                    remaining = soft_timeout - elapsed
-                    if remaining < min_thinking_time:
-                        logger.info(
-                            f"[Orchestrator] Skipping mid-stream injection for {agent_id} - " f"only {remaining:.0f}s until soft timeout (need {min_thinking_time}s to think)",
-                        )
-                        return None  # Let restart happen instead
+            if self._should_skip_injection_due_to_timeout(agent_id):
+                return None  # Let restart happen instead
 
             # Copy snapshots from new answer agents to temp workspace BEFORE building injection
             # This ensures the workspace files are available when the agent tries to access them
@@ -3606,6 +3587,7 @@ Your answer:"""
             start_time = self.agent_states[agent_id].round_start_time
             if start_time is None:
                 # Fallback to current time if not set (shouldn't happen)
+                logger.warning(f"[Orchestrator] round_start_time is None for {agent_id}, using current time as fallback")
                 return time.time()
             return start_time
 
@@ -3701,25 +3683,8 @@ Your answer:"""
                 return None
 
             # TIMING CONSTRAINT: Skip injection if too close to soft timeout
-            # If agent doesn't have enough time to consider the new answer, better to restart
-            timeout_config = self.config.timeout_config
-            round_start = self.agent_states[agent_id].round_start_time
-            if round_start is not None:
-                current_round = self.coordination_tracker.get_agent_round(agent_id)
-                if current_round == 0:
-                    soft_timeout = timeout_config.initial_round_timeout_seconds
-                else:
-                    soft_timeout = timeout_config.subsequent_round_timeout_seconds
-
-                if soft_timeout is not None:
-                    elapsed = time.time() - round_start
-                    min_thinking_time = timeout_config.round_timeout_grace_seconds
-                    remaining = soft_timeout - elapsed
-                    if remaining < min_thinking_time:
-                        logger.info(
-                            f"[Orchestrator] Skipping mid-stream injection (native) for {agent_id} - " f"only {remaining:.0f}s until soft timeout (need {min_thinking_time}s to think)",
-                        )
-                        return None  # Let restart happen instead
+            if self._should_skip_injection_due_to_timeout(agent_id):
+                return None  # Let restart happen instead
 
             # Copy snapshots from new answer agents to temp workspace
             logger.info(f"[Orchestrator] Copying snapshots for mid-stream injection to {agent_id}")
@@ -5996,6 +5961,46 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         self.current_attempt += 1
 
         log_orchestrator_activity("handle_restart", f"State reset complete - starting attempt {self.current_attempt + 1}")
+
+    def _should_skip_injection_due_to_timeout(self, agent_id: str) -> bool:
+        """Check if mid-stream injection should be skipped due to approaching timeout.
+
+        If the agent doesn't have enough time remaining before soft timeout to properly
+        consider a new answer, it's better to skip injection and let the agent restart
+        with fresh context so they get a full round to think.
+
+        Args:
+            agent_id: The agent to check
+
+        Returns:
+            True if injection should be skipped, False otherwise
+        """
+        timeout_config = self.config.timeout_config
+        round_start = self.agent_states[agent_id].round_start_time
+
+        if round_start is None:
+            return False
+
+        current_round = self.coordination_tracker.get_agent_round(agent_id)
+        if current_round == 0:
+            soft_timeout = timeout_config.initial_round_timeout_seconds
+        else:
+            soft_timeout = timeout_config.subsequent_round_timeout_seconds
+
+        if soft_timeout is None:
+            return False
+
+        elapsed = time.time() - round_start
+        min_thinking_time = timeout_config.round_timeout_grace_seconds
+        remaining = soft_timeout - elapsed
+
+        if remaining < min_thinking_time:
+            logger.info(
+                f"[Orchestrator] Skipping mid-stream injection for {agent_id} - " f"only {remaining:.0f}s until soft timeout (need {min_thinking_time}s to think)",
+            )
+            return True
+
+        return False
 
     def _get_vote_results(self) -> Dict[str, Any]:
         """Get current vote results and statistics."""

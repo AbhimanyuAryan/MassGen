@@ -68,6 +68,8 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         self._interrupted_stream_model: str = ""
         self._interrupted_stream_messages: List[Dict[str, Any]] = []  # Track input for estimation
         self._stream_usage_received: bool = True  # True = no pending estimation needed
+        # Track reasoning state for streaming (needed for reasoning_done transition)
+        self._reasoning_active: bool = False
 
     def finalize_token_tracking(self) -> None:
         """Finalize token tracking by estimating tokens for any interrupted streams.
@@ -351,6 +353,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                 elif isinstance(detail, dict):
                                     detail_text = detail.get("text") or detail.get("summary")
                                 if detail_text:
+                                    self._reasoning_active = True
                                     self._append_reasoning_to_buffer(detail_text)
                                     yield StreamChunk(
                                         type="reasoning",
@@ -362,6 +365,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         # Capture reasoning_content from delta (DeepSeek, Qwen, Grok models via OpenRouter)
                         # Skip if we already captured reasoning_details to avoid duplicates
                         if not reasoning_captured_this_chunk and getattr(delta, "reasoning_content", None):
+                            self._reasoning_active = True
                             reasoning_chunk = delta.reasoning_content
                             if reasoning_chunk:
                                 self._append_reasoning_to_buffer(reasoning_chunk)
@@ -381,6 +385,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                 delta_extra = getattr(delta, "model_extra", None) or {}
                                 delta_reasoning = delta_extra.get("reasoning")
                             if delta_reasoning:
+                                self._reasoning_active = True
                                 self._append_reasoning_to_buffer(delta_reasoning)
                                 yield StreamChunk(
                                     type="reasoning",
@@ -391,6 +396,10 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         # Plain text content
                         if getattr(delta, "content", None):
                             self.record_first_token()  # Record TTFT on first content
+                            # Handle reasoning transition when content starts after reasoning
+                            reasoning_chunk = self._handle_reasoning_transition()
+                            if reasoning_chunk:
+                                yield reasoning_chunk
                             content_chunk = delta.content
                             content += content_chunk
                             # Track content in streaming buffer for compression recovery
@@ -799,6 +808,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                 elif isinstance(detail, dict):
                                     detail_text = detail.get("text") or detail.get("summary")
                                 if detail_text:
+                                    self._reasoning_active = True
                                     self._append_reasoning_to_buffer(detail_text)
                                     yield StreamChunk(
                                         type="reasoning",
@@ -810,8 +820,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         # Provider-specific reasoning/thinking streams (non-standard OpenAI fields)
                         # Skip if we already captured reasoning_details to avoid duplicates
                         if not reasoning_captured_this_chunk and getattr(delta, "reasoning_content", None):
-                            reasoning_active_key = "_reasoning_active"
-                            setattr(self, reasoning_active_key, True)
+                            self._reasoning_active = True
                             thinking_delta = getattr(delta, "reasoning_content")
                             if thinking_delta:
                                 log_stream_chunk(log_prefix, "reasoning", thinking_delta, agent_id)
@@ -832,8 +841,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                 delta_extra = getattr(delta, "model_extra", None) or {}
                                 delta_reasoning = delta_extra.get("reasoning")
                             if delta_reasoning:
-                                reasoning_active_key = "_reasoning_active"
-                                setattr(self, reasoning_active_key, True)
+                                self._reasoning_active = True
                                 log_stream_chunk(log_prefix, "reasoning", delta_reasoning, agent_id)
                                 self._append_reasoning_to_buffer(delta_reasoning)
                                 yield StreamChunk(
@@ -1127,12 +1135,10 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             logger.warning(f"Failed to instrument OpenAI client for observability: {e}")
         return client
 
-    def _handle_reasoning_transition(self, log_prefix: str, agent_id: Optional[str]) -> Optional[StreamChunk]:
+    def _handle_reasoning_transition(self, log_prefix: str = "", agent_id: Optional[str] = None) -> Optional[StreamChunk]:
         """Handle reasoning state transition and return StreamChunk if transition occurred."""
-        reasoning_active_key = "_reasoning_active"
-        if hasattr(self, reasoning_active_key):
-            if getattr(self, reasoning_active_key) is True:
-                setattr(self, reasoning_active_key, False)
-                log_stream_chunk(log_prefix, "reasoning_done", "", agent_id)
-                return StreamChunk(type="reasoning_done", content="")
+        if self._reasoning_active:
+            self._reasoning_active = False
+            log_stream_chunk(log_prefix, "reasoning_done", "", agent_id)
+            return StreamChunk(type="reasoning_done", content="")
         return None

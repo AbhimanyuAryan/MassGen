@@ -879,10 +879,10 @@ class RoundTimeoutPostHook(PatternHook):
 
     async def execute(
         self,
-        function_name: str,
-        arguments: str,
-        context: Optional[Dict[str, Any]] = None,
-        **kwargs,
+        _function_name: str,
+        _arguments: str,
+        _context: Optional[Dict[str, Any]] = None,
+        **_kwargs,
     ) -> HookResult:
         """Execute the soft timeout check after each tool call."""
         if self._soft_timeout_fired:
@@ -1013,12 +1013,11 @@ class RoundTimeoutPreHook(PatternHook):
         )
 
     def reset_for_new_round(self) -> None:
-        """Reset the hook state for a new round.
+        """Reset hook state for a new round.
 
-        Called when an agent starts a new round after restart.
-        Resets the hard timeout fired flag.
+        Note: RoundTimeoutPreHook is stateless (checks elapsed time dynamically),
+        so this is a no-op. Method exists for interface consistency with RoundTimeoutPostHook.
         """
-        self._hard_timeout_fired = False
 
 
 class PermissionClientSession(ClientSession):
@@ -1079,7 +1078,12 @@ class PermissionClientSession(ClientSession):
 
             except Exception as e:
                 logger.error(f"[PermissionClientSession] Error in permission hook: {e}")
-                # Continue with the call if hook fails - don't break functionality
+                # Fail closed: deny tool execution when permission check errors
+                # This is safer than allowing potentially dangerous operations through
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text=f"Error: Permission check failed: {e}")],
+                    isError=True,
+                )
 
         # Call the parent's call_tool method
         try:

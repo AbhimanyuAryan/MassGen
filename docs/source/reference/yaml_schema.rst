@@ -1059,6 +1059,18 @@ Timeout Configuration
      - integer
      - No
      - Maximum time for orchestrator coordination in seconds (default: 1800 = 30 minutes)
+   * - ``initial_round_timeout_seconds``
+     - integer
+     - No
+     - Soft timeout for round 0 (initial answer). After this time, a warning is injected telling the agent to wrap up. Set to ``null`` to disable (default: disabled)
+   * - ``subsequent_round_timeout_seconds``
+     - integer
+     - No
+     - Soft timeout for rounds 1+ (voting/refinement). After this time, a warning is injected telling the agent to wrap up. Set to ``null`` to disable (default: disabled)
+   * - ``round_timeout_grace_seconds``
+     - integer
+     - No
+     - Grace period after soft timeout before hard timeout kicks in. After hard timeout, only ``vote`` and ``new_answer`` tools are allowed (default: 120 seconds)
 
 Context Path
 ~~~~~~~~~~~~

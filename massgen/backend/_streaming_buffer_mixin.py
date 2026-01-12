@@ -389,7 +389,7 @@ class StreamingBufferMixin:
             self._execution_trace.save(trace_path)
             logger.info(f"[StreamingBuffer] Saved execution trace to {trace_path}")
             return trace_path
-        except Exception as e:
+        except OSError as e:
             logger.warning(f"[StreamingBuffer] Failed to save execution trace: {e}")
             return None
 
