@@ -142,6 +142,14 @@ class CoordinationUI:
 
     async def _run_orchestration(self, orchestrator, question: str) -> str:
         """Run the actual orchestration logic (can be in any thread)."""
+        # Debug log entry
+        try:
+            from massgen.frontend.displays.textual_terminal_display import tui_log
+
+            tui_log(f"_run_orchestration STARTING for question: {question[:50]}...")
+        except Exception:
+            pass
+
         # Initialize variables
         selected_agent = None
         vote_results = {}
@@ -174,8 +182,19 @@ class CoordinationUI:
                 if hasattr(orchestrator, "workflow_phase"):
                     current_phase = orchestrator.workflow_phase
                     if current_phase != self._last_phase:
+                        old_phase = self._last_phase
                         self._last_phase = current_phase
+                        # Debug log for phase changes
+                        try:
+                            from massgen.frontend.displays.textual_terminal_display import (
+                                tui_log,
+                            )
+
+                            tui_log(f"CoordinationUI: phase changed '{old_phase}' -> '{current_phase}'")
+                        except Exception:
+                            pass
                         if hasattr(self.display, "notify_phase"):
+                            tui_log(f"  Calling display.notify_phase('{current_phase}')")
                             self.display.notify_phase(current_phase)
 
                 # Handle agent status updates
@@ -693,6 +712,24 @@ class CoordinationUI:
                 content = getattr(chunk, "content", "") or ""
                 source = getattr(chunk, "source", None)
                 chunk_type = getattr(chunk, "type", "")
+
+                # Check for phase changes and notify status bar (for interactive mode)
+                if hasattr(orchestrator, "workflow_phase"):
+                    current_phase = orchestrator.workflow_phase
+                    if current_phase != self._last_phase:
+                        old_phase = self._last_phase
+                        self._last_phase = current_phase
+                        # Debug log for phase changes
+                        try:
+                            from massgen.frontend.displays.textual_terminal_display import (
+                                tui_log,
+                            )
+
+                            tui_log(f"CoordinationUI (interactive): phase changed '{old_phase}' -> '{current_phase}'")
+                        except Exception:
+                            pass
+                        if hasattr(self.display, "notify_phase"):
+                            self.display.notify_phase(current_phase)
 
                 # Handle agent status updates
                 if chunk_type == "agent_status":

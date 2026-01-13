@@ -148,6 +148,17 @@ TOOL_CATEGORIES = {
             "coordination",
         ],
     },
+    "subagent": {
+        "icon": "🚀",
+        "color": "#a371f7",
+        "patterns": [
+            "spawn_subagent",
+            "subagent",
+            "list_subagents",
+            "get_subagent_result",
+            "check_subagent_status",
+        ],
+    },
 }
 
 
@@ -275,8 +286,16 @@ class ToolCallCard(Static):
         self._pre_hooks: list = []  # Hooks that ran before tool
         self._post_hooks: list = []  # Hooks that ran after tool
 
+        # Subagent-specific state
+        self._is_subagent = self._category["category"] == "subagent"
+        self._expanded = False  # For showing workspace inline
+        self._subagent_tasks: list[dict] = []  # Parsed subagent task list
+        self._workspace_content: Optional[str] = None  # Subagent workspace output
+
     def render(self) -> Text:
         """Render the card as a single-line summary."""
+        if self._is_subagent:
+            return self._render_subagent()
         return self._render_collapsed()
 
     def _render_collapsed(self) -> Text:
@@ -391,6 +410,123 @@ class ToolCallCard(Static):
 
         return text
 
+    def _render_subagent(self) -> Text:
+        """Render specialized subagent card with task bullets and workspace.
+
+        Design:
+        ```
+        🚀 Spawn Subagents                                    ⏳ running...
+          • Task 1: Research competitor analysis
+          • Task 2: Analyze market trends
+          • Task 3: Generate summary report
+        [Click to expand workspace]
+        ```
+        """
+        text = Text()
+
+        # Header line with pulsing indicator when running
+        icon = self._category["icon"]
+        status_icon = self.STATUS_ICONS.get(self._status, "⏳")
+        elapsed = self._get_elapsed_str()
+
+        # Running indicator
+        if self._status == "running":
+            text.append("▶ ", style="bold #a371f7")
+        else:
+            text.append("  ")
+
+        text.append(f"{icon} ", style=self._category["color"])
+
+        if self._status == "running":
+            text.append(self._display_name, style="bold #a371f7")
+        else:
+            text.append(self._display_name, style="bold")
+
+        # Padding for status alignment
+        name_len = len(self._display_name) + 4
+        padding = max(1, 55 - name_len)
+        text.append(" " * padding)
+
+        if self._status == "success":
+            text.append(f"{status_icon}", style="bold green")
+        elif self._status == "error":
+            text.append(f"{status_icon}", style="bold red")
+        elif self._status == "running":
+            text.append(f"{status_icon}", style="bold #a371f7")
+        else:
+            text.append(f"{status_icon}", style="#a371f7")
+
+        if elapsed:
+            text.append(f" {elapsed}", style="dim")
+        elif self._status == "running":
+            text.append(" spawning...", style="italic #a371f7")
+
+        # Render bullet list of subagent tasks
+        if self._subagent_tasks:
+            for i, task in enumerate(self._subagent_tasks):
+                task_desc = task.get("description", task.get("prompt", f"Task {i + 1}"))
+                task_status = task.get("status", "pending")
+
+                # Status indicator for each task
+                if task_status == "running":
+                    bullet = "◉"
+                    style = "bold #a371f7"
+                elif task_status == "completed":
+                    bullet = "✓"
+                    style = "green"
+                elif task_status == "error":
+                    bullet = "✗"
+                    style = "red"
+                else:
+                    bullet = "○"
+                    style = "dim"
+
+                text.append(f"\n    {bullet} ", style=style)
+                # Truncate long descriptions
+                if len(task_desc) > 60:
+                    task_desc = task_desc[:57] + "..."
+                text.append(task_desc, style="dim" if task_status == "pending" else style)
+        elif self._params:
+            # Fallback: show params if no parsed tasks
+            text.append("\n    ")
+            args_display = self._params
+            if len(args_display) > 70:
+                args_display = args_display[:67] + "..."
+            text.append(args_display, style="dim")
+
+        # Expanded workspace content
+        if self._expanded and self._workspace_content:
+            text.append("\n    ┌─ Workspace ─────────────────────────────────\n", style="dim #a371f7")
+            # Show workspace content with indentation
+            lines = self._workspace_content.split("\n")[:10]  # Limit lines
+            for line in lines:
+                if len(line) > 65:
+                    line = line[:62] + "..."
+                text.append(f"    │ {line}\n", style="dim")
+            if len(self._workspace_content.split("\n")) > 10:
+                text.append("    │ ...(more)...\n", style="dim italic")
+            text.append("    └──────────────────────────────────────────", style="dim #a371f7")
+        elif not self._expanded and (self._workspace_content or self._result):
+            # Show expand hint
+            text.append("\n    ", style="dim")
+            text.append("[click to expand workspace]", style="dim italic #a371f7")
+
+        # Result/error summary (when completed)
+        if self._result and not self._expanded:
+            text.append("\n    → ")
+            result_preview = self._result.replace("\n", " ")
+            if len(result_preview) > 55:
+                result_preview = result_preview[:52] + "..."
+            text.append(result_preview, style="dim green")
+        elif self._error:
+            text.append("\n    ✗ ")
+            error_preview = self._error.replace("\n", " ")
+            if len(error_preview) > 55:
+                error_preview = error_preview[:52] + "..."
+            text.append(error_preview, style="dim red")
+
+        return text
+
     def _get_elapsed_str(self) -> str:
         """Get elapsed time as formatted string."""
         end = self._end_time or datetime.now()
@@ -404,8 +540,11 @@ class ToolCallCard(Static):
             return f"({mins}m{secs}s)"
 
     def on_click(self) -> None:
-        """Handle click to show detail modal."""
-        self.post_message(self.ToolCardClicked(self))
+        """Handle click - toggle expansion for subagents, or show modal for others."""
+        if self._is_subagent:
+            self.toggle_expanded()
+        else:
+            self.post_message(self.ToolCardClicked(self))
 
     def set_params(self, params: str, params_full: Optional[str] = None) -> None:
         """Set the tool parameters.
@@ -494,6 +633,64 @@ class ToolCallCard(Static):
             },
         )
         self.refresh()
+
+    # === Subagent-specific methods ===
+
+    def set_subagent_tasks(self, tasks: list[dict]) -> None:
+        """Set the list of subagent tasks for display.
+
+        Args:
+            tasks: List of task dicts with keys:
+                - description or prompt: Task description text
+                - status: "pending", "running", "completed", or "error"
+                - agent_id: Optional agent identifier
+        """
+        self._subagent_tasks = tasks
+        self.refresh()
+
+    def update_subagent_task_status(self, task_index: int, status: str) -> None:
+        """Update the status of a specific subagent task.
+
+        Args:
+            task_index: Index of the task to update
+            status: New status ("pending", "running", "completed", "error")
+        """
+        if 0 <= task_index < len(self._subagent_tasks):
+            self._subagent_tasks[task_index]["status"] = status
+            self.refresh()
+
+    def set_workspace_content(self, content: str) -> None:
+        """Set the workspace content for expanded view.
+
+        Args:
+            content: The workspace/output content to display when expanded.
+        """
+        self._workspace_content = content
+        self.refresh()
+
+    def toggle_expanded(self) -> None:
+        """Toggle the expanded state of the subagent card."""
+        self._expanded = not self._expanded
+        if self._expanded:
+            self.add_class("expanded")
+        else:
+            self.remove_class("expanded")
+        self.refresh()
+
+    @property
+    def is_expanded(self) -> bool:
+        """Check if the subagent card is expanded."""
+        return self._expanded
+
+    @property
+    def subagent_tasks(self) -> list[dict]:
+        """Get the list of subagent tasks."""
+        return self._subagent_tasks
+
+    @property
+    def workspace_content(self) -> Optional[str]:
+        """Get the workspace content."""
+        return self._workspace_content
 
     @property
     def pre_hooks(self) -> list:

@@ -5,6 +5,7 @@ Textual Terminal Display for MassGen Coordination
 """
 
 import functools
+import logging
 import os
 import re
 import threading
@@ -61,6 +62,46 @@ try:
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False
+
+# TUI Debug logger - writes to /tmp/massgen_tui_debug.log
+_tui_debug_logger: Optional[logging.Logger] = None
+
+
+def get_tui_debug_logger() -> logging.Logger:
+    """Get or create a debug logger for TUI that writes to /tmp."""
+    global _tui_debug_logger
+    if _tui_debug_logger is None:
+        _tui_debug_logger = logging.getLogger("massgen.tui.debug")
+        _tui_debug_logger.setLevel(logging.DEBUG)
+        # Prevent propagation to root logger
+        _tui_debug_logger.propagate = False
+        # File handler to /tmp
+        handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(
+            "%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        _tui_debug_logger.addHandler(handler)
+        # Write startup marker
+        _tui_debug_logger.info("=" * 60)
+        _tui_debug_logger.info("TUI Debug Session Started")
+        _tui_debug_logger.info("=" * 60)
+    return _tui_debug_logger
+
+
+def tui_log(msg: str, level: str = "debug") -> None:
+    """Log a debug message to /tmp/massgen_tui_debug.log."""
+    log = get_tui_debug_logger()
+    if level == "error":
+        log.error(msg)
+    elif level == "warning":
+        log.warning(msg)
+    elif level == "info":
+        log.info(msg)
+    else:
+        log.debug(msg)
 
 
 # Tool message patterns for parsing
@@ -1280,8 +1321,11 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     def notify_phase(self, phase: str):
         """Notify the TUI of a phase change - updates status bar."""
+        tui_log(f"TextualTerminalDisplay.notify_phase called with phase='{phase}', _app={self._app is not None}")
         if self._app:
             self._call_app_method("notify_phase", phase)
+        else:
+            tui_log("  WARNING: _app is None, cannot forward notify_phase")
 
     def notify_completion(self, agent_id: str):
         """Notify the TUI of agent completion - shows toast."""
@@ -1877,11 +1921,18 @@ if TEXTUAL_AVAILABLE:
                 self._vote_counts[agent_id] = 0
 
         def compose(self) -> ComposeResult:
-            """Create the status bar layout with phase, activity, progress, votes, events, MCP, CWD, cancel hint, and timer."""
+            """Create the status bar layout with phase, activity, progress, votes, events, MCP, CWD, cancel hint, and timer.
+
+            Layout: [phase] [activity] [progress] [votes] --- spacer --- [mcp] [cwd] [events] [hints] [timer] [cancel]
+            """
+            # Left-aligned items
             yield Static("⏳ Idle", id="status_phase")
             yield Static("", id="status_activity", classes="activity-indicator hidden")  # Pulsing activity indicator
             yield Static("", id="status_progress")  # Progress summary: "3 agents | 2 answers | 4/6 votes"
             yield Static("", id="status_votes")
+            # Spacer to push right-side elements to the edge
+            yield Static("", id="status_spacer")
+            # Right-aligned items
             yield Static("", id="status_mcp")
             # CWD display - clickable to add as context
             cwd = Path.cwd()
@@ -2372,10 +2423,21 @@ if TEXTUAL_AVAILABLE:
                     self._vim_indicator = Static("", id="vim_indicator")
                     yield self._vim_indicator
 
+                # Execution bar - shown ONLY during coordination, replaces input
+                # Contains cancel button (left) and status text (right)
+                with Horizontal(id="execution_bar"):
+                    # Cancel button - on left to avoid toast overlap
+                    self._cancel_button = Button("Cancel [q]", id="cancel_button", variant="error")
+                    yield self._cancel_button
+                    # Spacer to push status text to right
+                    yield Static("", id="execution_spacer")
+                    self._execution_status = Static("Working...", id="execution_status")
+                    yield self._execution_status
+
                 # Multi-line input: Enter to submit, Shift+Enter for new line
                 # Type @ to trigger path autocomplete
                 self.question_input = MultiLineInput(
-                    placeholder="Type your question (use @ for file context)...",
+                    placeholder="Type your question... (Enter to submit, Shift+Enter for newline, @ for files)",
                     id="question_input",
                 )
                 yield self.question_input
@@ -2487,9 +2549,46 @@ if TEXTUAL_AVAILABLE:
                     "styles_dock": str(self._tab_bar.styles.dock) if self._tab_bar else None,
                 },
             }
+            # Add execution_bar and cancel_button info
+            try:
+                execution_bar = self.query_one("#execution_bar")
+                debug_info["execution_bar"] = {
+                    "exists": True,
+                    "id": execution_bar.id,
+                    "classes": list(execution_bar.classes),
+                    "display": str(execution_bar.styles.display),
+                    "visible": execution_bar.visible,
+                }
+            except Exception as e:
+                debug_info["execution_bar"] = {"exists": False, "error": str(e)}
+
+            try:
+                cancel_btn = self.query_one("#cancel_button")
+                debug_info["cancel_button"] = {
+                    "exists": True,
+                    "id": cancel_btn.id,
+                    "classes": list(cancel_btn.classes),
+                    "display": str(cancel_btn.styles.display),
+                    "visible": cancel_btn.visible,
+                }
+            except Exception as e:
+                debug_info["cancel_button"] = {"exists": False, "error": str(e)}
+
+            try:
+                input_area = self.query_one("#input_area")
+                debug_info["input_area"] = {
+                    "exists": True,
+                    "id": input_area.id,
+                    "classes": list(input_area.classes),
+                    "display": str(input_area.styles.display),
+                }
+            except Exception as e:
+                debug_info["input_area"] = {"exists": False, "error": str(e)}
+
             with open("/tmp/textual_debug.json", "w") as f:
                 json.dump(debug_info, f, indent=2, default=str)
             self.log("DEBUG: Widget info written to /tmp/textual_debug.json")
+            tui_log("TUI mounted - debug info written to /tmp/textual_debug.json")
 
         def _update_safe_indicator(self):
             """Show/hide safe keyboard status in footer area."""
@@ -2616,7 +2715,9 @@ if TEXTUAL_AVAILABLE:
         def _submit_question(self) -> None:
             """Submit the current question text."""
             text = self.question_input.text.strip()
+            tui_log(f"_submit_question called with text: '{text[:50]}...' (len={len(text)})")
             if not text:
+                tui_log("  Empty text, returning")
                 return
 
             self.question_input.clear()
@@ -2628,9 +2729,12 @@ if TEXTUAL_AVAILABLE:
             # Handle TUI-local slash commands first (like /vim)
             if text.startswith("/"):
                 if self._handle_local_slash_command(text):
+                    tui_log("  Handled as local slash command")
                     return  # Command was handled locally
 
+            tui_log(f"  _input_handler is: {self._input_handler}")
             if self._input_handler:
+                tui_log("  Calling _input_handler...")
                 self._input_handler(text)
                 if not text.startswith("/"):
                     # Track the current question for history
@@ -3203,32 +3307,47 @@ Type your question and press Enter to ask the agents.
             Args:
                 agent_id: The agent ID to switch to.
             """
-            if agent_id == self._active_agent_id:
-                return
-
-            # Hide current panel
-            if self._active_agent_id and self._active_agent_id in self.agent_widgets:
-                self.agent_widgets[self._active_agent_id].add_class("hidden")
-
-            # Show new panel
-            if agent_id in self.agent_widgets:
-                self.agent_widgets[agent_id].remove_class("hidden")
-                self.agent_widgets[agent_id].focus()
-
-            # Update tab bar
-            if self._tab_bar:
-                self._tab_bar.set_active(agent_id)
-
-            self._active_agent_id = agent_id
-
-            # Update current_agent_index for compatibility with existing methods
+            tui_log(f"_switch_to_agent called: {agent_id}, current: {self._active_agent_id}")
+            tui_log(f"  agent_widgets keys: {list(self.agent_widgets.keys())}")
             try:
-                self.current_agent_index = self.coordination_display.agent_ids.index(agent_id)
-            except ValueError:
-                pass
+                if agent_id == self._active_agent_id:
+                    tui_log(f"  Already on {agent_id}, skipping")
+                    return
+
+                # Hide current panel
+                if self._active_agent_id and self._active_agent_id in self.agent_widgets:
+                    tui_log(f"  Hiding panel: {self._active_agent_id}")
+                    self.agent_widgets[self._active_agent_id].add_class("hidden")
+
+                # Show new panel - only if agent exists
+                if agent_id in self.agent_widgets:
+                    tui_log(f"  Showing panel: {agent_id}")
+                    self.agent_widgets[agent_id].remove_class("hidden")
+                    # Don't focus - can cause issues if widget is not focusable
+                else:
+                    tui_log(f"  Panel not found for: {agent_id}", level="warning")
+                    # Agent panel doesn't exist yet, just update state
+
+                # Update tab bar
+                if self._tab_bar:
+                    tui_log(f"  Updating tab bar active: {agent_id}")
+                    self._tab_bar.set_active(agent_id)
+
+                self._active_agent_id = agent_id
+                tui_log(f"  Switch complete to: {agent_id}")
+
+                # Update current_agent_index for compatibility with existing methods
+                try:
+                    self.current_agent_index = self.coordination_display.agent_ids.index(agent_id)
+                except ValueError:
+                    pass
+            except Exception as e:
+                tui_log(f"  ERROR in _switch_to_agent: {e}", level="error")
+                # Don't crash on tab switch errors
 
         def on_agent_tab_changed(self, event: AgentTabChanged) -> None:
             """Handle tab click from AgentTabBar."""
+            tui_log(f"on_agent_tab_changed: {event.agent_id}")
             self._switch_to_agent(event.agent_id)
             event.stop()
 
@@ -3246,6 +3365,24 @@ Type your question and press Enter to ask the agents.
             )
             self.push_screen(modal)
             event.stop()
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            """Handle button clicks in main app."""
+            if event.button.id == "cancel_button":
+                # Trigger cancellation (same as 'q' key)
+                self.coordination_display.request_cancellation()
+                event.stop()
+
+        def _handle_cancel(self) -> None:
+            """Handle cancel action from button or 'q' key."""
+            if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                # Request cancellation from orchestrator
+                self.notify("Cancellation requested...", severity="warning")
+                # Set cancel flag if orchestrator supports it
+                if hasattr(self.coordination_display.orchestrator, "cancel_requested"):
+                    self.coordination_display.orchestrator.cancel_requested = True
+            else:
+                self.notify("Nothing to cancel", severity="information")
 
         def action_toggle_safe_keyboard(self):
             """Toggle safe keyboard mode to ignore hotkeys."""
@@ -3734,9 +3871,25 @@ Type your question and press Enter to ask the agents.
             self.add_orchestrator_event(f"🏆 Winner: {winner_id} selected by consensus")
 
         def notify_phase(self, phase: str) -> None:
-            """Called on phase change. Updates status bar phase indicator."""
+            """Called on phase change. Updates status bar phase indicator and input area mode."""
+            tui_log(f"notify_phase called with phase='{phase}'")
             if self._status_bar:
                 self._status_bar.update_phase(phase)
+
+            # Toggle execution mode on input area based on phase
+            try:
+                input_area = self.query_one("#input_area")
+                if phase in ("idle", "presentation", "presenting"):
+                    # Not executing - show normal input
+                    tui_log(f"  Phase '{phase}' -> removing execution-mode class")
+                    input_area.remove_class("execution-mode")
+                else:
+                    # Executing (initial_answer, enforcement, coordinating) - show status
+                    tui_log(f"  Phase '{phase}' -> adding execution-mode class")
+                    input_area.add_class("execution-mode")
+                tui_log(f"  input_area classes after: {input_area.classes}")
+            except Exception as e:
+                tui_log(f"  Exception toggling execution-mode: {e}")
 
         def notify_completion(self, agent_id: str) -> None:
             """Called when an agent completes their work."""
@@ -3755,6 +3908,29 @@ Type your question and press Enter to ask the agents.
             """Update all vote counts in the status bar at once."""
             if self._status_bar:
                 self._status_bar.update_votes(vote_counts)
+
+            # Also update execution status line with vote info
+            self._update_execution_status(vote_counts=vote_counts)
+
+        def _update_execution_status(self, vote_counts: Dict[str, int] | None = None) -> None:
+            """Update the execution status line with current progress."""
+            try:
+                if hasattr(self, "_execution_status"):
+                    # Build status text
+                    parts = ["[q] Cancel"]
+
+                    # Add vote counts if available
+                    if vote_counts:
+                        vote_str = " ".join(f"{k}:{v}" for k, v in sorted(vote_counts.items()) if v > 0)
+                        if vote_str:
+                            parts.append(f"Votes: {vote_str}")
+
+                    # Add working indicator
+                    parts.append("Working...")
+
+                    self._execution_status.update(" • ".join(parts))
+            except Exception:
+                pass
 
         def _handle_agent_shortcuts(self, event: events.Key) -> bool:
             """Handle agent shortcuts. Returns True if event was handled.
@@ -4068,7 +4244,9 @@ Type your question and press Enter to ask the agents.
             self.coordination_display = display
             self.key_index = key_index
             self._dom_safe_id = self._make_dom_safe_id(agent_id)
-            super().__init__(id=f"agent_{self._dom_safe_id}")
+            # Assign color class based on key_index (cycles through 8 colors)
+            color_class = f"agent-color-{((key_index - 1) % 8) + 1}" if key_index > 0 else "agent-color-1"
+            super().__init__(id=f"agent_{self._dom_safe_id}", classes=color_class)
             self.status = "waiting"
             self._start_time: Optional[datetime] = None
             self._has_content = False  # Track if we've received any content
@@ -5025,6 +5203,7 @@ Type your question and press Enter to ask the agents.
             self._selected_answer_idx: int = len(answers) - 1 if answers else 0
             self._filtered_answers: List[Dict[str, Any]] = []
             self._selected_content: str = ""  # Store selected answer content for copy
+            self._render_count: int = 0  # Counter for unique widget IDs to avoid DuplicateIds
 
         def compose(self) -> ComposeResult:
             with Container(id="answer_browser_container"):
@@ -5072,6 +5251,9 @@ Type your question and press Enter to ask the agents.
             """Render the answer list based on current filter."""
             from textual.widgets import Static
 
+            # Increment render counter to ensure unique IDs
+            self._render_count += 1
+
             answer_list = self.query_one("#answer_list", VerticalScroll)
             answer_list.remove_children()
 
@@ -5116,11 +5298,12 @@ Type your question and press Enter to ask the agents.
                 is_selected = idx == self._selected_answer_idx
                 selected_class = "answer-item-selected" if is_selected else ""
 
+                # Use render_count in ID to ensure uniqueness across re-renders
                 item = Static(
                     f"[bold]{answer_label}[/] - {agent_display}{badge}\n" f"   [dim]{time_str} • {vote_count} votes[/]\n" f"   {content_preview}",
                     classes=f"answer-item clickable {selected_class}",
                     markup=True,
-                    id=f"answer_item_{idx}",
+                    id=f"answer_item_{self._render_count}_{idx}",
                 )
                 answer_list.mount(item)
 
@@ -5170,7 +5353,8 @@ Type your question and press Enter to ask the agents.
             # Add full content with proper formatting
             from textual.widgets import Static
 
-            detail_scroll.mount(Static(meta_text + content, markup=True, id="answer_full_content"))
+            # Use render_count in ID to ensure uniqueness across re-renders
+            detail_scroll.mount(Static(meta_text + content, markup=True, id=f"answer_content_{self._render_count}"))
 
             # Re-render answer list to update selection highlighting
             self._render_answers()
@@ -5183,7 +5367,9 @@ Type your question and press Enter to ask the agents.
                 target = target.parent
 
             if target and hasattr(target, "id") and target.id and target.id.startswith("answer_item_"):
-                idx = int(target.id.replace("answer_item_", ""))
+                # ID format is "answer_item_{render_count}_{idx}", extract idx from last part
+                parts = target.id.split("_")
+                idx = int(parts[-1]) if parts else 0
                 self._show_answer_detail(idx)
 
         def on_select_changed(self, event: Select.Changed) -> None:

@@ -78,7 +78,7 @@ Screen {
     layout: vertical;
     background: #0d1117;
     height: 1fr;
-    padding: 0 1;
+    padding: 0;
 }
 
 #agents_container {
@@ -122,9 +122,47 @@ AgentTab.active {
 
 AgentTab.inactive {
     background: transparent;
-    border: dashed #484f58;
+    border: dashed #30363d;
     color: #8b949e;
 }
+
+AgentTab.inactive:hover {
+    border: dashed #484f58;
+    color: #e6edf3;
+}
+
+/* === Agent Color Palette - Each agent gets a unique accent color === */
+/* Color 1: Blue (default) */
+AgentTab.agent-color-1 { border-left: thick #58a6ff; }
+AgentTab.agent-color-1.active { border-left: thick #58a6ff; background: #0d1a26; }
+
+/* Color 2: Green */
+AgentTab.agent-color-2 { border-left: thick #3fb950; }
+AgentTab.agent-color-2.active { border-left: thick #3fb950; background: #0d1f14; }
+
+/* Color 3: Purple */
+AgentTab.agent-color-3 { border-left: thick #a371f7; }
+AgentTab.agent-color-3.active { border-left: thick #a371f7; background: #1a0d26; }
+
+/* Color 4: Orange */
+AgentTab.agent-color-4 { border-left: thick #f0883e; }
+AgentTab.agent-color-4.active { border-left: thick #f0883e; background: #261a0d; }
+
+/* Color 5: Cyan */
+AgentTab.agent-color-5 { border-left: thick #39c5cf; }
+AgentTab.agent-color-5.active { border-left: thick #39c5cf; background: #0d1f1f; }
+
+/* Color 6: Pink */
+AgentTab.agent-color-6 { border-left: thick #db61a2; }
+AgentTab.agent-color-6.active { border-left: thick #db61a2; background: #260d1a; }
+
+/* Color 7: Yellow */
+AgentTab.agent-color-7 { border-left: thick #d29922; }
+AgentTab.agent-color-7.active { border-left: thick #d29922; background: #262010; }
+
+/* Color 8: Red */
+AgentTab.agent-color-8 { border-left: thick #f85149; }
+AgentTab.agent-color-8.active { border-left: thick #f85149; background: #260d0d; }
 
 /* Tab status colors */
 AgentTab.status-waiting {
@@ -217,11 +255,19 @@ StatusBar.consensus-reached {
 /* Agent panels - now full width, one at a time */
 AgentPanel {
     background: #161b22;
-    border: solid #30363d;
+    border-left: solid #30363d;
+    border-top: solid #30363d;
+    border-bottom: solid #30363d;
+    border-right: none;
     margin: 0;
-    padding: 1;
+    padding: 0;
     width: 100%;
     height: 100%;
+}
+
+/* Agent panel header label - first line with agent name, backend, timer */
+AgentPanel > Vertical > Label:first-of-type {
+    padding-left: 2;
 }
 
 AgentPanel.hidden {
@@ -263,6 +309,16 @@ AgentPanel.status-error {
     background: #1a0f0f;
 }
 
+/* === Agent Panel Color Palette - Match tab colors === */
+AgentPanel.agent-color-1 { border-left: thick #58a6ff; }
+AgentPanel.agent-color-2 { border-left: thick #3fb950; }
+AgentPanel.agent-color-3 { border-left: thick #a371f7; }
+AgentPanel.agent-color-4 { border-left: thick #f0883e; }
+AgentPanel.agent-color-5 { border-left: thick #39c5cf; }
+AgentPanel.agent-color-6 { border-left: thick #db61a2; }
+AgentPanel.agent-color-7 { border-left: thick #d29922; }
+AgentPanel.agent-color-8 { border-left: thick #f85149; }
+
 /* Loading indicator - centered in panel */
 .loading-container {
     width: 100%;
@@ -296,7 +352,7 @@ AgentPanel.status-error {
 .context-label {
     height: 1;
     width: 100%;
-    padding: 0 1;
+    padding: 0 1 0 3;
     background: #1c2128;
     color: #7ee787;
     text-style: italic;
@@ -307,23 +363,13 @@ AgentPanel.status-error {
 }
 
 /* Compact Header - Shows question and turn info */
+/* HeaderWidget - hidden for now */
 HeaderWidget {
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    dock: top;
-    background: #21262d;
-    color: #58a6ff;
-    padding: 0 2;
-    text-style: bold;
-    border-bottom: solid #30363d;
-    content-align: left middle;
+    display: none;
 }
 
 HeaderWidget.hidden {
     display: none;
-    height: 0;
-    min-height: 0;
 }
 
 /* Note: HeaderWidget styling is handled by the class selector above.
@@ -336,8 +382,90 @@ HeaderWidget.hidden {
     min-height: 4;
     width: 100%;
     padding: 0 1;
-    margin-bottom: 3;
+    margin-bottom: 1;
     background: #0d1117;
+}
+
+/* During execution - show status in input bar, hide actual input */
+#input_area.execution-mode {
+    height: 3;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+#input_area.execution-mode #question_input {
+    display: none;
+}
+
+#input_area.execution-mode #input_header {
+    display: none;
+}
+
+/* Execution bar - shown during coordination, hidden otherwise */
+#execution_bar {
+    display: none;
+    layout: horizontal;
+    height: 3;
+    width: 100%;
+    padding: 0 2;
+    background: #21262d;
+    border: solid #f85149;
+    align-vertical: middle;
+}
+
+#input_area.execution-mode #execution_bar {
+    display: block;
+    layout: horizontal;
+    height: 3;
+    align-vertical: middle;
+}
+
+#execution_status {
+    height: 1;
+    width: auto;
+    padding: 0 1;
+    color: #6e7681;
+    text-style: dim;
+    content-align: left middle;
+}
+
+#execution_spacer {
+    width: 1fr;
+}
+
+#cancel_button {
+    width: auto;
+    min-width: 12;
+    height: 1;
+    background: #5a2020;
+    color: #f85149;
+    border: none;
+    padding: 0 1;
+    text-style: bold;
+    margin-right: 1;
+}
+
+#cancel_button:hover {
+    background: #7a2020;
+    color: #ff6b6b;
+}
+
+#cancel_button:focus {
+    background: #7a2020;
+    border: none;
+}
+
+/* During execution, hide hint and input but keep header */
+#input_area.execution-mode #input_hint {
+    display: none;
+}
+
+#input_area.execution-mode #vim_indicator {
+    display: none;
+}
+
+#input_area.execution-mode #input_header {
+    display: none;
 }
 
 /* === Path Autocomplete Dropdown === */
@@ -399,6 +527,7 @@ SuggestionRow.selected {
     height: auto;
     min-height: 1;
     max-height: 10;
+    margin-left: 1;
 }
 
 #question_input:focus {
@@ -410,7 +539,7 @@ SuggestionRow.selected {
     display: none;
 }
 
-/* Input header - contains hint and vim indicator (above input) */
+/* Input header - contains hint, vim indicator, and cancel button */
 #input_header {
     layout: horizontal;
     height: 1;
@@ -425,6 +554,7 @@ SuggestionRow.selected {
     color: #6e7681;
     text-style: italic;
     padding: 0 1;
+    margin-left: 1;
 }
 
 /* Vim mode indicator - hidden by default */
@@ -1217,7 +1347,7 @@ ToolCallCard {
     min-height: 2;
     max-height: 6;
     padding: 0 1;
-    margin: 1 0;
+    margin: 0 0 1 0;
     background: #161b22;
     border: solid #30363d;
     border-left: thick #484f58;
@@ -1289,6 +1419,37 @@ ToolCallCard.type-workspace {
     border-left: thick #39d353;
 }
 
+/* === Subagent Tool Cards - Special styling for spawn_subagents === */
+ToolCallCard.type-subagent {
+    border-left: thick #a371f7;
+    background: #1a1526;
+    max-height: 15;
+    padding: 0 1;
+}
+
+ToolCallCard.type-subagent.status-running {
+    border-left: thick #a371f7;
+    background: #1f1830;
+    border: solid #a371f7;
+    border-left: thick #a371f7;
+}
+
+ToolCallCard.type-subagent.status-success {
+    border-left: thick #3fb950;
+    background: #0d1f14;
+}
+
+ToolCallCard.type-subagent.status-error {
+    border-left: thick #f85149;
+    background: #1f0d0d;
+}
+
+ToolCallCard.type-subagent.expanded {
+    max-height: 100%;
+    height: auto;
+    min-height: 8;
+}
+
 /* === Content Sections === */
 
 /* Tool Section - fixed size collapsible box for tool cards */
@@ -1339,7 +1500,7 @@ TimelineSection {
 
 TimelineSection #timeline_container {
     height: 1fr;
-    padding: 0 1;
+    padding: 0;
     background: #0d1117;
     overflow-y: auto;
 }
@@ -1448,17 +1609,9 @@ CompletionFooter.status-error {
 }
 
 /* === Status Bar === */
+/* Hidden by default - minimal status shown inline in input area */
 StatusBar {
-    dock: bottom;
-    height: 2;
-    min-height: 2;
-    max-height: 2;
-    background: #21262d;
-    color: #8b949e;
-    padding: 0 2;
-    layout: horizontal;
-    border-top: solid #30363d;
-    content-align: left middle;
+    display: none;
 }
 
 StatusBar.hidden {
@@ -1506,8 +1659,14 @@ StatusBar > Static {
 }
 
 #status_votes {
-    width: 1fr;
+    width: auto;
     color: #3fb950;
+    margin-right: 2;
+}
+
+/* Spacer to push right-side elements to the edge */
+#status_spacer {
+    width: 1fr;
 }
 
 #status_events {

@@ -27,12 +27,32 @@ class AgentTabChanged(Message):
         super().__init__()
 
 
+def _tab_log(msg: str) -> None:
+    """Log to TUI debug file."""
+    try:
+        import logging
+
+        log = logging.getLogger("massgen.tui.debug")
+        if not log.handlers:
+            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
+            handler.setFormatter(logging.Formatter("%(asctime)s [TAB] %(message)s", datefmt="%H:%M:%S"))
+            log.addHandler(handler)
+            log.setLevel(logging.DEBUG)
+            log.propagate = False
+        log.debug(msg)
+    except Exception:
+        pass
+
+
 class AgentTab(Static):
     """Individual tab representing an agent.
 
     Displays agent ID with a status badge and supports click-to-select.
     Styles are defined in the TCSS theme files (dark.tcss, light.tcss).
     """
+
+    # Enable clicking on the widget
+    can_focus = True
 
     # Status icon mapping
     STATUS_ICONS = {
@@ -107,6 +127,7 @@ class AgentTab(Static):
 
     async def on_click(self) -> None:
         """Handle click to select this tab."""
+        _tab_log(f"AgentTab.on_click: {self.agent_id}")
         self.post_message(AgentTabChanged(self.agent_id))
 
 
@@ -153,11 +174,13 @@ class AgentTabBar(Widget):
         """Create agent tabs."""
         for idx, agent_id in enumerate(self._agent_ids):
             key_index = idx + 1 if idx < 9 else 0  # 1-9 for first 9 agents
+            # Assign a color class based on agent index (cycles through 8 colors)
+            color_class = f"agent-color-{(idx % 8) + 1}"
             tab = AgentTab(
                 agent_id=agent_id,
                 key_index=key_index,
                 id=f"tab_{agent_id.replace(' ', '_').replace('.', '_')}",
-                classes="inactive",
+                classes=f"inactive {color_class}",
             )
             self._tabs[agent_id] = tab
             yield tab
@@ -239,10 +262,11 @@ class AgentTabBar(Widget):
         return None
 
     def on_agent_tab_changed(self, event: AgentTabChanged) -> None:
-        """Handle tab click by re-posting the message to parent.
+        """Handle tab click - let it bubble to parent.
 
         The parent (TextualApp) will handle the actual panel switching.
+        We don't stop or re-post - just let it bubble naturally.
         """
-        # Re-post so the parent can handle it
-        event.stop()
-        self.post_message(AgentTabChanged(event.agent_id))
+        _tab_log(f"AgentTabBar.on_agent_tab_changed: {event.agent_id} - letting bubble to parent")
+        # Don't stop or re-post - let the message bubble up naturally
+        # The parent TextualApp will receive this via on_agent_tab_changed
