@@ -214,6 +214,117 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
+def get_task_planning_prompt_prefix(plan_depth: str = "medium", enable_subagents: bool = False) -> str:
+    """Generate the user prompt prefix for task planning mode.
+
+    This prefix is prepended to the user's question when --plan mode is active.
+    It instructs agents to interactively create structured feature lists.
+
+    Args:
+        plan_depth: One of "shallow", "medium", or "deep" controlling task granularity.
+        enable_subagents: Whether subagents are enabled for research tasks.
+
+    Returns:
+        The prompt prefix string to prepend to the user's question.
+    """
+    depth_config = {
+        "shallow": {"target": "5-10", "detail": "high-level phases only"},
+        "medium": {"target": "20-50", "detail": "sections with tasks"},
+        "deep": {"target": "100-200+", "detail": "granular step-by-step"},
+    }
+    cfg = depth_config.get(plan_depth, depth_config["medium"])
+
+    # Subagent research section (only if enabled)
+    subagent_section = ""
+    if enable_subagents:
+        subagent_section = """
+## Research with Subagents
+
+You have subagents available for research. Use them to:
+- Investigate specific areas of the codebase in parallel
+- Research technical options or dependencies
+- Explore integration points with existing code
+- Gather information to inform scope decisions
+
+Spawn subagents for research tasks before finalizing your plan.
+"""
+
+    return f"""# TASK PLANNING MODE
+
+You are in task planning mode. Your goal is to **interactively** create a comprehensive task plan.
+
+## Planning Process
+
+Follow this process in order:
+
+### 1. Scope Confirmation (REQUIRED FIRST)
+Before any deep research, confirm scope with the user:
+- Identify if the request contains **multiple distinct features**
+- If so, list them and ask which should be in scope for this planning session
+- Clarify what is IN scope vs OUT of scope
+- Confirm constraints: timeline, tech stack preferences, must-have vs nice-to-have
+
+Use `ask_others` to get user confirmation on scope before proceeding.
+
+### 2. Research & Exploration
+Once scope is confirmed:
+- Explore the codebase to understand existing structure
+- Investigate integration points
+- Identify potential technical challenges{subagent_section}
+
+### 3. Clarifying Questions
+As you research, ask follow-up questions about:
+- Edge cases and error handling expectations
+- Performance or security requirements
+- User experience preferences
+- Anything ambiguous you discovered
+
+### 4. Plan Creation
+Only after scope confirmation and sufficient research:
+- Create the feature list at the specified depth
+- Organize features by logical grouping
+- If multiple distinct features exist, consider separate spec files
+
+## Output Requirements
+
+1. **Primary artifact**: `feature_list.json` - structured feature list
+2. **Supporting docs**: Create additional markdown docs as needed:
+   - User stories or requirements docs
+   - Technical approach / design decisions
+   - Separate spec files if request contains multiple distinct features
+
+## Feature List Format
+```json
+{{
+  "features": [
+    {{
+      "id": "F001",
+      "name": "Feature Name",
+      "description": "What this feature does",
+      "status": "pending",
+      "dependencies": ["F000"],
+      "priority": "high|medium|low"
+    }}
+  ]
+}}
+```
+
+## Depth: {plan_depth.upper()}
+- Target: {cfg["target"]} features/tasks
+- Detail level: {cfg["detail"]}
+
+## Quality Criteria
+- Each feature should be independently verifiable
+- Dependencies should form a valid DAG (no cycles)
+- Descriptions should be specific enough to implement
+- Scope should be confirmed with user before detailed planning
+
+---
+
+USER'S REQUEST:
+"""
+
+
 # Global PromptSession instance (reused across prompts for better terminal handling)
 _prompt_session: Optional[PromptSession] = None
 
@@ -5607,6 +5718,37 @@ async def main(args):
         # Update config with timeout settings
         config["timeout_settings"] = timeout_settings
 
+        # Handle --plan mode: auto-configure for task planning
+        if getattr(args, "plan", False):
+            # Ensure orchestrator section exists
+            if "orchestrator" not in config:
+                config["orchestrator"] = {}
+            orchestrator_cfg_plan = config["orchestrator"]
+
+            # Ensure coordination section exists
+            if "coordination" not in orchestrator_cfg_plan:
+                orchestrator_cfg_plan["coordination"] = {}
+
+            # Set broadcast to "human" so ask_others routes to user
+            orchestrator_cfg_plan["coordination"]["broadcast"] = "human"
+
+            # Set plan_depth
+            orchestrator_cfg_plan["coordination"]["plan_depth"] = getattr(args, "plan_depth", "medium")
+
+            # Auto-add cwd to context_paths if not already present
+            if "context_paths" not in orchestrator_cfg_plan:
+                orchestrator_cfg_plan["context_paths"] = []
+
+            cwd_str = str(Path.cwd())
+            existing_paths = {p.get("path") if isinstance(p, dict) else p for p in orchestrator_cfg_plan["context_paths"]}
+            if cwd_str not in existing_paths:
+                orchestrator_cfg_plan["context_paths"].append(
+                    {"path": cwd_str, "permission": "write"},
+                )
+                logger.info(f"[Plan Mode] Auto-added cwd to context_paths: {cwd_str}")
+
+            logger.info(f"[Plan Mode] Enabled with depth={args.plan_depth}, broadcast=human")
+
         # Check for prompt in config if not provided via CLI
         if not args.question and "prompt" in config:
             args.question = config["prompt"]
@@ -5724,6 +5866,16 @@ async def main(args):
             args.question, config = inject_prompt_context_paths(args.question, config)
             # Update orchestrator_cfg with any new context_paths
             orchestrator_cfg = config.get("orchestrator", {})
+
+        # Prepend task planning instructions if --plan mode is active
+        if args.question and getattr(args, "plan", False):
+            plan_depth = getattr(args, "plan_depth", "medium")
+            # Check if subagents are enabled in config
+            coordination_cfg = config.get("orchestrator", {}).get("coordination", {})
+            enable_subagents = coordination_cfg.get("enable_subagents", False)
+            planning_prefix = get_task_planning_prompt_prefix(plan_depth, enable_subagents=enable_subagents)
+            args.question = planning_prefix + args.question
+            logger.info(f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, subagents={enable_subagents})")
 
         # For interactive mode without initial question, defer agent creation until first prompt
         # This allows @path references in the first prompt to be included in Docker mounts
@@ -6374,6 +6526,17 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Task planning mode. Agents interactively create structured feature lists and planning documents. " "Auto-adds cwd to context paths and enables user questions via ask_others.",
+    )
+    parser.add_argument(
+        "--plan-depth",
+        choices=["shallow", "medium", "deep"],
+        default="medium",
+        help="Plan granularity for --plan mode: shallow (5-10 tasks), medium (20-50 tasks), deep (100-200+ tasks). Default: medium.",
     )
     parser.add_argument(
         "--no-session-registry",

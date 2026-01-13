@@ -782,6 +782,17 @@ class ConfigValidator:
                             "Use a value like 0, 1, 2, etc.",
                         )
 
+                # Validate plan_depth if present
+                if "plan_depth" in coordination:
+                    value = coordination["plan_depth"]
+                    valid_depths = ["shallow", "medium", "deep"]
+                    if value not in valid_depths:
+                        result.add_error(
+                            f"'plan_depth' must be one of {valid_depths}, got '{value}'",
+                            f"{location}.coordination.plan_depth",
+                            "Use 'shallow' (5-10 tasks), 'medium' (20-50 tasks), or 'deep' (100-200+ tasks)",
+                        )
+
         # Validate voting_sensitivity if present
         if "voting_sensitivity" in orchestrator_config:
             voting_sensitivity = orchestrator_config["voting_sensitivity"]

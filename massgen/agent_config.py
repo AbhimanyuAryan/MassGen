@@ -113,6 +113,7 @@ class CoordinationConfig:
     planning_mode_instruction: str = (
         "During coordination, describe what you would do without actually executing actions. Only provide concrete implementation details without calling external APIs or tools."
     )
+    plan_depth: Optional[str] = None  # "shallow" | "medium" | "deep" - Task planning mode depth
     max_orchestration_restarts: int = 0
     enable_agent_task_planning: bool = False
     max_tasks_per_plan: int = 10
