@@ -52,7 +52,11 @@ def _git_commit_on_task_completion(task_id: str, completion_notes: Optional[str]
     Returns:
         True if a commit was made, False otherwise
     """
+    logger.info(f"[PlanningMCP] _git_commit_on_task_completion called for task {task_id}")
+    logger.info(f"[PlanningMCP] _use_two_tier_workspace={_use_two_tier_workspace}, _workspace_path={_workspace_path}")
+
     if not _use_two_tier_workspace or _workspace_path is None:
+        logger.info(f"[PlanningMCP] Skipping git commit - two_tier={_use_two_tier_workspace}, workspace={_workspace_path}")
         return False
 
     try:
@@ -62,7 +66,10 @@ def _git_commit_on_task_completion(task_id: str, completion_notes: Optional[str]
         if completion_notes:
             msg += f"\n\n{completion_notes}"
 
-        return git_commit_if_changed(_workspace_path, msg)
+        logger.info(f"[PlanningMCP] Calling git_commit_if_changed with workspace={_workspace_path}")
+        result = git_commit_if_changed(_workspace_path, msg)
+        logger.info(f"[PlanningMCP] git_commit_if_changed returned: {result}")
+        return result
     except Exception as e:
         logger.warning(f"[PlanningMCP] Git commit error for task {task_id}: {e}")
         return False
@@ -252,15 +259,17 @@ async def create_server() -> fastmcp.FastMCP:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    logger.debug(f"[PlanningMCP] Server starting for agent_id={args.agent_id}, orchestrator_id={args.orchestrator_id}")
+    logger.info(f"[PlanningMCP] Server starting for agent_id={args.agent_id}, orchestrator_id={args.orchestrator_id}")
 
     # Set workspace path if provided
     global _workspace_path, _use_two_tier_workspace
     if args.workspace_path:
         _workspace_path = Path(args.workspace_path)
+        logger.info(f"[PlanningMCP] Workspace path set to: {_workspace_path}")
 
     # Set two-tier workspace flag for git commits on task completion
     _use_two_tier_workspace = args.use_two_tier_workspace
+    logger.info(f"[PlanningMCP] Two-tier workspace flag: {_use_two_tier_workspace}")
 
     # Create the FastMCP server
     mcp = fastmcp.FastMCP("Agent Task Planning")

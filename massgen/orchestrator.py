@@ -786,8 +786,12 @@ class Orchestrator(ChatAgent):
 
         # Enable git commits on task completion if two-tier workspace is enabled
         use_two_tier_workspace = self.config.coordination_config.use_two_tier_workspace
+        logger.info(f"[Orchestrator] use_two_tier_workspace value for {agent_id}: {use_two_tier_workspace}")
         if use_two_tier_workspace:
             args.append("--use-two-tier-workspace")
+            logger.info(f"[Orchestrator] Adding --use-two-tier-workspace flag to planning MCP for {agent_id}")
+
+        logger.info(f"[Orchestrator] Planning MCP args for {agent_id}: {args}")
 
         config = {
             "name": f"planning_{agent_id}",
@@ -4706,6 +4710,14 @@ Your answer:"""
                 else:
                     # Subsequent attempts: send enforcement message (set by error handling)
 
+                    # Log enforcement message preview before sending to chat
+                    if isinstance(enforcement_msg, list):
+                        msg_preview = str(enforcement_msg)[:500]
+                        logger.info(f"[Orchestrator] Sending enforcement message to {agent_id} (list, {len(enforcement_msg)} items): {msg_preview}...")
+                    else:
+                        msg_preview = enforcement_msg[:500] if len(enforcement_msg) > 500 else enforcement_msg
+                        logger.info(f"[Orchestrator] Sending enforcement message to {agent_id} ({len(enforcement_msg)} chars): {msg_preview}...")
+
                     if isinstance(enforcement_msg, list):
                         # Tool message array
                         chat_stream = agent.chat(
@@ -5346,8 +5358,15 @@ Your answer:"""
 
                         yield ("content", f"❌ Retry ({attempt + 1}/{max_attempts}): {error_msg}")
 
-                        # Track enforcement event before retry
-                        buffer_preview, buffer_chars = self._get_buffer_content(agent)
+                        # Get full buffer content for injection into retry message
+                        # This allows the agent to see what it was working on before the incomplete response
+                        full_buffer_content = None
+                        if hasattr(agent.backend, "_get_streaming_buffer"):
+                            full_buffer_content = agent.backend._get_streaming_buffer()
+
+                        # Track enforcement event before retry (with truncated preview for logging)
+                        buffer_preview = full_buffer_content[:500] if full_buffer_content and len(full_buffer_content) > 500 else full_buffer_content
+                        buffer_chars = len(full_buffer_content) if full_buffer_content else 0
                         self.coordination_tracker.track_enforcement_event(
                             agent_id=agent_id,
                             reason=enforcement_reason,
@@ -5364,7 +5383,12 @@ Your answer:"""
                         if tool_calls:
                             enforcement_msg = self._create_tool_error_messages(agent, tool_calls, error_msg)
                         else:
-                            enforcement_msg = self.message_templates.enforcement_message()
+                            # Include buffer content so agent can continue from where it left off
+                            if full_buffer_content:
+                                logger.info(
+                                    f"[Orchestrator] Injecting {len(full_buffer_content)} chars of buffer content into enforcement retry for {agent_id}",
+                                )
+                            enforcement_msg = self.message_templates.enforcement_message(buffer_content=full_buffer_content)
                         attempt += 1  # Error counts as an attempt
                         continue  # Retry with updated conversation
                     else:

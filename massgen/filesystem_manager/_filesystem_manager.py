@@ -46,9 +46,12 @@ def git_commit_if_changed(workspace: Path, message: str) -> bool:
     """
     import subprocess
 
+    logger.info(f"[git_commit_if_changed] Called with workspace={workspace}, message={message[:50]}...")
+
     # Check if this is a git repo
     git_dir = workspace / ".git"
     if not git_dir.exists():
+        logger.info(f"[git_commit_if_changed] No .git directory at {git_dir}, skipping")
         return False
 
     try:

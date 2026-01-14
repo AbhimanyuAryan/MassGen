@@ -24,6 +24,10 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 ## Planning
 When planning or creating specs, use AskUserQuestions to ensure you align with the user before creating full planning files.
 
+## Debugging Assumptions
+
+**IMPORTANT**: When the user asks you to check logs from a MassGen run, assume they ran with the current uncommitted changes unless they explicitly say otherwise. Do NOT assume "the run used an older commit" just because the execution_metadata.yaml shows a different git commit - the user likely ran with local modifications after you suggested changes. Always debug the actual code behavior first.
+
 ## Project Overview
 
 MassGen is a multi-agent system that coordinates multiple AI agents to solve complex tasks through parallel processing, intelligence sharing, and consensus building. Agents work simultaneously, observe each other's progress, and vote to converge on the best solution.

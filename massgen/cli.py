@@ -2039,6 +2039,7 @@ async def run_question_with_history(
             subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
             subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
             subagent_orchestrator=subagent_orchestrator_config,
+            use_two_tier_workspace=coord_cfg.get("use_two_tier_workspace", False),
         )
 
     # Get session_id from session_info (will be generated in save_final_state if not exists)
