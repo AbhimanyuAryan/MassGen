@@ -145,12 +145,29 @@ IMPORTANT: You are responding to the latest message in an ongoing conversation. 
         lines.append("<END OF CURRENT ANSWERS>")
         return "\n".join(lines)
 
-    def enforcement_message(self) -> str:
-        """Enforcement message for Case 3 (non-workflow responses)."""
+    def enforcement_message(self, buffer_content: Optional[str] = None) -> str:
+        """Enforcement message for Case 3 (non-workflow responses).
+
+        Args:
+            buffer_content: Optional streaming buffer content from the agent's incomplete response.
+                           If provided, this is injected so the agent can see what it was working on.
+        """
         if "enforcement_message" in self._template_overrides:
             return str(self._template_overrides["enforcement_message"])
 
-        return "Finish your work above by making a tool call of `vote` or `new_answer`. Make sure you actually call the tool."
+        base_message = "Finish your work above by making a tool call of `vote` or `new_answer`. Make sure you actually call the tool."
+
+        if buffer_content and buffer_content.strip():
+            # Include the agent's incomplete work so it can continue from where it left off
+            return f"""Your previous response was incomplete. Here is what you were working on:
+
+<incomplete_response>
+{buffer_content.strip()}
+</incomplete_response>
+
+{base_message}"""
+
+        return base_message
 
     def evaluation_system_message_vote_only(self) -> str:
         """System message when agent has reached their answer limit and must vote.
@@ -173,9 +190,13 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
         """Create a tool role message for tool usage errors."""
         return {"role": "tool", "content": error_msg}
 
-    def enforcement_user_message(self) -> Dict[str, str]:
-        """Create a user role message for enforcement."""
-        return {"role": "user", "content": self.enforcement_message()}
+    def enforcement_user_message(self, buffer_content: Optional[str] = None) -> Dict[str, str]:
+        """Create a user role message for enforcement.
+
+        Args:
+            buffer_content: Optional streaming buffer content from the agent's incomplete response.
+        """
+        return {"role": "user", "content": self.enforcement_message(buffer_content=buffer_content)}
 
     # =============================================================================
     # TOOL DEFINITIONS
@@ -728,10 +749,19 @@ VOTING RESULTS:
 
 Based on the coordination process above, present your final answer:"""
 
-    def add_enforcement_message(self, conversation_messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        """Add enforcement message to existing conversation (Case 3)."""
+    def add_enforcement_message(
+        self,
+        conversation_messages: List[Dict[str, str]],
+        buffer_content: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
+        """Add enforcement message to existing conversation (Case 3).
+
+        Args:
+            conversation_messages: Existing conversation messages.
+            buffer_content: Optional streaming buffer content from the agent's incomplete response.
+        """
         messages = conversation_messages.copy()
-        messages.append({"role": "user", "content": self.enforcement_message()})
+        messages.append({"role": "user", "content": self.enforcement_message(buffer_content=buffer_content)})
         return messages
 
     def command_execution_system_message(
@@ -1131,6 +1161,10 @@ def get_standard_tools(
     return get_templates().get_standard_tools(valid_agent_ids)
 
 
-def get_enforcement_message() -> str:
-    """Get enforcement message for Case 3."""
-    return get_templates().enforcement_message()
+def get_enforcement_message(buffer_content: Optional[str] = None) -> str:
+    """Get enforcement message for Case 3.
+
+    Args:
+        buffer_content: Optional streaming buffer content from the agent's incomplete response.
+    """
+    return get_templates().enforcement_message(buffer_content=buffer_content)

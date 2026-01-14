@@ -13,7 +13,10 @@ Design Document: docs/dev_notes/system_prompt_architecture_redesign.md
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import IntEnum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from loguru import logger
 
 
 class Priority(IntEnum):
@@ -473,9 +476,7 @@ class CodeBasedToolsSection(SystemPromptSection):
                     mcp_items = [f"- **{name}**: {desc}" for name, desc in mcp_descriptions.items()]
                     mcp_servers_list = "\n\n**Available MCP Servers:**\n" + "\n".join(mcp_items)
             except Exception as e:
-                import logging
-
-                logging.getLogger(__name__).warning(f"Failed to fetch MCP descriptions: {e}")
+                logger.warning(f"Failed to fetch MCP descriptions: {e}")
                 # Fall back to just showing server names
                 server_names = [s.get("name", "unknown") for s in self.mcp_servers]
                 if server_names:
@@ -913,9 +914,10 @@ class WorkspaceStructureSection(SystemPromptSection):
     Args:
         workspace_path: Path to the agent's workspace directory
         context_paths: List of paths containing important context
+        use_two_tier_workspace: If True, include documentation for scratch/deliverable structure
     """
 
-    def __init__(self, workspace_path: str, context_paths: List[str]):
+    def __init__(self, workspace_path: str, context_paths: List[str], use_two_tier_workspace: bool = False):
         super().__init__(
             title="Workspace Structure",
             priority=Priority.HIGH,
@@ -923,6 +925,7 @@ class WorkspaceStructureSection(SystemPromptSection):
         )
         self.workspace_path = workspace_path
         self.context_paths = context_paths
+        self.use_two_tier_workspace = use_two_tier_workspace
 
     def build_content(self) -> str:
         """Build workspace structure documentation."""
@@ -934,6 +937,32 @@ class WorkspaceStructureSection(SystemPromptSection):
             "\nThis is your primary working directory where you should create " "and manage files for this task.\n",
         )
 
+        # Add two-tier workspace documentation if enabled
+        if self.use_two_tier_workspace:
+            content_parts.append("### Two-Tier Workspace Structure\n")
+            content_parts.append("Your workspace has two directories for organizing your work:\n")
+            content_parts.append("- **`scratch/`** - Use for working files, experiments, intermediate results, evaluation scripts")
+            content_parts.append("- **`deliverable/`** - Use for final outputs you want to showcase to voters\n")
+            content_parts.append("**IMPORTANT: Deliverables must be self-contained and complete.**")
+            content_parts.append("The `deliverable/` directory should contain everything needed to use your output:")
+            content_parts.append("- All required files (not just one component)")
+            content_parts.append("- Any dependencies, assets, or supporting files")
+            content_parts.append("- A README explaining how to run/use it")
+            content_parts.append("Think of `deliverable/` as a standalone package that voters can immediately use without needing files from `scratch/` or anywhere else.\n")
+            content_parts.append("To promote files from scratch to deliverable, use standard file operations:")
+            content_parts.append("- Copy: Use filesystem tools to copy files")
+            content_parts.append("- Move: Use command line `mv` or filesystem move\n")
+            content_parts.append("**Note**: Voters will see BOTH directories, so scratch/ helps them understand your process.\n")
+            content_parts.append("### Git Version Control\n")
+            content_parts.append("Your workspace is version controlled with git. Changes are automatically committed:")
+            content_parts.append("- `[INIT]` - When workspace is created")
+            content_parts.append("- `[SNAPSHOT]` - Before coordination checkpoints")
+            content_parts.append("- `[TASK]` - When you complete a task with completion notes\n")
+            content_parts.append("**Tip**: Use `git log --oneline` to see your work history. This can help you:")
+            content_parts.append("- Review what you've accomplished")
+            content_parts.append("- Find when specific changes were made")
+            content_parts.append("- Recover previous versions if needed\n")
+
         if self.context_paths:
             content_parts.append("**Context paths**:")
             for path in self.context_paths:
@@ -943,6 +972,146 @@ class WorkspaceStructureSection(SystemPromptSection):
             )
 
         return "\n".join(content_parts)
+
+
+class ProjectInstructionsSection(SystemPromptSection):
+    """
+    Project-specific instructions from CLAUDE.md or AGENTS.md files.
+
+    Automatically discovers and includes project instruction files when they exist
+    in context paths. Follows the agents.md standard (https://agents.md/) with
+    hierarchical discovery - the closest CLAUDE.md or AGENTS.md to the context
+    path wins.
+
+    Priority order:
+    1. CLAUDE.md (Claude Code specific)
+    2. AGENTS.md (universal standard - 60k+ projects)
+
+    Discovery algorithm:
+    - Starts at context path directory
+    - Walks UP the directory tree searching for instruction files
+    - Returns first CLAUDE.md or AGENTS.md found (closest wins)
+    - CLAUDE.md takes precedence over AGENTS.md at same level
+    - Stops at filesystem root or after 10 levels (safety limit)
+
+    Args:
+        context_paths: List of context path dictionaries (with "path" key)
+        workspace_root: Agent workspace root (kept for backwards compatibility, not used for search boundary)
+    """
+
+    def __init__(self, context_paths: List[Dict[str, str]], workspace_root: str):
+        super().__init__(
+            title="Project Instructions",
+            priority=Priority.HIGH,  # Important context, but not operational instructions
+            xml_tag="project_instructions",
+        )
+        self.context_paths = context_paths
+        self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
+
+    def discover_instruction_file(self, context_path: Path) -> Optional[Path]:
+        """
+        Walk up from context_path searching for CLAUDE.md or AGENTS.md.
+        Returns the closest instruction file found.
+        CLAUDE.md takes precedence over AGENTS.md at the same level.
+
+        Stops searching when:
+        1. An instruction file is found (success)
+        2. We reach the filesystem root (no more parents)
+        3. We've searched up to a reasonable depth (safety limit)
+        """
+        current = context_path if context_path.is_dir() else context_path.parent
+
+        # Safety limit: search up to 10 levels max (prevents infinite loops)
+        max_depth = 10
+        depth = 0
+
+        # Walk up directory hierarchy
+        while current and depth < max_depth:
+            # Priority 1: CLAUDE.md (Claude-specific)
+            claude_md = current / "CLAUDE.md"
+            if claude_md.exists() and claude_md.is_file():
+                return claude_md
+
+            # Priority 2: AGENTS.md (universal standard)
+            agents_md = current / "AGENTS.md"
+            if agents_md.exists() and agents_md.is_file():
+                return agents_md
+
+            # Stop at filesystem root
+            parent = current.parent
+            if parent == current:
+                break
+
+            current = parent
+            depth += 1
+
+        return None
+
+    def build_content(self) -> str:
+        """
+        Discover and inject CLAUDE.md/AGENTS.md contents from context paths.
+        Uses "closest wins" semantics - only one instruction file per context path.
+        """
+        # Collect discovered instruction files (deduplicate by path)
+        discovered_files = {}  # path -> file_path mapping
+
+        for ctx_path in self.context_paths:
+            path_str = ctx_path.get("path", "")
+            if not path_str:
+                continue
+
+            try:
+                path = Path(path_str).resolve()
+
+                # Check if path IS an instruction file directly
+                if path.name in ["CLAUDE.md", "AGENTS.md"]:
+                    if path.exists() and path.is_file():
+                        discovered_files[str(path)] = path
+                        continue
+
+                # Otherwise, discover from directory hierarchy
+                instruction_file = self.discover_instruction_file(path)
+                if instruction_file:
+                    discovered_files[str(instruction_file)] = instruction_file
+
+            except Exception as e:
+                logger.warning(f"Error checking context path {path_str} for instruction files: {e}")
+
+        if not discovered_files:
+            return ""  # No instruction files found
+
+        # Read and format contents
+        content_parts = []
+
+        for file_path in discovered_files.values():
+            try:
+                contents = file_path.read_text(encoding="utf-8")
+                # Dedent/clean up any leading/trailing whitespace
+                contents = contents.strip()
+
+                logger.info(f"[ProjectInstructionsSection] Loaded {file_path.name} ({len(contents)} chars)")
+                content_parts.append(f"**From {file_path.name}** (`{file_path}`):")
+                content_parts.append(contents)
+
+            except Exception as e:
+                logger.warning(f"Could not read instruction file {file_path}: {e}")
+
+        if not content_parts:
+            return ""  # Failed to read any files
+
+        # Format with appropriate framing
+        # NOTE: We follow Claude in using a softer framing than strict "Follow these instructions"
+        # because this context may or may not be relevant to the current task
+        header = [
+            "The following project instructions were found in your context paths.",
+            "",
+            "**IMPORTANT**: This context may or may not be relevant to your current task.",
+            "Use these instructions as helpful reference material when applicable,",
+            "but do not feel obligated to follow guidance that doesn't apply to what you're doing.",
+            "",
+        ]
+
+        return "\n".join(header + content_parts)
 
 
 class CommandExecutionSection(SystemPromptSection):
@@ -1298,6 +1467,7 @@ class FilesystemSection(SystemPromptSection):
         docker_mode: Whether commands execute in Docker containers
         enable_sudo: Whether sudo is available in Docker containers
         enable_code_based_tools: Whether code-based tools mode is enabled
+        use_two_tier_workspace: Whether two-tier workspace (scratch/deliverable) is enabled
     """
 
     def __init__(
@@ -1314,6 +1484,7 @@ class FilesystemSection(SystemPromptSection):
         docker_mode: bool = False,
         enable_sudo: bool = False,
         enable_code_based_tools: bool = False,
+        use_two_tier_workspace: bool = False,
     ):
         super().__init__(
             title="Filesystem & Workspace",
@@ -1323,7 +1494,7 @@ class FilesystemSection(SystemPromptSection):
 
         # Create subsections with appropriate priorities
         self.subsections = [
-            WorkspaceStructureSection(workspace_path, context_paths),
+            WorkspaceStructureSection(workspace_path, context_paths, use_two_tier_workspace=use_two_tier_workspace),
             FilesystemOperationsSection(
                 main_workspace=main_workspace,
                 temp_workspace=temp_workspace,
@@ -2314,13 +2485,6 @@ When evaluating your own or others' work, use prompts that look for **flaws**:
 - "What flaws, issues, or missing elements do you see? Be critical."
 - "What would a demanding user complain about?"
 - "Does this fully meet the requirements, or are there gaps?"
-
-### Tool usage:
-```
-read_media(file_path="screenshot.png", prompt="What flaws or issues do you see? Be critical.")
-read_media(file_path="diagram.png", prompt="What's missing or poorly done?")
-read_media(file_path="output.mp4", prompt="What problems or gaps exist?")
-```
 
 **Supported formats:**
 - Images: png, jpg, jpeg, gif, webp, bmp

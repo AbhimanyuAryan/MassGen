@@ -34,6 +34,11 @@ ui:
   display_type: "rich_terminal"
   logging_enabled: true
 
+# Orchestrator settings
+orchestrator:
+  coordination:
+    use_two_tier_workspace: true  # Enable scratch/deliverable workspace structure with git versioning
+
 # Timeout settings to prevent agents from getting stuck
 timeout_settings:
   orchestrator_timeout_seconds: 1800        # 30 min overall session limit

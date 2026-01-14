@@ -761,7 +761,7 @@ class ConfigValidator:
                 )
             else:
                 # Validate boolean fields
-                boolean_fields = ["enable_planning_mode"]
+                boolean_fields = ["enable_planning_mode", "use_two_tier_workspace"]
                 for field_name in boolean_fields:
                     if field_name in coordination:
                         value = coordination[field_name]
@@ -780,6 +780,17 @@ class ConfigValidator:
                             "'max_orchestration_restarts' must be a non-negative integer",
                             f"{location}.coordination.max_orchestration_restarts",
                             "Use a value like 0, 1, 2, etc.",
+                        )
+
+                # Validate plan_depth if present
+                if "plan_depth" in coordination:
+                    value = coordination["plan_depth"]
+                    valid_depths = ["shallow", "medium", "deep"]
+                    if value not in valid_depths:
+                        result.add_error(
+                            f"'plan_depth' must be one of {valid_depths}, got '{value}'",
+                            f"{location}.coordination.plan_depth",
+                            "Use 'shallow' (5-10 tasks), 'medium' (20-50 tasks), or 'deep' (100-200+ tasks)",
                         )
 
         # Validate voting_sensitivity if present
