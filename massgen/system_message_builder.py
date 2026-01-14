@@ -32,6 +32,7 @@ from massgen.system_prompt_sections import (
     OutputFirstVerificationSection,
     PlanningModeSection,
     PostEvaluationSection,
+    ProjectInstructionsSection,
     SkillsSection,
     SubagentSection,
     SystemPromptBuilder,
@@ -229,6 +230,12 @@ class SystemMessageBuilder:
             use_two_tier_workspace = False
             if hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
                 use_two_tier_workspace = getattr(agent.backend.filesystem_manager, "use_two_tier_workspace", False)
+
+            # Add project instructions section (CLAUDE.md / AGENTS.md discovery)
+            # This comes BEFORE workspace structure so project context is established first
+            if context_paths:
+                logger.info(f"[SystemMessageBuilder] Checking for project instructions in {len(context_paths)} context paths")
+                builder.add_section(ProjectInstructionsSection(context_paths, workspace_root=main_workspace))
 
             # Add workspace structure section (critical paths)
             builder.add_section(WorkspaceStructureSection(main_workspace, [p.get("path", "") for p in context_paths], use_two_tier_workspace=use_two_tier_workspace))

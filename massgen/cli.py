@@ -214,7 +214,7 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
-def get_task_planning_prompt_prefix(plan_depth: str = "medium", enable_subagents: bool = False) -> str:
+def get_task_planning_prompt_prefix(plan_depth: str = "medium", enable_subagents: bool = False, broadcast_mode: str = "human") -> str:
     """Generate the user prompt prefix for task planning mode.
 
     This prefix is prepended to the user's question when --plan mode is active.
@@ -223,6 +223,7 @@ def get_task_planning_prompt_prefix(plan_depth: str = "medium", enable_subagents
     Args:
         plan_depth: One of "shallow", "medium", or "deep" controlling task granularity.
         enable_subagents: Whether subagents are enabled for research tasks.
+        broadcast_mode: One of "human", "agents", or False. Controls whether ask_others() is available.
 
     Returns:
         The prompt prefix string to prepend to the user's question.
@@ -249,6 +250,193 @@ You have subagents available for research. Use them to:
 Spawn subagents for research tasks before finalizing your plan.
 """
 
+    # Conditional scope confirmation section based on broadcast mode
+    if broadcast_mode == "human":
+        scope_section = """### 1. Scope Confirmation (REQUIRED FIRST)
+
+Before any deep research, analyze the request and verify scope with the user.
+
+**Step 1: Categorize requirements and assumptions**
+
+Parse the user's request into three categories:
+
+1. **Explicitly Stated** - Things the user directly mentioned
+   - Example: "Build a REST API" → User said "REST API"
+
+2. **Critical Assumptions** - High-level decisions that affect scope/direction (NEED HUMAN VERIFICATION)
+   - User intent or business logic
+   - Major architectural choices (monolith vs microservices, SQL vs NoSQL)
+   - Security/compliance requirements
+   - Feature scope boundaries
+   - Example: "Build a REST API" → Is this for internal use or public? What data sensitivity?
+
+3. **Technical/Implementation Assumptions** - Lower-level choices (AGENT CONSENSUS via voting)
+   - Specific technologies/frameworks
+   - Code organization patterns
+   - Standard practices (error handling, logging, validation)
+   - Example: "Build a REST API" → Express vs FastAPI, JWT details, specific DB choice
+
+**Step 2: Verify ONLY THE MOST CRITICAL assumptions with human**
+
+Be selective - only ask about assumptions where you truly cannot make a good decision without human input.
+
+**When to ask the human**:
+- User intent is ambiguous (internal tool vs public product?)
+- Business/domain knowledge required (compliance, data sensitivity)
+- Major scope decisions (which features are in/out?)
+- Trade-offs that depend on user priorities (speed vs security vs cost)
+
+**When NOT to ask the human** (let consensus decide):
+- Technical implementation details (framework, database, auth method)
+- Standard practices (error handling, logging, testing approach)
+- Scope refinements that you can revisit after initial consensus
+- Decisions where you can make a reasonable recommendation
+
+**IMPORTANT**: When you DO ask, offer recommendations with reasoning:
+
+GOOD (selective + recommendations):
+```
+I need to clarify scope before planning this REST API:
+
+1. **Usage context**: Is this for internal use or public-facing?
+   - Recommendation: I'll assume internal unless you specify, which means simpler auth and fewer rate limits
+
+2. **Data sensitivity**: What type of data will this handle?
+   - Recommendation: I'll plan for standard business data (not public, not highly sensitive) unless you need HIPAA/PCI compliance
+
+3. **Integration needs**: Do you have existing systems this must integrate with?
+   - If yes, please specify - this affects the approach significantly
+
+Let me know if my assumptions are wrong or if there are other critical requirements.
+```
+
+BAD (asking everything):
+```
+Should I use Express or FastAPI?
+Should I use JWT or OAuth?
+Should I use PostgreSQL or MongoDB?
+Which testing framework?
+How should I structure the code?
+```
+
+**Step 3: Document technical assumptions and recommendations for consensus**
+
+For technical/implementation assumptions, present your recommendations with reasoning in your answer.
+
+**Be opinionated**: Make specific technical recommendations based on:
+- The user's explicit requirements
+- Industry best practices
+- Your analysis of the codebase (if extending existing project)
+- Trade-offs you've considered
+
+Other agents will:
+- Propose alternative approaches if they disagree
+- Challenge your technical choices with their reasoning
+- Refine scope to keep tasks focused and useful
+- Vote when they're happy with the combination of choices
+
+**Benefits of consensus**:
+- Explores wider design space through agent debate
+- Ensures all tasks are critical and actively useful
+- Prevents scope divergence through multi-agent validation
+- Catches assumptions one agent might miss
+
+**Note**: You can always ask the human for clarification in later rounds after seeing consensus. Start with your best recommendations, refine through voting, then verify critical decisions if needed.
+
+**Step 4: Feature scope (with recommendations)**
+
+If the request contains **multiple distinct features**, recommend which to prioritize:
+
+GOOD (scoped recommendation):
+```
+I see this request involves three main features:
+1. User authentication (CORE - needed for everything else)
+2. Todo CRUD operations (CORE - primary functionality)
+3. Email notifications (NICE-TO-HAVE - can add later)
+
+Recommendation: Let's scope this planning session to features 1-2, then add notifications in a follow-up. Does that work?
+```
+
+BAD (asking without recommendation):
+```
+This has multiple features. Which ones do you want?
+```
+
+**After critical verification (minimal ask_others calls), proceed to research. Technical assumptions and scope refinements will be refined through voting.**"""
+    else:
+        # No human interaction - agents make all decisions through consensus
+        scope_section = """### 1. Scope Analysis (REQUIRED FIRST)
+
+Before any deep research, analyze the request and make decisions through agent consensus.
+
+**Step 1: Categorize requirements and assumptions**
+
+Parse the user's request into three categories:
+
+1. **Explicitly Stated** - Things the user directly mentioned
+   - Example: "Build a REST API" → User said "REST API"
+
+2. **Critical Assumptions** - High-level decisions that affect scope/direction
+   - User intent or business logic
+   - Major architectural choices (monolith vs microservices, SQL vs NoSQL)
+   - Security/compliance requirements
+   - Feature scope boundaries
+   - Example: "Build a REST API" → Assume internal use or public-facing?
+
+3. **Technical/Implementation Assumptions** - Lower-level choices
+   - Specific technologies/frameworks
+   - Code organization patterns
+   - Standard practices (error handling, logging, validation)
+   - Example: "Build a REST API" → Express vs FastAPI, JWT details, specific DB choice
+
+**Step 2: Make opinionated recommendations for ALL assumptions**
+
+Since you don't have human interaction, you MUST make decisions autonomously.
+
+**Be opinionated**: Make specific recommendations for ALL assumptions based on:
+- The user's explicit requirements
+- Industry best practices
+- Your analysis of the codebase (if extending existing project)
+- Trade-offs you've considered
+- Reasonable defaults when ambiguous
+
+**Document your reasoning**: For each assumption, explain WHY you chose that approach.
+
+Example:
+```
+I'm making these decisions for this REST API:
+
+1. **Usage context**: Internal use (simpler auth, no rate limiting needed)
+   - Reasoning: No mention of public users, so assuming internal tooling
+
+2. **Data sensitivity**: Standard business data (moderate security)
+   - Reasoning: No compliance requirements mentioned, so standard practices
+
+3. **Tech stack**: FastAPI + PostgreSQL + JWT
+   - Reasoning: FastAPI for async support, PostgreSQL for reliability, JWT for stateless auth
+
+4. **Scope**: Core features only (auth + CRUD), no notifications yet
+   - Reasoning: Start with MVP, can add features later
+```
+
+**Step 3: Refine through consensus**
+
+Other agents will:
+- Propose alternative approaches if they disagree
+- Challenge your assumptions with their reasoning
+- Suggest different scope boundaries
+- Vote when they're happy with the combination of choices
+
+**Benefits of consensus**:
+- Explores wider design space through agent debate
+- Ensures all tasks are critical and actively useful
+- Prevents scope divergence through multi-agent validation
+- Catches assumptions one agent might miss
+
+**Critical**: ALL decisions must be made through consensus. No human will verify them, so agents must carefully debate and validate each choice.
+
+**After consensus is reached, proceed to research. All assumptions and scope will be refined through voting.**"""
+
     return f"""# TASK PLANNING MODE
 
 You are in task planning mode. Your goal is to **interactively** create a comprehensive task plan.
@@ -257,14 +445,7 @@ You are in task planning mode. Your goal is to **interactively** create a compre
 
 Follow this process in order:
 
-### 1. Scope Confirmation (REQUIRED FIRST)
-Before any deep research, confirm scope with the user:
-- Identify if the request contains **multiple distinct features**
-- If so, list them and ask which should be in scope for this planning session
-- Clarify what is IN scope vs OUT of scope
-- Confirm constraints: timeline, tech stack preferences, must-have vs nice-to-have
-
-Use `ask_others` to get user confirmation on scope before proceeding.
+{scope_section}
 
 ### 2. Research & Exploration
 Once scope is confirmed:
@@ -5884,9 +6065,19 @@ async def main(args):
             # Check if subagents are enabled in config
             coordination_cfg = config.get("orchestrator", {}).get("coordination", {})
             enable_subagents = coordination_cfg.get("enable_subagents", False)
-            planning_prefix = get_task_planning_prompt_prefix(plan_depth, enable_subagents=enable_subagents)
+
+            # Broadcast mode priority: CLI arg > config > default "human"
+            cli_broadcast = getattr(args, "broadcast", None)
+            if cli_broadcast == "false":
+                broadcast_mode = False
+            elif cli_broadcast is not None:
+                broadcast_mode = cli_broadcast
+            else:
+                broadcast_mode = coordination_cfg.get("broadcast", "human")
+
+            planning_prefix = get_task_planning_prompt_prefix(plan_depth, enable_subagents=enable_subagents, broadcast_mode=broadcast_mode)
             args.question = planning_prefix + args.question
-            logger.info(f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, subagents={enable_subagents})")
+            logger.info(f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, subagents={enable_subagents}, broadcast={broadcast_mode})")
 
         # For interactive mode without initial question, defer agent creation until first prompt
         # This allows @path references in the first prompt to be included in Docker mounts
@@ -6548,6 +6739,13 @@ Environment Variables:
         choices=["shallow", "medium", "deep"],
         default="medium",
         help="Plan granularity for --plan mode: shallow (5-10 tasks), medium (20-50 tasks), deep (100-200+ tasks). Default: medium.",
+    )
+    parser.add_argument(
+        "--broadcast",
+        choices=["human", "agents", "false"],
+        default=None,
+        help="Broadcast mode for --plan mode: 'human' (agents ask critical questions), 'agents' (agents debate), 'false' (fully autonomous). "
+        "If not specified, uses config file value or defaults to 'human'.",
     )
     parser.add_argument(
         "--no-session-registry",

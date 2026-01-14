@@ -13,7 +13,10 @@ Design Document: docs/dev_notes/system_prompt_architecture_redesign.md
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import IntEnum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from loguru import logger
 
 
 class Priority(IntEnum):
@@ -473,9 +476,7 @@ class CodeBasedToolsSection(SystemPromptSection):
                     mcp_items = [f"- **{name}**: {desc}" for name, desc in mcp_descriptions.items()]
                     mcp_servers_list = "\n\n**Available MCP Servers:**\n" + "\n".join(mcp_items)
             except Exception as e:
-                import logging
-
-                logging.getLogger(__name__).warning(f"Failed to fetch MCP descriptions: {e}")
+                logger.warning(f"Failed to fetch MCP descriptions: {e}")
                 # Fall back to just showing server names
                 server_names = [s.get("name", "unknown") for s in self.mcp_servers]
                 if server_names:
@@ -973,6 +974,152 @@ class WorkspaceStructureSection(SystemPromptSection):
             )
 
         return "\n".join(content_parts)
+
+
+class ProjectInstructionsSection(SystemPromptSection):
+    """
+    Project-specific instructions from CLAUDE.md or AGENTS.md files.
+
+    Automatically discovers and includes project instruction files when they exist
+    in context paths. Follows the agents.md standard (https://agents.md/) with
+    hierarchical discovery - the closest CLAUDE.md or AGENTS.md to the context
+    path wins.
+
+    Priority order:
+    1. CLAUDE.md (Claude Code specific)
+    2. AGENTS.md (universal standard - 60k+ projects)
+
+    Discovery algorithm:
+    - Starts at context path directory
+    - Walks UP the directory tree searching for instruction files
+    - Returns first CLAUDE.md or AGENTS.md found (closest wins)
+    - CLAUDE.md takes precedence over AGENTS.md at same level
+    - Stops at filesystem root or after 10 levels (safety limit)
+
+    Args:
+        context_paths: List of context path dictionaries (with "path" key)
+        workspace_root: Agent workspace root (kept for backwards compatibility, not used for search boundary)
+    """
+
+    def __init__(self, context_paths: List[Dict[str, str]], workspace_root: str):
+        super().__init__(
+            title="Project Instructions",
+            priority=Priority.HIGH,  # Important context, but not operational instructions
+            xml_tag="project_instructions",
+        )
+        self.context_paths = context_paths
+        self.workspace_root = Path(workspace_root) if workspace_root else Path.cwd()
+
+    def discover_instruction_file(self, context_path: Path) -> Optional[Path]:
+        """
+        Walk up from context_path searching for CLAUDE.md or AGENTS.md.
+        Returns the closest instruction file found.
+        CLAUDE.md takes precedence over AGENTS.md at the same level.
+
+        Stops searching when:
+        1. An instruction file is found (success)
+        2. We reach the filesystem root (no more parents)
+        3. We've searched up to a reasonable depth (safety limit)
+        """
+        current = context_path if context_path.is_dir() else context_path.parent
+
+        # Safety limit: search up to 10 levels max (prevents infinite loops)
+        max_depth = 10
+        depth = 0
+
+        # Walk up directory hierarchy
+        while current and depth < max_depth:
+            # Priority 1: CLAUDE.md (Claude-specific)
+            claude_md = current / "CLAUDE.md"
+            if claude_md.exists() and claude_md.is_file():
+                return claude_md
+
+            # Priority 2: AGENTS.md (universal standard)
+            agents_md = current / "AGENTS.md"
+            if agents_md.exists() and agents_md.is_file():
+                return agents_md
+
+            # Stop at filesystem root
+            parent = current.parent
+            if parent == current:
+                break
+
+            current = parent
+            depth += 1
+
+        return None
+
+    def build_content(self) -> str:
+        """
+        Discover and inject CLAUDE.md/AGENTS.md contents from context paths.
+        Uses "closest wins" semantics - only one instruction file per context path.
+        """
+        # Collect discovered instruction files (deduplicate by path)
+        discovered_files = {}  # path -> file_path mapping
+
+        logger.info(f"[ProjectInstructionsSection] Searching for instruction files in {len(self.context_paths)} context paths")
+
+        for ctx_path in self.context_paths:
+            path_str = ctx_path.get("path", "")
+            if not path_str:
+                continue
+
+            try:
+                path = Path(path_str).resolve()
+                logger.info(f"[ProjectInstructionsSection] Checking context path: {path}")
+
+                # Check if path IS an instruction file directly
+                if path.name in ["CLAUDE.md", "AGENTS.md"]:
+                    if path.exists() and path.is_file():
+                        discovered_files[str(path)] = path
+                        logger.info(f"Discovered project instruction file (explicit reference): {path}")
+                        continue
+
+                # Otherwise, discover from directory hierarchy
+                instruction_file = self.discover_instruction_file(path)
+                if instruction_file:
+                    discovered_files[str(instruction_file)] = instruction_file
+                    logger.info(f"Discovered project instruction file: {instruction_file}")
+
+            except Exception as e:
+                logger.warning(f"Error checking context path {path_str} for instruction files: {e}")
+
+        if not discovered_files:
+            logger.info("[ProjectInstructionsSection] No instruction files discovered")
+            return ""  # No instruction files found
+
+        # Read and format contents
+        content_parts = []
+
+        for file_path in discovered_files.values():
+            try:
+                contents = file_path.read_text(encoding="utf-8")
+                # Dedent/clean up any leading/trailing whitespace
+                contents = contents.strip()
+
+                logger.info(f"Successfully read project instruction file: {file_path} ({len(contents)} chars)")
+                content_parts.append(f"**From {file_path.name}** (`{file_path}`):")
+                content_parts.append(contents)
+
+            except Exception as e:
+                logger.warning(f"Could not read instruction file {file_path}: {e}")
+
+        if not content_parts:
+            return ""  # Failed to read any files
+
+        # Format with appropriate framing
+        # NOTE: We follow Claude in using a softer framing than strict "Follow these instructions"
+        # because this context may or may not be relevant to the current task
+        header = [
+            "The following project instructions were found in your context paths.",
+            "",
+            "**IMPORTANT**: This context may or may not be relevant to your current task.",
+            "Use these instructions as helpful reference material when applicable,",
+            "but do not feel obligated to follow guidance that doesn't apply to what you're doing.",
+            "",
+        ]
+
+        return "\n".join(header + content_parts)
 
 
 class CommandExecutionSection(SystemPromptSection):
