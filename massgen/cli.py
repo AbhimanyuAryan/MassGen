@@ -33,7 +33,7 @@ import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import questionary
 import yaml
@@ -214,7 +214,11 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
-def get_task_planning_prompt_prefix(plan_depth: str = "medium", enable_subagents: bool = False, broadcast_mode: str = "human") -> str:
+def get_task_planning_prompt_prefix(
+    plan_depth: str = "medium",
+    enable_subagents: bool = False,
+    broadcast_mode: Union[Literal["human", "agents"], bool] = "human",
+) -> str:
     """Generate the user prompt prefix for task planning mode.
 
     This prefix is prepended to the user's question when --plan mode is active.
@@ -554,7 +558,10 @@ async def read_multiline_input_async(
         loop = asyncio.get_running_loop()
         # Strip ANSI codes for fallback
         plain_prompt = prompt if not use_ansi_prompt else "User: "
-        first_line = await loop.run_in_executor(None, lambda: input(plain_prompt).strip())
+        first_line = await loop.run_in_executor(
+            None,
+            lambda: input(plain_prompt).strip(),
+        )
 
     # Check for multi-line delimiters
     if first_line.startswith('"""'):
@@ -1301,7 +1308,10 @@ def create_agents_from_config(
 
         # Inject two-tier workspace setting from coordination config
         orchestrator_section = orchestrator_config or {}
-        coordination_settings_for_injection = orchestrator_section.get("coordination", {})
+        coordination_settings_for_injection = orchestrator_section.get(
+            "coordination",
+            {},
+        )
         if coordination_settings_for_injection.get("use_two_tier_workspace", False):
             backend_config["use_two_tier_workspace"] = True
 
@@ -1504,7 +1514,7 @@ def create_agents_from_config(
                 enabled=True,
             )
             logger.info(
-                f"📊 Context monitor created for {agent_config.agent_id}: " f"{context_monitor.context_window:,} tokens, " f"trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%",
+                f"📊 Context monitor created for {agent_config.agent_id}: " f"{context_monitor.context_window:,} tokens, " f"trigger={trigger_threshold * 100:.0f}%, target={target_ratio * 100:.0f}%",
             )
 
         # Enable NLIP per-agent if configured in YAML
@@ -2379,7 +2389,7 @@ async def run_question_with_history(
     print(f"\n🤖 {BRIGHT_CYAN}{mode_text}{RESET}", flush=True)
     print(f"Agents: {', '.join(agents.keys())}", flush=True)
     if history:
-        print(f"History: {len(history)//2} previous exchanges", flush=True)
+        print(f"History: {len(history) // 2} previous exchanges", flush=True)
     print(f"Question: {question}", flush=True)
     print("\n" + "=" * 60, flush=True)
 
@@ -2442,11 +2452,11 @@ async def run_question_with_history(
             # Check if restart is needed
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
-                print(f"\n{'='*80}")
+                print(f"\n{'=' * 80}")
                 print(
                     f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
                 )
-                print(f"{'='*80}\n")
+                print(f"{'=' * 80}\n")
 
                 # Reset all agent backends to ensure clean state for next attempt
                 for agent_id, agent in orchestrator.agents.items():
@@ -2521,9 +2531,9 @@ async def run_question_with_history(
             agent_state = orchestrator.agent_states.get(selected_agent_id)
             if agent_state and agent_state.answer:
                 print(f"\n{BRIGHT_CYAN}📋 Selected winner: {selected_agent_id}{RESET}")
-                print(f"{BRIGHT_WHITE}{'-'*60}{RESET}")
+                print(f"{BRIGHT_WHITE}{'-' * 60}{RESET}")
                 print(agent_state.answer)
-                print(f"{BRIGHT_WHITE}{'-'*60}{RESET}")
+                print(f"{BRIGHT_WHITE}{'-' * 60}{RESET}")
 
         logger.info("Turn cancelled by user in multi-turn mode")
     finally:
@@ -2572,7 +2582,11 @@ async def run_question_with_history(
     log_dir = get_log_session_root()
     log_dir_name = log_dir.name  # Get log_YYYYMMDD_HHMMSS from path
 
-    session_id_to_use, updated_turn, normalized_response = await handle_session_persistence(
+    (
+        session_id_to_use,
+        updated_turn,
+        normalized_response,
+    ) = await handle_session_persistence(
         orchestrator,
         question,
         session_info,
@@ -2957,11 +2971,11 @@ async def run_single_question(
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
                 if display_type not in ("none", "silent"):
-                    print(f"\n{'='*80}")
+                    print(f"\n{'=' * 80}")
                     print(
                         f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
                     )
-                    print(f"{'='*80}\n")
+                    print(f"{'=' * 80}\n")
 
                 # Set log attempt BEFORE creating new UI so display gets correct path
                 # orchestrator.current_attempt was already incremented by _reset_for_restart()
@@ -4927,7 +4941,10 @@ async def run_interactive_mode(
             mode = f"Multi-Agent ({num_agents} agents)"
             mode_icon = "🤝"
         config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
-        config_table.add_row("  └─ Status:", "[dim]Agents will be created after first prompt[/dim]")
+        config_table.add_row(
+            "  └─ Status:",
+            "[dim]Agents will be created after first prompt[/dim]",
+        )
     elif len(agents) == 1:
         mode = "Single Agent"
         mode_icon = "🤖"
@@ -5350,7 +5367,7 @@ async def run_interactive_mode(
                             )
                             print("   Mode: Deferred creation", flush=True)
                         print(
-                            f"   History: {len(conversation_history)//2} exchanges",
+                            f"   History: {len(conversation_history) // 2} exchanges",
                             flush=True,
                         )
                         if config_path:
@@ -5515,7 +5532,9 @@ async def run_interactive_mode(
                                 original_config["orchestrator"]["context_paths"] = []
 
                             for ctx in new_paths:
-                                original_config["orchestrator"]["context_paths"].append(ctx)
+                                original_config["orchestrator"]["context_paths"].append(
+                                    ctx,
+                                )
                                 existing_paths.add(ctx["path"])
 
                             # Update orchestrator_cfg reference
@@ -5535,12 +5554,17 @@ async def run_interactive_mode(
                             session_storage_base=session_storage_base or SESSION_STORAGE,
                         )
                         if not agents:
-                            print(f"{BRIGHT_RED}❌ Failed to create agents{RESET}", flush=True)
+                            print(
+                                f"{BRIGHT_RED}❌ Failed to create agents{RESET}",
+                                flush=True,
+                            )
                             continue
                         print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
                     elif new_paths:
                         # Agents exist but we have new paths - need to recreate
-                        print(f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}")
+                        print(
+                            f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}",
+                        )
 
                         # Clean up existing agents before recreating to avoid resource leaks
                         for agent_id, agent in agents.items():
@@ -5549,7 +5573,9 @@ async def run_interactive_mode(
                                     try:
                                         agent.backend.filesystem_manager.cleanup()
                                     except Exception as e:
-                                        logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                                        logger.warning(
+                                            f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                        )
                                 if hasattr(agent.backend, "__aexit__"):
                                     await agent.backend.__aexit__(None, None, None)
 
@@ -5563,7 +5589,9 @@ async def run_interactive_mode(
                             filesystem_session_id=memory_session_id,
                             session_storage_base=session_storage_base or SESSION_STORAGE,
                         )
-                        print(f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}")
+                        print(
+                            f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}",
+                        )
                     if parsed.context_paths:
                         print()  # Add spacing after context path info
                 except PromptParserError as e:
@@ -5603,7 +5631,12 @@ async def run_interactive_mode(
                     "winning_agents_history": winning_agents_history,
                     "multi_turn": True,  # Enable soft cancellation (return to prompt instead of exit)
                 }
-                response, updated_session_id, updated_turn, was_cancelled = await run_question_with_history(
+                (
+                    response,
+                    updated_session_id,
+                    updated_turn,
+                    was_cancelled,
+                ) = await run_question_with_history(
                     question,
                     agents,
                     ui_config,
@@ -5635,7 +5668,7 @@ async def run_interactive_mode(
                     )
 
                     rich_console.print(
-                        f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history)//2} exchanges[/cyan]",
+                        f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history) // 2} exchanges[/cyan]",
                     )
                     rich_console.print(
                         "[dim]Tip: Use /inspect to view agent outputs[/dim]",
@@ -5921,11 +5954,21 @@ async def main(args):
             if "coordination" not in orchestrator_cfg_plan:
                 orchestrator_cfg_plan["coordination"] = {}
 
-            # Set broadcast to "human" so ask_others routes to user
-            orchestrator_cfg_plan["coordination"]["broadcast"] = "human"
+            # Broadcast mode: CLI flag wins; otherwise default to "human"
+            broadcast_arg = getattr(args, "broadcast", None)
+            if broadcast_arg == "false":
+                orchestrator_cfg_plan["coordination"]["broadcast"] = False
+            elif broadcast_arg is not None:
+                orchestrator_cfg_plan["coordination"]["broadcast"] = broadcast_arg
+            else:
+                orchestrator_cfg_plan["coordination"].setdefault("broadcast", "human")
 
             # Set plan_depth
-            orchestrator_cfg_plan["coordination"]["plan_depth"] = getattr(args, "plan_depth", "medium")
+            orchestrator_cfg_plan["coordination"]["plan_depth"] = getattr(
+                args,
+                "plan_depth",
+                "medium",
+            )
 
             # Auto-add cwd to context_paths if not already present
             if "context_paths" not in orchestrator_cfg_plan:
@@ -5939,7 +5982,11 @@ async def main(args):
                 )
                 logger.info(f"[Plan Mode] Auto-added cwd to context_paths: {cwd_str}")
 
-            logger.info(f"[Plan Mode] Enabled with depth={args.plan_depth}, broadcast=human")
+            logger.info(
+                "[Plan Mode] Enabled with depth=%s, broadcast=%s",
+                args.plan_depth,
+                orchestrator_cfg_plan["coordination"].get("broadcast"),
+            )
 
         # Check for prompt in config if not provided via CLI
         if not args.question and "prompt" in config:
@@ -6075,13 +6122,23 @@ async def main(args):
             else:
                 broadcast_mode = coordination_cfg.get("broadcast", "human")
 
-            planning_prefix = get_task_planning_prompt_prefix(plan_depth, enable_subagents=enable_subagents, broadcast_mode=broadcast_mode)
+            planning_prefix = get_task_planning_prompt_prefix(
+                plan_depth,
+                enable_subagents=enable_subagents,
+                broadcast_mode=broadcast_mode,
+            )
             args.question = planning_prefix + args.question
-            logger.info(f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, subagents={enable_subagents}, broadcast={broadcast_mode})")
+            logger.info(
+                f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, subagents={enable_subagents}, broadcast={broadcast_mode})",
+            )
 
         # For interactive mode without initial question, defer agent creation until first prompt
         # This allows @path references in the first prompt to be included in Docker mounts
-        is_interactive_without_question = not args.question and not getattr(args, "interactive_with_initial_question", None)
+        is_interactive_without_question = not args.question and not getattr(
+            args,
+            "interactive_with_initial_question",
+            None,
+        )
 
         if is_interactive_without_question:
             # Defer agent creation - will be done in run_interactive_mode after first prompt
@@ -6224,7 +6281,14 @@ async def main(args):
                         with ThreadPoolExecutor(
                             max_workers=len(agents_with_docker),
                         ) as executor:
-                            futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                            futures = {
+                                executor.submit(
+                                    cleanup_agent,
+                                    agent_id,
+                                    agent,
+                                ): agent_id
+                                for agent_id, agent in agents_with_docker
+                            }
                             for future in as_completed(futures):
                                 agent_id, error = future.result()
                                 if error:
@@ -6440,10 +6504,29 @@ def cli_main():
             prog="massgen serve",
             description="Run MassGen OpenAI-compatible server (FastAPI + Uvicorn)",
         )
-        serve_parser.add_argument("--host", type=str, default=None, help="Host to bind (default: 0.0.0.0)")
-        serve_parser.add_argument("--port", type=int, default=None, help="Port to bind (default: 4000)")
-        serve_parser.add_argument("--config", type=str, default=None, help="Default MassGen config file path")
-        serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
+        serve_parser.add_argument(
+            "--host",
+            type=str,
+            default=None,
+            help="Host to bind (default: 0.0.0.0)",
+        )
+        serve_parser.add_argument(
+            "--port",
+            type=int,
+            default=None,
+            help="Port to bind (default: 4000)",
+        )
+        serve_parser.add_argument(
+            "--config",
+            type=str,
+            default=None,
+            help="Default MassGen config file path",
+        )
+        serve_parser.add_argument(
+            "--reload",
+            action="store_true",
+            help="Enable auto-reload (dev only)",
+        )
 
         serve_args = serve_parser.parse_args(sys.argv[2:])
 
@@ -6481,7 +6564,12 @@ def cli_main():
             settings = replace(settings, **overrides)
 
         app = create_app(settings=settings)
-        uvicorn.run(app, host=settings.host, port=settings.port, reload=serve_args.reload)
+        uvicorn.run(
+            app,
+            host=settings.host,
+            port=settings.port,
+            reload=serve_args.reload,
+        )
         return
 
     # Handle 'export' subcommand specially before main argument parsing

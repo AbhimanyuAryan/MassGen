@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from massgen.logger_config import logger
 from massgen.tool._result import ExecutionResult, TextContent
@@ -289,8 +289,8 @@ async def understand_image(
         if not openai_api_key:
             return _error("OpenAI API key not found. Please set OPENAI_API_KEY in .env file or environment variable.")
 
-        # Initialize OpenAI client
-        client = OpenAI(api_key=openai_api_key)
+        # Initialize async OpenAI client
+        client = AsyncOpenAI(api_key=openai_api_key)
 
         # Use agent_cwd if available, otherwise fall back to Path.cwd()
         base_dir = Path(agent_cwd) if agent_cwd else Path.cwd()
@@ -333,7 +333,7 @@ async def understand_image(
                 content.append({"type": "input_image", "image_url": f"data:{img.mime_type};base64,{img.base64_data}"})
 
             # Call OpenAI API for image understanding
-            response = client.responses.create(
+            response = await client.responses.create(
                 model=model,
                 input=[{"role": "user", "content": content}],
             )
