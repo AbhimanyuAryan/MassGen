@@ -223,7 +223,7 @@ async def understand_image(
     in a single call for comparison or joint analysis.
 
     Args:
-        image_path: Path to a single image file (PNG/JPEG/JPG/GIF/WebP).
+        image_path: Path to a single image file (PNG/JPEG/JPG/WebP).
                    Use this for simple single-image analysis.
         prompt: Question or instruction about the image(s).
                 When using `images` dict, reference images by their keys.
@@ -259,7 +259,7 @@ async def understand_image(
     Security:
         - Requires valid OpenAI API key
         - Image files must exist and be readable
-        - Supports PNG, JPEG, JPG, GIF, and WebP formats
+        - Supports PNG, JPEG, JPG, and WebP formats
     """
 
     def _error(msg: str) -> ExecutionResult:
