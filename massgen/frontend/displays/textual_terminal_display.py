@@ -2367,9 +2367,10 @@ if TEXTUAL_AVAILABLE:
             # Agent navigation
             Binding("tab", "next_agent", "Next Agent"),
             Binding("shift+tab", "prev_agent", "Prev Agent"),
-            # Quit - Ctrl+D quits directly, Ctrl+C quits unless input is focused
+            # Quit - Ctrl+D quits directly
             Binding("ctrl+d", "quit", "Quit", show=False),
-            Binding("ctrl+c", "quit_unless_input_focused", "Quit", show=False),
+            # Ctrl+C - context-aware: clear input / cancel turn, double to quit
+            Binding("ctrl+c", "handle_ctrl_c", "Cancel/Quit", show=False),
             # CWD context toggle - priority so it works even when input focused
             Binding("ctrl+p", "toggle_cwd", "Toggle CWD", priority=True, show=False),
             # Help - Ctrl+G for guide/help
@@ -3527,14 +3528,31 @@ Type your question and press Enter to ask the agents.
             """Quit the application."""
             self.exit()
 
-        def action_quit_unless_input_focused(self) -> None:
-            """Quit unless input is focused (let input widget handle Ctrl+C)."""
-            # Check if question_input has focus - if so, let widget handle it
+        def action_handle_ctrl_c(self) -> None:
+            """Handle Ctrl+C: clear input / cancel turn, or quit if nothing to do."""
+            # Check if input is focused and has content
             if hasattr(self, "question_input") and self.question_input.has_focus:
-                # Widget will handle via its own Ctrl+C binding
-                return
-            # Not focused on input - quit immediately
-            self.exit()
+                if self.question_input.value:
+                    # Clear input
+                    self.question_input.value = ""
+                    self.notify("Input cleared", timeout=1)
+                    return
+
+            # Check if there's an active turn to cancel
+            has_active_turn = (
+                hasattr(self.coordination_display, "_user_quit_requested")
+                and not self.coordination_display._user_quit_requested
+                and hasattr(self.coordination_display, "orchestrator")
+                and self.coordination_display.orchestrator is not None
+            )
+
+            if has_active_turn:
+                # Cancel the turn
+                self.coordination_display.request_cancellation()
+                self.notify("Cancelling turn...", severity="warning", timeout=2)
+            else:
+                # Nothing to cancel, input empty - quit
+                self.exit()
 
         def action_toggle_cwd(self) -> None:
             """Toggle CWD auto-include (Ctrl+P binding)."""
@@ -4164,9 +4182,9 @@ Type your question and press Enter to ask the agents.
 
             key_lower = key.lower()
 
-            # q - Cancel/quit current execution
+            # q - Exit scroll mode and go to bottom
             if key_lower == "q":
-                self.coordination_display.request_cancellation()
+                self._exit_scroll_mode()
                 event.stop()
                 return True
 
@@ -4245,12 +4263,6 @@ Type your question and press Enter to ask the agents.
                     self.question_input.focus()
                     event.stop()
                     return True
-
-            # g or G - Exit scroll mode and go to bottom (like tmux)
-            if key_lower == "g":
-                self._exit_scroll_mode()
-                event.stop()
-                return True
 
             # Escape when not in input - show hint or exit scroll mode
             if event.key == "escape":

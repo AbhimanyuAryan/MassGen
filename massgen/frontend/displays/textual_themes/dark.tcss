@@ -1431,7 +1431,7 @@ ToolCallCard {
     min-height: 2;
     max-height: 6;
     padding: 0 1;
-    margin: 0 0 1 0;
+    margin: 0 0 1 1;
     background: #161b22;
     border-left: thick #484f58;
     border-top: solid #30363d;
@@ -1622,7 +1622,8 @@ AgentPanel .streaming_label {
 
 TimelineSection .timeline-text {
     width: 100%;
-    padding: 0 0 1 0;
+    padding: 0 0 1 1;
+    margin-left: 1;
 }
 
 TimelineSection .timeline-text.status {
@@ -1732,16 +1733,15 @@ TimelineSection .timeline-text.truncation-notice {
     padding: 0 1;
 }
 
+/* Scroll mode indicator - centered, minimal bar */
 TimelineSection .scroll-indicator {
+    dock: top;
     width: 100%;
     height: auto;
-    background: #2d333b;
-    color: #f0883e;
+    background: #21262d;
+    color: #7d8590;
     text-align: center;
-    padding: 0 1;
-    margin-top: 1;
-    text-style: bold;
-    border-bottom: solid #f0883e;
+    padding: 0;
 }
 
 TimelineSection .scroll-indicator.hidden {

@@ -682,9 +682,11 @@ class TimelineSection(Vertical):
         try:
             indicator = self.query_one("#scroll_mode_indicator", Static)
             if self._scroll_mode:
-                msg = "📜 SCROLL MODE — Press 'g' or Esc to resume auto-scroll"
+                # Compact pill format
                 if self._new_content_count > 0:
-                    msg += f" ({self._new_content_count} new)"
+                    msg = f"↑ Scrolling ({self._new_content_count} new) · q/Esc"
+                else:
+                    msg = "↑ Scrolling · q/Esc"
                 indicator.update(msg)
                 indicator.remove_class("hidden")
             else:
