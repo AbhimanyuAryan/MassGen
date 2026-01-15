@@ -2367,9 +2367,9 @@ if TEXTUAL_AVAILABLE:
             # Agent navigation
             Binding("tab", "next_agent", "Next Agent"),
             Binding("shift+tab", "prev_agent", "Prev Agent"),
-            # Quit - Ctrl+D quits directly, Ctrl+C is handled by input widget
-            # (first Ctrl+C clears, second consecutive Ctrl+C quits)
+            # Quit - Ctrl+D quits directly, Ctrl+C quits unless input is focused
             Binding("ctrl+d", "quit", "Quit", show=False),
+            Binding("ctrl+c", "quit_unless_input_focused", "Quit", show=False),
             # CWD context toggle - priority so it works even when input focused
             Binding("ctrl+p", "toggle_cwd", "Toggle CWD", priority=True, show=False),
             # Help - Ctrl+G for guide/help
@@ -3525,6 +3525,15 @@ Type your question and press Enter to ask the agents.
         @keyboard_action
         def action_quit(self):
             """Quit the application."""
+            self.exit()
+
+        def action_quit_unless_input_focused(self) -> None:
+            """Quit unless input is focused (let input widget handle Ctrl+C)."""
+            # Check if question_input has focus - if so, let widget handle it
+            if hasattr(self, "question_input") and self.question_input.has_focus:
+                # Widget will handle via its own Ctrl+C binding
+                return
+            # Not focused on input - quit immediately
             self.exit()
 
         def action_toggle_cwd(self) -> None:

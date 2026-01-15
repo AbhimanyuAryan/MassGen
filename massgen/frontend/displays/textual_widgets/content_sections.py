@@ -469,10 +469,17 @@ class TimelineScrollContainer(ScrollableContainer):
         try:
             vscroll = self.vertical_scrollbar
             scrollbar_pos = vscroll.position if vscroll else "N/A"
-            vscroll.size if vscroll else "N/A"
             window_size = vscroll.window_size if vscroll else "N/A"
             window_virtual_size = vscroll.window_virtual_size if vscroll else "N/A"
             self._log(f"watch_scroll_y: scroll_y={new_value:.1f} max={self.max_scroll_y:.1f} | scrollbar pos={scrollbar_pos} window_size={window_size} virtual={window_virtual_size}")
+            # Manually sync scrollbar position (Textual might not be doing this automatically)
+            if vscroll and self.max_scroll_y > 0:
+                # position is in units of the scrollbar, need to map scroll_y to position
+                # position should go from 0 to (virtual_size - window_size)
+                new_pos = int(new_value)
+                if vscroll.position != new_pos:
+                    vscroll.position = new_pos
+                    self._log(f"watch_scroll_y: SET scrollbar.position = {new_pos}")
         except Exception as e:
             self._log(f"watch_scroll_y: old={old_value:.1f} new={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling} (scrollbar error: {e})")
 
