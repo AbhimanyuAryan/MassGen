@@ -1188,7 +1188,7 @@ result = asyncio.run(massgen.run(
 print(result["final_answer"])  # Consensus answer from winning agent
 ```
 
-> **Full API reference:** [Programmatic API Guide](https://docs.massgen.ai/en/latest/user_guide/programmatic_api.html)
+> **Full API reference:** [Programmatic API Guide](https://docs.massgen.ai/en/latest/user_guide/integration/python_api.html)
 
 ---
 
