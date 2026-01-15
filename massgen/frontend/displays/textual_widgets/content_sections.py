@@ -469,8 +469,10 @@ class TimelineScrollContainer(ScrollableContainer):
         try:
             vscroll = self.vertical_scrollbar
             scrollbar_pos = vscroll.position if vscroll else "N/A"
-            scrollbar_size = vscroll.size if vscroll else "N/A"
-            self._log(f"watch_scroll_y: old={old_value:.1f} new={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling} scrollbar_pos={scrollbar_pos} scrollbar_size={scrollbar_size}")
+            vscroll.size if vscroll else "N/A"
+            window_size = vscroll.window_size if vscroll else "N/A"
+            window_virtual_size = vscroll.window_virtual_size if vscroll else "N/A"
+            self._log(f"watch_scroll_y: scroll_y={new_value:.1f} max={self.max_scroll_y:.1f} | scrollbar pos={scrollbar_pos} window_size={window_size} virtual={window_virtual_size}")
         except Exception as e:
             self._log(f"watch_scroll_y: old={old_value:.1f} new={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling} (scrollbar error: {e})")
 
@@ -512,6 +514,13 @@ class TimelineScrollContainer(ScrollableContainer):
             self._auto_scrolling = True
             super(TimelineScrollContainer, self).scroll_end(animate=animate)
             self._log(f"do_scroll after super().scroll_end: scroll_y={self.scroll_y:.1f}")
+            # Force scrollbar refresh
+            try:
+                if self.vertical_scrollbar:
+                    self.vertical_scrollbar.refresh()
+                    self._log("do_scroll: forced scrollbar refresh")
+            except Exception as e:
+                self._log(f"do_scroll: scrollbar refresh error: {e}")
             # Reset flag after a brief delay to allow scroll events to be processed
             self.set_timer(0.1, self._reset_auto_scroll)
 

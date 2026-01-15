@@ -1563,6 +1563,11 @@ TimelineSection TimelineScrollContainer {
     background: #ffffff;
     overflow-y: auto;
     scrollbar-size: 2 2;
+    scrollbar-gutter: stable;
+    scrollbar-background: #e1e4e8;
+    scrollbar-color: #959da5;
+    scrollbar-color-hover: #6a737d;
+    scrollbar-color-active: #24292e;
 }
 
 /* Hide legacy RichLog in AgentPanel - using TimelineSection now */

@@ -2367,8 +2367,8 @@ if TEXTUAL_AVAILABLE:
             # Agent navigation
             Binding("tab", "next_agent", "Next Agent"),
             Binding("shift+tab", "prev_agent", "Prev Agent"),
-            # Quit - canonical shortcuts
-            Binding("ctrl+c", "quit", "Quit", priority=True),
+            # Quit - Ctrl+D quits directly, Ctrl+C is handled by input widget
+            # (first Ctrl+C clears, second consecutive Ctrl+C quits)
             Binding("ctrl+d", "quit", "Quit", show=False),
             # CWD context toggle - priority so it works even when input focused
             Binding("ctrl+p", "toggle_cwd", "Toggle CWD", priority=True, show=False),
@@ -2784,6 +2784,16 @@ if TEXTUAL_AVAILABLE:
             """Handle Tab press while autocomplete is active - select current item."""
             if event.input.id == "question_input" and hasattr(self, "_path_dropdown") and self._path_dropdown.is_showing:
                 self._path_dropdown._select_current()
+
+        def on_multi_line_input_quit_requested(self, event: MultiLineInput.QuitRequested) -> None:
+            """Handle Ctrl+C on empty input - quit the application."""
+            if event.input.id == "question_input":
+                self.exit()
+
+        def on_multi_line_input_quit_pending(self, event: MultiLineInput.QuitPending) -> None:
+            """Handle first Ctrl+C - show hint to press again to quit."""
+            if event.input.id == "question_input":
+                self.notify("Press Ctrl+C again to quit", severity="warning", timeout=3)
 
         def on_path_suggestion_dropdown_path_selected(self, event: PathSuggestionDropdown.PathSelected) -> None:
             """Handle path selection from autocomplete dropdown."""

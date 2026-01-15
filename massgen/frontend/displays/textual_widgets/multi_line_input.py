@@ -44,7 +44,7 @@ class MultiLineInput(TextArea):
         Binding("enter", "submit", "Submit", priority=True),
         Binding("shift+enter", "newline", "New Line", priority=True),
         Binding("ctrl+j", "newline", "New Line", show=False),
-        Binding("ctrl+u", "clear_input", "Clear", show=False),
+        Binding("ctrl+c", "clear_or_quit", "Clear/Quit", priority=True),
     ]
 
     class Submitted(Message, bubble=True):
@@ -91,6 +91,20 @@ class MultiLineInput(TextArea):
             super().__init__()
             self.input = input
 
+    class QuitRequested(Message, bubble=True):
+        """Message sent when user presses Ctrl+C on empty input to quit."""
+
+        def __init__(self, input: "MultiLineInput") -> None:
+            super().__init__()
+            self.input = input
+
+    class QuitPending(Message, bubble=True):
+        """Message sent when first Ctrl+C pressed - show 'press again to quit' hint."""
+
+        def __init__(self, input: "MultiLineInput") -> None:
+            super().__init__()
+            self.input = input
+
     def __init__(
         self,
         placeholder: str = "",
@@ -130,6 +144,9 @@ class MultiLineInput(TextArea):
         # Paste summarization state
         self._pasted_blocks: List[Tuple[int, str, int]] = []  # (paste_id, full_text, line_count)
         self._paste_counter: int = 0
+
+        # Ctrl+C double-press tracking for quit
+        self._awaiting_quit_confirm: bool = False  # True after first Ctrl+C on empty input
 
         # Thresholds for paste summarization
         self.PASTE_LINE_THRESHOLD = 10
@@ -264,9 +281,20 @@ class MultiLineInput(TextArea):
             return
         self.insert("\n")
 
-    def action_clear_input(self) -> None:
-        """Clear the input text (Ctrl+U)."""
-        self.clear()
+    def action_clear_or_quit(self) -> None:
+        """Clear input on Ctrl+C, quit on second Ctrl+C when empty."""
+        if self._awaiting_quit_confirm:
+            # Second Ctrl+C - request quit
+            self.post_message(self.QuitRequested(self))
+        elif self.text.strip():
+            # Has text - clear it and show quit hint
+            self.clear()
+            self._awaiting_quit_confirm = True
+            self.post_message(self.QuitPending(self))
+        else:
+            # Empty but first Ctrl+C - show quit hint
+            self._awaiting_quit_confirm = True
+            self.post_message(self.QuitPending(self))
 
     def _enter_normal_mode(self) -> None:
         """Enter vim normal mode."""
@@ -290,6 +318,10 @@ class MultiLineInput(TextArea):
 
     def on_key(self, event: events.Key) -> None:
         """Handle key events for vim mode and autocomplete."""
+        # Reset quit confirmation flag when any other key is pressed
+        # (Ctrl+C is handled via bindings, not here, so any key here breaks the sequence)
+        self._awaiting_quit_confirm = False
+
         # When autocomplete is active, intercept Tab to prevent focus change
         if self._autocomplete_active and event.key == "tab":
             # Post a message that the app can handle for selection

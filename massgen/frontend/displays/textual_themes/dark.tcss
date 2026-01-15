@@ -1604,6 +1604,11 @@ TimelineSection TimelineScrollContainer {
     background: #0d1117;
     overflow-y: auto;
     scrollbar-size: 2 2;
+    scrollbar-gutter: stable;
+    scrollbar-background: #21262d;
+    scrollbar-color: #484f58;
+    scrollbar-color-hover: #6e7681;
+    scrollbar-color-active: #8b949e;
 }
 
 /* Hide legacy RichLog in AgentPanel - using TimelineSection now */
@@ -2172,7 +2177,8 @@ StatusBar.consensus-reached #status_votes {
 }
 
 /* === Timeline Modal === */
-#timeline_container {
+/* Note: This is for the modal timeline, not the main TimelineSection timeline_container */
+#timeline_modal_container {
     width: 95%;
     height: 85%;
     background: #252526;
