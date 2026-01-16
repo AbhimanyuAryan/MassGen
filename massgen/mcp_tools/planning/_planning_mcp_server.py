@@ -98,6 +98,10 @@ def _load_plan_from_filesystem(agent_id: str) -> Optional[TaskPlan]:
     """
     Load task plan from filesystem if it exists.
 
+    Handles two formats:
+    1. Full serialized format: {agent_id, tasks, created_at, updated_at, subagents}
+    2. Simplified format: {tasks: [...]} - used by plan_and_execute frozen plans
+
     Args:
         agent_id: Agent identifier
 
@@ -113,8 +117,32 @@ def _load_plan_from_filesystem(agent_id: str) -> Optional[TaskPlan]:
 
     try:
         plan_data = json.loads(plan_file.read_text())
-        plan = TaskPlan.from_dict(plan_data)
-        logger.debug(f"[PlanningMCP] Loaded plan from filesystem with {len(plan.tasks)} tasks")
+
+        # Check if this is the full serialized format or simplified format
+        if "agent_id" in plan_data and "created_at" in plan_data:
+            # Full format - use from_dict
+            plan = TaskPlan.from_dict(plan_data)
+            logger.info(f"[PlanningMCP] Loaded plan from filesystem (full format) with {len(plan.tasks)} tasks")
+        else:
+            # Simplified format - just has {"tasks": [...]}
+            # Create a new TaskPlan and add tasks manually
+            plan = TaskPlan(agent_id=agent_id)
+            tasks_data = plan_data.get("tasks", [])
+
+            for task_spec in tasks_data:
+                # Handle both string tasks and dict tasks
+                if isinstance(task_spec, str):
+                    plan.add_task(description=task_spec)
+                else:
+                    plan.add_task(
+                        description=task_spec.get("description", ""),
+                        task_id=task_spec.get("id"),
+                        depends_on=task_spec.get("depends_on", []),
+                        priority=task_spec.get("priority", "medium"),
+                    )
+
+            logger.info(f"[PlanningMCP] Loaded plan from filesystem (simplified format) with {len(plan.tasks)} tasks")
+
         return plan
     except Exception as e:
         logger.warning(f"[PlanningMCP] Failed to load plan from filesystem: {e}")
