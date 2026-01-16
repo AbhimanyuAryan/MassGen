@@ -93,6 +93,39 @@ Screen {
     height: 100%;
 }
 
+/* === Swimlane Mode === */
+/* When .swimlane is added to #agents_container, show agents side-by-side */
+#agents_container.swimlane {
+    layout: horizontal;
+    overflow-x: auto;
+}
+
+#agents_container.swimlane AgentPanel {
+    width: 1fr;
+    min-width: 40;
+    max-width: 100;
+    height: 100%;
+    border-right: solid #30363d;
+    display: block;
+}
+
+#agents_container.swimlane AgentPanel:last-of-type {
+    border-right: none;
+}
+
+/* In swimlane mode, show all agents (remove hidden) */
+#agents_container.swimlane AgentPanel.hidden {
+    display: block;
+}
+
+/* Swimlane agent header - more compact */
+#agents_container.swimlane AgentPanel > Vertical > Label:first-of-type {
+    height: 2;
+    padding: 0 1;
+    background: #161b22;
+    border-bottom: solid #30363d;
+}
+
 /* === Agent Tab Bar === */
 /* NOTE: No dock: top - flows naturally below HeaderWidget */
 AgentTabBar {
@@ -392,17 +425,19 @@ AgentPanel.agent-color-8 { border-left: thick #f85149; border-right: none; }
 }
 
 /* Compact Header - Shows question and turn info */
-/* HeaderWidget - hidden for now */
 HeaderWidget {
-    display: none;
+    dock: top;
+    height: auto;
+    width: 100%;
+    padding: 0 1;
+    background: #0d1117;
+    color: #8b949e;
+    border-bottom: solid #30363d;
 }
 
 HeaderWidget.hidden {
     display: none;
 }
-
-/* Note: HeaderWidget styling is handled by the class selector above.
-   The #header_widget ID selector was removed to avoid CSS conflicts. */
 
 /* Input area container - docks to bottom */
 #input_area {
@@ -779,23 +814,23 @@ ToolDetailModal > Container {
 }
 
 ToolDetailModal .modal-header {
-    height: 3;
+    height: auto;
     width: 100%;
     padding: 0 1;
     layout: horizontal;
+    align: left middle;
 }
 
 ToolDetailModal .modal-title {
     width: 1fr;
+    height: auto;
     text-style: bold;
     color: #e6edf3;
 }
 
 ToolDetailModal .modal-close {
-    dock: right;
-    width: 5;
-    min-width: 5;
-    height: 3;
+    width: 3;
+    height: 1;
     content-align: center middle;
     text-align: center;
     background: #21262d;
@@ -846,7 +881,7 @@ ToolDetailModal .error-content {
 }
 
 ToolDetailModal .modal-footer {
-    height: 3;
+    height: auto;
     width: 100%;
     align: center middle;
     margin-top: 1;
@@ -1227,28 +1262,41 @@ ToolDetailModal .close-button {
 /* === Agent Output Modal === */
 #agent_output_container {
     width: 95%;
-    height: 92%;
-    background: #252526;
+    height: 90%;
+    background: #161b22;
     border: solid #4ec9b0;
     padding: 1 2;
+    layout: vertical;
 }
 
 #agent_output_header {
     color: #4ec9b0;
     text-style: bold;
+    height: auto;
     margin-bottom: 1;
+}
+
+#agent_output_prompt {
+    color: #79c0ff;
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+    background: #0d1117;
+    border: solid #30363d;
 }
 
 #agent_output_stats {
     color: #858585;
+    height: auto;
     margin-bottom: 1;
 }
 
 #agent_output_text {
     height: 1fr;
-    background: #1e1e1e;
+    min-height: 10;
+    background: #0d1117;
     color: #d4d4d4;
-    border: solid #3d4550;
+    border: solid #30363d;
     padding: 1;
 }
 
@@ -1268,7 +1316,9 @@ ToolDetailModal .close-button {
 }
 
 #agent_output_buttons {
+    height: auto;
     margin-top: 1;
+    align: left middle;
 }
 
 #agent_output_buttons Button {
@@ -1622,7 +1672,7 @@ AgentPanel .streaming_label {
 
 TimelineSection .timeline-text {
     width: 100%;
-    padding: 0 0 1 1;
+    padding: 0 0 0 1;
     margin-left: 1;
 }
 
@@ -1723,7 +1773,8 @@ TimelineSection .timeline-text.vote {
     margin-left: 1;
 }
 
-TimelineSection .timeline-text.truncation-notice {
+TimelineSection .timeline-text.truncation-notice,
+TimelineSection .truncation-notice {
     color: #8b949e;
     text-style: italic;
     text-align: center;
@@ -2084,26 +2135,21 @@ StatusBar.consensus-reached #status_votes {
 
 .answer-item {
     margin: 0 0 1 0;
-    padding: 0 1;
+    padding: 1;
+    background: #161b22;
+    border: solid #30363d;
     border-left: thick #569cd6;
 }
 
-/* Agent-specific colors for answer items */
-.answer-item.agent-color-0 {
-    border-left: thick #4ec9b0;  /* Cyan/teal - Agent A */
-}
-
-.answer-item.agent-color-1 {
-    border-left: thick #c586c0;  /* Magenta/purple - Agent B */
-}
-
-.answer-item.agent-color-2 {
-    border-left: thick #dcdcaa;  /* Yellow - Agent C */
-}
-
-.answer-item.agent-color-3 {
-    border-left: thick #ce9178;  /* Orange - Agent D */
-}
+/* Agent-specific colors for answer items - matches AgentPanel/AgentTab palette */
+.answer-item.agent-color-1 { border-left: thick #58a6ff; }  /* Blue */
+.answer-item.agent-color-2 { border-left: thick #3fb950; }  /* Green */
+.answer-item.agent-color-3 { border-left: thick #a371f7; }  /* Purple */
+.answer-item.agent-color-4 { border-left: thick #f0883e; }  /* Orange */
+.answer-item.agent-color-5 { border-left: thick #39c5cf; }  /* Cyan */
+.answer-item.agent-color-6 { border-left: thick #db61a2; }  /* Pink */
+.answer-item.agent-color-7 { border-left: thick #d29922; }  /* Yellow */
+.answer-item.agent-color-8 { border-left: thick #f85149; }  /* Red */
 
 .answer-item:hover {
     background: #2a2d2e;
@@ -2117,21 +2163,15 @@ StatusBar.consensus-reached #status_votes {
     background: #264f78;
 }
 
-.answer-item-selected.agent-color-0 {
-    border-left: thick #6fe8d0;  /* Brighter cyan when selected */
-}
-
-.answer-item-selected.agent-color-1 {
-    border-left: thick #e5a6e0;  /* Brighter magenta when selected */
-}
-
-.answer-item-selected.agent-color-2 {
-    border-left: thick #ffffaa;  /* Brighter yellow when selected */
-}
-
-.answer-item-selected.agent-color-3 {
-    border-left: thick #eeb198;  /* Brighter orange when selected */
-}
+/* Brighter colors when selected */
+.answer-item-selected.agent-color-1 { border-left: thick #79b8ff; }
+.answer-item-selected.agent-color-2 { border-left: thick #56d364; }
+.answer-item-selected.agent-color-3 { border-left: thick #bc8cff; }
+.answer-item-selected.agent-color-4 { border-left: thick #ffa657; }
+.answer-item-selected.agent-color-5 { border-left: thick #56d4dd; }
+.answer-item-selected.agent-color-6 { border-left: thick #f778ba; }
+.answer-item-selected.agent-color-7 { border-left: thick #e3b341; }
+.answer-item-selected.agent-color-8 { border-left: thick #ff7b72; }
 
 #answer_detail_panel {
     width: 65%;
@@ -2176,36 +2216,48 @@ StatusBar.consensus-reached #status_votes {
     height: 3;
 }
 
-/* === Timeline Modal === */
-/* Note: This is for the modal timeline, not the main TimelineSection timeline_container */
+/* === Timeline Modal (Swimlane View) === */
 #timeline_modal_container {
     width: 95%;
-    height: 85%;
-    background: #252526;
-    border: solid #c586c0;
+    height: 90%;
+    background: #161b22;
+    border: solid #a371f7;
     padding: 1 2;
+    layout: vertical;
 }
 
 #timeline_header {
-    color: #c586c0;
+    color: #a371f7;
     text-style: bold;
+    height: auto;
     margin-bottom: 1;
 }
 
 #timeline_legend {
-    color: #858585;
+    color: #8b949e;
+    height: auto;
+    padding: 0 1;
     margin-bottom: 1;
+    background: #0d1117;
+    border: solid #30363d;
 }
 
 #timeline_content {
     height: 1fr;
-    background: #1e1e1e;
-    border: solid #3d4550;
-    padding: 1;
+    background: #0d1117;
+    border: solid #30363d;
+    padding: 1 2;
+    overflow-y: auto;
 }
 
 #timeline_diagram {
-    color: #d4d4d4;
+    color: #e6edf3;
+}
+
+#close_timeline_button {
+    margin-top: 1;
+    width: auto;
+    align: center middle;
 }
 
 /* === Workspace Browser Modal === */
@@ -2225,14 +2277,29 @@ StatusBar.consensus-reached #status_votes {
     margin-bottom: 1;
 }
 
-#workspace_answer_row {
+#workspace_selector_row {
     height: 3;
     margin-bottom: 1;
+    width: 100%;
 }
 
-#workspace_answer_label {
+#workspace_agent_filter_container {
+    width: 45%;
+    height: 100%;
+}
+
+#workspace_answer_container {
+    width: 55%;
+    height: 100%;
+}
+
+#workspace_agent_label, #workspace_answer_label {
     width: auto;
     padding-right: 1;
+}
+
+#agent_filter_selector {
+    width: 1fr;
 }
 
 #answer_selector {
@@ -2294,6 +2361,7 @@ StatusBar.consensus-reached #status_votes {
 
 /* === Unified Browser Modal (Tabs) === */
 #browser_tabs_container {
+    layout: vertical;
     width: 90%;
     max-width: 140;
     height: 85%;
@@ -2303,7 +2371,8 @@ StatusBar.consensus-reached #status_votes {
 }
 
 #browser_tab_bar {
-    height: 3;
+    height: auto;
+    min-height: 3;
     background: #21262d;
     padding: 1 2;
     margin-bottom: 1;

@@ -188,25 +188,28 @@ class ToolDetailModal(ModalScreen[None]):
 
             yield Static("─" * 60, classes="modal-divider")
 
-            # Arguments section
-            if self.args:
-                yield Static("ARGUMENTS", classes="modal-section-title")
-                with ScrollableContainer(classes="modal-content"):
+            # Arguments section - always show, with placeholder if not available
+            yield Static("ARGUMENTS", classes="modal-section-title")
+            with ScrollableContainer(classes="modal-content"):
+                if self.args:
                     yield Static(self.args, classes="args-content")
+                else:
+                    yield Static("[dim]Arguments not captured[/]", classes="args-content", markup=True)
 
-            # Result or Error section
+            # Result/Error section - always show, with status-based placeholder
             if self.error:
                 yield Static("ERROR", classes="modal-section-title")
                 with ScrollableContainer(classes="modal-content"):
                     yield Static(self.error, classes="error-content")
-            elif self.result:
-                yield Static("RESULT", classes="modal-section-title")
+            else:
+                yield Static("OUTPUT", classes="modal-section-title")
                 with ScrollableContainer(classes="modal-content"):
-                    yield Static(self.result, classes="result-content")
-            elif self.status == "running":
-                yield Static("STATUS", classes="modal-section-title")
-                with Container(classes="modal-content"):
-                    yield Static("⏳ Tool is running...", classes="args-content")
+                    if self.result:
+                        yield Static(self.result, classes="result-content")
+                    elif self.status == "running":
+                        yield Static("[dim]⏳ Waiting for output...[/]", classes="result-content", markup=True)
+                    else:
+                        yield Static("[dim]No output captured[/]", classes="result-content", markup=True)
 
             # Footer with expand (if long content) and close button
             with Container(classes="modal-footer"):

@@ -639,7 +639,7 @@ class TimelineSection(Vertical):
     """
 
     # Maximum number of items to keep in timeline (prevents memory/performance issues)
-    MAX_TIMELINE_ITEMS = 200
+    MAX_TIMELINE_ITEMS = 75
 
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
@@ -737,8 +737,8 @@ class TimelineSection(Vertical):
             container = self.query_one("#timeline_container", TimelineScrollContainer)
             children = list(container.children)
 
-            # Skip the scroll indicator if present
-            content_children = [c for c in children if "scroll-indicator" not in c.classes]
+            # Skip the scroll indicator and truncation notice if present
+            content_children = [c for c in children if "scroll-indicator" not in c.classes and "truncation-notice" not in c.classes]
 
             # Calculate how many to remove
             items_to_remove = len(content_children) - self.MAX_TIMELINE_ITEMS
@@ -746,22 +746,32 @@ class TimelineSection(Vertical):
             if items_to_remove <= 0:
                 return
 
-            # Show truncation message once
+            # Show truncation notice once at the top
             if not self._truncation_shown:
                 self._truncation_shown = True
-                # TODO: Add truncation notice at the top when needed
+                from textual.widgets import Static
 
-            # Remove the oldest items (first N content children)
-            for i, child in enumerate(content_children[:items_to_remove]):
+                truncation_notice = Static(
+                    f"[dim]⋯ Earlier output truncated (showing last {self.MAX_TIMELINE_ITEMS} items)[/]",
+                    classes="truncation-notice",
+                    markup=True,
+                )
+                # Insert at the beginning
+                if content_children:
+                    container.mount(truncation_notice, before=content_children[0])
+
+            # Remove the oldest items (first N content children, after truncation notice)
+            removed_count = 0
+            for child in content_children[:items_to_remove]:
                 # Don't remove tool cards that might still be running
                 if hasattr(child, "tool_id") and child.tool_id in self._tools:
                     tool_card = self._tools.get(child.tool_id)
                     if tool_card and hasattr(tool_card, "_status") and tool_card._status == "running":
                         continue
                     # Remove from tools dict
-                    if hasattr(child, "tool_id"):
-                        self._tools.pop(child.tool_id, None)
+                    self._tools.pop(child.tool_id, None)
                 child.remove()
+                removed_count += 1
                 self._item_count -= 1
 
         except Exception:
@@ -876,7 +886,13 @@ class TimelineSection(Vertical):
             style: Rich style string
             text_class: CSS class (status, thinking, response)
         """
-        if not content.strip():
+        # Clean up excessive whitespace - collapse multiple newlines to single
+        import re
+
+        content = re.sub(r"\n{3,}", "\n\n", content)  # Max 2 consecutive newlines
+        content = content.strip()
+
+        if not content:
             return
 
         self._item_count += 1

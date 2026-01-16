@@ -3097,6 +3097,8 @@ if TEXTUAL_AVAILABLE:
                     self._toggle_vim_mode()
                 elif cmd in ("/history", "/hist"):
                     self._show_history_modal()
+                elif cmd in ("/timeline", "/t"):
+                    self.action_open_timeline()
                 else:
                     self.notify(f"Unknown command: {command}", severity="warning")
 
@@ -3780,28 +3782,26 @@ Type your question and press Enter to ask the agents.
         @keyboard_action
         def action_open_workspace_browser(self):
             """Open workspace browser modal to view answer snapshots."""
-            # Get current workspace path from first agent's filesystem manager
-            current_workspace_path = None
+            # Get current workspace paths for ALL agents
+            agent_workspace_paths: Dict[str, str] = {}
             orchestrator = getattr(self.coordination_display, "orchestrator", None)
             if orchestrator:
-                # Try to get workspace from any agent with a filesystem manager
-                for agent in getattr(orchestrator, "agents", {}).values():
+                for agent_id, agent in getattr(orchestrator, "agents", {}).items():
                     fm = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
                     if fm:
                         workspace = getattr(fm, "get_current_workspace", lambda: None)()
                         if workspace:
-                            current_workspace_path = str(workspace)
-                            break
+                            agent_workspace_paths[agent_id] = str(workspace)
 
             # Allow opening even without answers if we have current workspace
-            if not self._answers and not current_workspace_path:
+            if not self._answers and not agent_workspace_paths:
                 self.notify("No answers yet - workspaces available after agents submit", severity="warning", timeout=3)
                 return
             self._show_modal_async(
                 WorkspaceBrowserModal(
                     answers=self._answers,
                     agent_ids=self.coordination_display.agent_ids,
-                    current_workspace_path=current_workspace_path,
+                    agent_workspace_paths=agent_workspace_paths,
                 ),
             )
 
@@ -4603,7 +4603,7 @@ Type your question and press Enter to ask the agents.
                         "outputs": self.coordination_display.get_agent_content(aid),
                         "model": agent_model,
                     }
-            self._show_modal_async(AgentOutputModal(agent_id, agent_outputs, model_name, all_agents))
+            self._show_modal_async(AgentOutputModal(agent_id, agent_outputs, model_name, all_agents, self._current_question))
 
         def on_resize(self, event: events.Resize) -> None:
             """Refresh widgets when the terminal window is resized with debounce."""
@@ -4674,16 +4674,16 @@ Type your question and press Enter to ask the agents.
 
         def _build_status_line(self) -> str:
             """Build compact status line with optional question preview."""
-            session_id_display = self.session_id or "new"
             num_agents = len(self.agents_info)
             base = f"🤖 MassGen | {num_agents} agents | Turn {self.turn}"
 
             # Add truncated question if available
             if self.question and self.question != "Welcome! Type your question below...":
-                # Truncate question to fit in header (max ~40 chars)
-                q = self.question[:40] + "..." if len(self.question) > 40 else self.question
+                # Truncate question to fit in header (max ~100 chars for better visibility)
+                q = self.question.replace("\n", " ").strip()
+                q = q[:100] + "..." if len(q) > 100 else q
                 return f"{base} | 💬 {q}"
-            return f"{base} | {session_id_display}"
+            return base
 
         def update_question(self, question: str) -> None:
             """Update the displayed question and refresh header."""
@@ -5930,9 +5930,9 @@ Type your question and press Enter to ask the agents.
                 is_selected = idx == self._selected_answer_idx
                 selected_class = "answer-item-selected" if is_selected else ""
 
-                # Assign color class based on agent index
-                agent_idx = self.agent_ids.index(agent_id) if agent_id in self.agent_ids else 0
-                agent_color_class = f"agent-color-{agent_idx % 4}"  # Cycle through 4 colors
+                # Assign color class based on agent index (1-8 to match AgentPanel colors)
+                agent_idx = self.agent_ids.index(agent_id) + 1 if agent_id in self.agent_ids else 1
+                agent_color_class = f"agent-color-{((agent_idx - 1) % 8) + 1}"  # Cycle through colors 1-8
 
                 # Use render_count in ID to ensure uniqueness across re-renders
                 item = Static(
@@ -6102,7 +6102,7 @@ Type your question and press Enter to ask the agents.
         def compose(self) -> ComposeResult:
             from textual.widgets import Static
 
-            with Container(id="timeline_container"):
+            with Container(id="timeline_modal_container"):
                 yield Label("📊 Timeline - Answer & Vote Flow", id="timeline_header")
                 yield Label(
                     "○ answer  ◇ vote  ★ winner  ⟿ context  🔄 restart",
@@ -6293,11 +6293,12 @@ Type your question and press Enter to ask the agents.
 
         def compose(self) -> ComposeResult:
             with Container(id="browser_tabs_container"):
-                yield Static(
-                    "[bold]1[/] Answers  [bold]2[/] Votes  [bold]3[/] Workspace  [bold]4[/] Timeline",
+                yield Label(
+                    "[bold reverse] 1 Answers [/]  [bold]2[/] Votes  [bold]3[/] Workspace  [bold]4[/] Timeline",
                     id="browser_tab_bar",
                 )
-                yield Static(self._render_current_tab(), id="browser_content")
+                with VerticalScroll(id="browser_content"):
+                    yield Static(self._render_current_tab(), id="browser_content_text", markup=True)
                 yield Button("Close (ESC)", id="close_browser_button")
 
         def _render_current_tab(self) -> str:
@@ -6397,59 +6398,134 @@ Type your question and press Enter to ask the agents.
             return "\n".join(lines)
 
         def _render_timeline_tab(self) -> str:
-            """Render timeline summary."""
-            lines = ["[bold cyan]📅 Timeline[/]", "─" * 50]
-            lines.append("")  # Empty line for spacing
+            """Render swimlane-style timeline visualization (like WebUI)."""
+            # Get unique agents
+            seen = set()
+            all_agents = []
+            for aid in self.agent_ids:
+                if aid not in seen:
+                    seen.add(aid)
+                    all_agents.append(aid)
+            for a in self.answers:
+                if a["agent_id"] not in seen:
+                    seen.add(a["agent_id"])
+                    all_agents.append(a["agent_id"])
 
-            # Build events from answers and votes
+            if not all_agents:
+                return "[dim]No activity yet[/]"
+
+            # Calculate column widths (min 14 chars per agent)
+            col_width = 14
+            num_agents = len(all_agents)
+
+            # Collect all events with timestamps
             events = []
+
             for answer in self.answers:
                 events.append(
                     {
                         "type": "answer",
+                        "agent_id": answer["agent_id"],
+                        "label": answer.get("answer_label", ""),
                         "timestamp": answer.get("timestamp", 0),
-                        "agent": answer.get("agent_id", "?")[:10],
-                        "label": answer.get("answer_label", "?"),
-                        "is_winner": answer.get("is_winner", False) or answer.get("agent_id") == self.winner_agent_id,
+                        "is_winner": answer.get("is_winner", False) or answer["agent_id"] == self.winner_agent_id,
+                        "context_sources": answer.get("context_sources", []),
                     },
                 )
+
             for vote in self.votes:
                 events.append(
                     {
                         "type": "vote",
+                        "agent_id": vote["voter"],
+                        "target": vote["voted_for"],
                         "timestamp": vote.get("timestamp", 0),
-                        "voter": vote.get("voter", "?")[:10],
-                        "target": vote.get("voted_for", "?")[:10],
                     },
                 )
 
             # Sort by timestamp (most recent first)
-            events.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
+            events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
 
-            for event in events[:10]:  # Show 10 most recent events
+            if not events:
+                return "[dim]No activity yet[/]"
+
+            # Build swimlane visualization
+            lines = ["[bold cyan]📊 Timeline - Swimlane View[/]", ""]
+
+            # Header row with agent names
+            header = ""
+            for i, agent in enumerate(all_agents, 1):
+                short_name = f"Agent {i}".center(col_width)
+                header += f"[bold cyan]{short_name}[/]"
+            lines.append(header)
+
+            # Separator
+            lines.append("─" * (col_width * num_agents))
+
+            # Event rows
+            for event in events:
                 import datetime as dt_module
 
                 ts = event.get("timestamp", 0)
-                time_str = dt_module.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "??:??:??"
+                time_str = dt_module.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "??:??"
 
-                if event["type"] == "answer":
-                    symbol = "★" if event.get("is_winner") else "○"
-                    lines.append(f"  {time_str} {symbol} {event['agent']} → {event['label']}")
-                else:
-                    lines.append(f"  {time_str} ◇ {event['voter']} → {event['target']}")
+                # Build row with proper placement
+                row = ""
+                for agent in all_agents:
+                    cell = " " * col_width
 
-            lines.append(f"\n[dim]Total: {len(self.answers)} answers, {len(self.votes)} votes[/]")
+                    if event["type"] == "answer" and event["agent_id"] == agent:
+                        label = event.get("label", "?")[:6]
+                        # Format context sources if present
+                        ctx = event.get("context_sources", [])
+                        ctx_str = ""
+                        if ctx:
+                            short_ctx = [c.replace("agent", "A")[:4] for c in ctx[:1]]
+                            ctx_str = f"[dim cyan]←{','.join(short_ctx)}[/]"
+
+                        if event.get("is_winner"):
+                            cell = f" [bold yellow]★{label}[/]{ctx_str}"
+                        else:
+                            cell = f" [green]○{label}[/]{ctx_str}"
+
+                    elif event["type"] == "vote" and event["agent_id"] == agent:
+                        target = event.get("target", "?")[:6]
+                        cell = f" [magenta]◇→{target}[/]"
+
+                    # Pad cell to column width (extra for Rich markup)
+                    row += cell.ljust(col_width + 20)[: col_width + 20]
+
+                # Add timestamp at end
+                lines.append(f"{row} [dim]{time_str}[/]")
+
+            # Separator
+            lines.append("─" * (col_width * num_agents))
+
+            # Legend
+            lines.append("")
+            lines.append("[dim]○ answer  ◇ vote  ★ winner  ← context[/]")
+
+            # Summary
+            answer_count = len([e for e in events if e["type"] == "answer"])
+            vote_count = len([e for e in events if e["type"] == "vote"])
+
+            summary_parts = [f"{answer_count} answers", f"{vote_count} votes"]
+            if self.winner_agent_id:
+                summary_parts.append(f"Winner: {self.winner_agent_id}")
+
+            lines.append(f"[dim]{' • '.join(summary_parts)}[/]")
+
             return "\n".join(lines)
 
         def _switch_tab(self, tab: str) -> None:
             """Switch to a different tab."""
             self._current_tab = tab
             try:
-                content = self.query_one("#browser_content", Static)
+                content = self.query_one("#browser_content_text", Static)
                 content.update(self._render_current_tab())
 
                 # Update tab bar to show active tab
-                tab_bar = self.query_one("#browser_tab_bar", Static)
+                tab_bar = self.query_one("#browser_tab_bar", Label)
                 tabs = ["answers", "votes", "workspace", "timeline"]
                 tab_labels = ["Answers", "Votes", "Workspace", "Timeline"]
                 parts = []
@@ -6495,49 +6571,44 @@ Type your question and press Enter to ask the agents.
             self,
             answers: List[Dict[str, Any]],
             agent_ids: List[str],
-            current_workspace_path: Optional[str] = None,
+            agent_workspace_paths: Optional[Dict[str, str]] = None,
         ):
             super().__init__()
             self.answers = answers
             self.agent_ids = agent_ids
-            self.current_workspace_path = current_workspace_path
+            self.agent_workspace_paths = agent_workspace_paths or {}
             # Default to current workspace if available, else most recent answer
-            if current_workspace_path:
+            default_agent = agent_ids[0] if agent_ids else None
+            if default_agent and default_agent in self.agent_workspace_paths:
                 self._selected_answer_idx: int = self.CURRENT_WORKSPACE_IDX
             else:
                 self._selected_answer_idx: int = len(answers) - 1 if answers else 0
             self._current_files: List[Dict[str, Any]] = []
             self._selected_file_idx: int = 0
             self._load_counter: int = 0  # Counter to ensure unique widget IDs
+            # Default to first agent (no "All Agents" option)
+            self._current_agent_filter: Optional[str] = default_agent  # None = all agents  # Counter to ensure unique widget IDs
 
         def compose(self) -> ComposeResult:
             with Container(id="workspace_browser_container"):
                 yield Label("📁 Workspace Browser", id="workspace_browser_header")
 
-                # Answer selector
-                with Horizontal(id="workspace_answer_row"):
-                    yield Label("Answer: ", id="workspace_answer_label")
-                    # Build answer options - current workspace first if available
-                    options = []
-                    default_idx = -1
+                # Selector row with agent filter and answer selector
+                with Horizontal(id="workspace_selector_row"):
+                    # Agent filter (no "All Agents" - must pick one)
+                    with Horizontal(id="workspace_agent_filter_container"):
+                        yield Label("Agent: ", id="workspace_agent_label")
+                        # Default to first agent
+                        default_agent = self.agent_ids[0] if self.agent_ids else None
+                        agent_options = [(aid, aid) for aid in self.agent_ids]
+                        if not agent_options:
+                            agent_options = [("No agents", None)]
+                        yield Select(agent_options, id="agent_filter_selector", value=default_agent)
 
-                    # Add "Current Workspace" option first if available
-                    if self.current_workspace_path:
-                        options.append(("📂 Current Workspace", self.CURRENT_WORKSPACE_IDX))
-                        default_idx = self.CURRENT_WORKSPACE_IDX
-
-                    # Add answer options
-                    if self.answers:
-                        for i, a in enumerate(self.answers):
-                            options.append((f"{a.get('answer_label', f'Answer {i+1}')} - {a['agent_id']}", i))
-                        if default_idx == -1:
-                            default_idx = len(self.answers) - 1  # Most recent answer
-
-                    if not options:
-                        options = [("No workspace available", -1)]
-                        default_idx = -1
-
-                    yield Select(options, id="answer_selector", value=default_idx)
+                    # Answer selector
+                    with Horizontal(id="workspace_answer_container"):
+                        yield Label("Answer: ", id="workspace_answer_label")
+                        yield Select([], id="answer_selector")  # Populated in on_mount
 
                 # Split view: file list on left, preview on right
                 with Horizontal(id="workspace_split"):
@@ -6554,11 +6625,50 @@ Type your question and press Enter to ask the agents.
                 yield Button("Close (ESC)", id="close_workspace_browser_button")
 
         def on_mount(self) -> None:
-            """Load files for the default selection (current workspace or most recent answer)."""
-            if self.current_workspace_path:
+            """Called when modal is mounted - populate the answer selector and files."""
+            self._update_answer_selector()
+            # Load files for the default selection (current workspace or most recent answer)
+            if self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
                 self._load_workspace_files(self.CURRENT_WORKSPACE_IDX)
             elif self.answers:
                 self._load_workspace_files(len(self.answers) - 1)
+
+        def _update_answer_selector(self) -> None:
+            """Update answer selector options based on current agent filter."""
+            answer_selector = self.query_one("#answer_selector", Select)
+
+            # Build answer options
+            options = []
+
+            # Add "Current Workspace" option if the selected agent has a workspace
+            if self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
+                options.append(("📂 Current Workspace", self.CURRENT_WORKSPACE_IDX))
+
+            # Filter answers by agent
+            if self._current_agent_filter:
+                for i, a in enumerate(self.answers):
+                    if a["agent_id"] == self._current_agent_filter:
+                        label = a.get("answer_label", f"Answer {i+1}")
+                        options.append((f"{label}", i))
+
+            if not options:
+                options = [("No workspace available", -1)]
+
+            # Determine default value - prefer current workspace if available
+            if self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
+                default_value = self.CURRENT_WORKSPACE_IDX
+            elif options and options[0][1] != -1:
+                # Pick the most recent answer for this agent
+                default_value = options[-1][1] if len(options) > 1 else options[0][1]
+            else:
+                default_value = -1
+
+            # Update selector
+            answer_selector.set_options(options)
+            if default_value in [opt[1] for opt in options]:
+                answer_selector.value = default_value
+            elif options:
+                answer_selector.value = options[0][1]
 
         def _load_workspace_files(self, answer_idx: int) -> None:
             """Load files from the workspace path of the selected answer or current workspace."""
@@ -6571,9 +6681,9 @@ Type your question and press Enter to ask the agents.
             self._current_files = []
             self._load_counter += 1  # Increment to ensure unique IDs
 
-            # Handle current workspace selection
+            # Handle current workspace selection - use selected agent's workspace
             if answer_idx == self.CURRENT_WORKSPACE_IDX:
-                workspace_path = self.current_workspace_path
+                workspace_path = self.agent_workspace_paths.get(self._current_agent_filter)
             elif answer_idx < 0 or answer_idx >= len(self.answers):
                 file_list.mount(Static("[dim]No workspace selected[/]", markup=True))
                 return
@@ -6674,10 +6784,19 @@ Type your question and press Enter to ask the agents.
                 preview.mount(Static(str(renderable), markup=True))
 
         def on_select_changed(self, event: Select.Changed) -> None:
-            """Handle answer selection change."""
-            if event.select.id == "answer_selector":
+            """Handle agent filter or answer selection change."""
+            if event.select.id == "agent_filter_selector":
+                # Agent filter changed - update answer selector options
+                self._current_agent_filter = event.value
+                self._update_answer_selector()
+                # Auto-load files for the new default answer (current workspace or most recent)
+                answer_selector = self.query_one("#answer_selector", Select)
+                if answer_selector.value is not None and isinstance(answer_selector.value, int):
+                    self._load_workspace_files(answer_selector.value)
+            elif event.select.id == "answer_selector":
+                # Answer selection changed - load files
                 answer_idx = event.value
-                if isinstance(answer_idx, int) and answer_idx >= 0:
+                if isinstance(answer_idx, int):
                     self._selected_answer_idx = answer_idx
                     self._load_workspace_files(answer_idx)
 
@@ -7441,12 +7560,14 @@ Type your question and press Enter to ask the agents.
             agent_outputs: List[str],
             model_name: Optional[str] = None,
             all_agents: Optional[Dict[str, Dict]] = None,
+            current_prompt: Optional[str] = None,
         ):
             super().__init__()
             self.current_agent_id = agent_id
             self.agent_outputs = agent_outputs
             self.model_name = model_name or "Unknown"
             self.all_agents = all_agents or {}
+            self.current_prompt = current_prompt or ""
 
         def compose(self) -> ComposeResult:
             with Container(id="agent_output_container"):
@@ -7454,6 +7575,16 @@ Type your question and press Enter to ask the agents.
                     f"📄 Full Output: {self.current_agent_id} ({self.model_name})",
                     id="agent_output_header",
                 )
+                # Show prompt preview if available
+                if self.current_prompt:
+                    # Truncate long prompts with ellipsis
+                    prompt_preview = self.current_prompt[:200] + "..." if len(self.current_prompt) > 200 else self.current_prompt
+                    # Replace newlines for single-line display
+                    prompt_preview = prompt_preview.replace("\n", " ").strip()
+                    yield Label(
+                        f"💬 Prompt: {prompt_preview}",
+                        id="agent_output_prompt",
+                    )
                 # Agent toggle buttons if multiple agents
                 if len(self.all_agents) > 1:
                     with Horizontal(id="agent_toggle_buttons"):
