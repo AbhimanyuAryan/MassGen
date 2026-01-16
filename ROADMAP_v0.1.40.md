@@ -1,19 +1,19 @@
-# MassGen v0.1.39 Roadmap
+# MassGen v0.1.40 Roadmap
 
 ## Overview
 
-Version 0.1.39 focuses on OpenAI Responses API improvements and computer use model support.
+Version 0.1.40 focuses on OpenAI Responses API improvements and inline context path syntax.
 
 - **OpenAI Responses /compact Endpoint** (Required): Use OpenAI's native `/compact` endpoint instead of custom summarization
-- **Add Fara-7B for Computer Use** (Required): Support for Fara-7B model for computer use tasks
+- **@filename Syntax for Inline Context Paths** (Required): Add `@path/to/file` syntax to include files/directories as read-only context in prompts
 
 ## Key Technical Priorities
 
 1. **OpenAI Responses /compact Endpoint**: Leverage API-level context compression for better efficiency
    **Use Case**: Reduce token usage and improve response quality with native compression
 
-2. **Add Fara-7B for Computer Use**: Support for Fara-7B model for GUI automation
-   **Use Case**: Alternative model option for computer use workflows
+2. **@filename Syntax for Inline Context Paths**: Include files/directories as context using `@path` in prompts
+   **Use Case**: Easily include context files in prompts without modifying YAML config
 
 ## Key Milestones
 
@@ -51,36 +51,45 @@ Version 0.1.39 focuses on OpenAI Responses API improvements and computer use mod
 
 ---
 
-### Milestone 2: Add Fara-7B for Computer Use (REQUIRED)
+### Milestone 2: @filename Syntax for Inline Context Paths (REQUIRED)
 
-**Goal**: Support for Fara-7B model for computer use tasks
+**Goal**: Add `@path/to/file` syntax to include files/directories as read-only context in prompts
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
-**Issue**: [#646](https://github.com/massgen/MassGen/issues/646)
+**Issue**: [#767](https://github.com/massgen/MassGen/issues/767)
 
-#### 2.1 Model Integration
-- [ ] Research Fara-7B model capabilities and API
-- [ ] Add Fara-7B to capabilities registry
-- [ ] Configure model parameters and pricing
-- [ ] Implement backend support
+#### 2.1 Parser Implementation
+- [ ] Extract `@path` patterns from prompt text
+- [ ] Remove `@path` from prompt before sending to agents
+- [ ] Validate paths exist
+- [ ] Support relative and absolute paths
+- [ ] Handle escaped `@` with `\@`
 
-#### 2.2 Computer Use Integration
-- [ ] Integrate with existing computer use infrastructure
-- [ ] Test with Docker automation workflows
-- [ ] Validate GUI interaction capabilities
-- [ ] Add example configurations
+#### 2.2 Context Path Builder
+- [ ] Convert `@` references to `context_paths` format
+- [ ] Merge with existing YAML config paths
+- [ ] Apply smart consolidation suggestions (3+ sibling files)
+- [ ] Support `@path/to/file.py` (file) and `@path/to/dir/` (directory)
 
-#### 2.3 Documentation
-- [ ] Document Fara-7B configuration options
-- [ ] Add computer use examples
-- [ ] Update model selection guide
+#### 2.3 CLI Integration
+- [ ] Tab completion for `@` paths in interactive mode
+- [ ] Path existence feedback
+- [ ] Error messages for non-existent paths
+
+#### 2.4 Testing & Documentation
+- [ ] Unit tests for path parsing
+- [ ] Integration tests with CLI and programmatic API
+- [ ] Update documentation with examples
+- [ ] Add edge case handling (email addresses, escaped @)
 
 **Success Criteria**:
-- Fara-7B available in model selection
-- Computer use workflows function correctly
-- Documentation updated with examples
-- Performance comparable to existing models
+- `@path/to/file` adds file as read-only context
+- `@path/to/dir/` adds directory as read-only context
+- Multiple `@` references work in single prompt
+- Paths validated before execution
+- Smart consolidation suggestion for 3+ sibling files
+- Works with both CLI and programmatic API
 
 ---
 
@@ -94,16 +103,16 @@ Version 0.1.39 focuses on OpenAI Responses API improvements and computer use mod
 - [ ] Fallback for non-OpenAI backends works
 - [ ] No regression in response quality
 
-**Fara-7B for Computer Use:**
-- [ ] Model added to capabilities
-- [ ] Computer use integration working
-- [ ] Example configs provided
-- [ ] Documentation complete
+**@filename Syntax for Inline Context Paths:**
+- [ ] Path parsing works correctly
+- [ ] Context paths merged with YAML config
+- [ ] Smart directory consolidation implemented
+- [ ] Documentation complete with examples
 
 ### Performance Requirements
 - [ ] Token usage reduced with compact endpoint
-- [ ] Fara-7B performs adequately for GUI automation
 - [ ] No performance degradation in existing workflows
+- [ ] Path parsing is fast and efficient
 
 ### Quality Requirements
 - [ ] All tests passing
@@ -117,23 +126,24 @@ Version 0.1.39 focuses on OpenAI Responses API improvements and computer use mod
 
 ### Dependencies
 - **OpenAI Compact Endpoint**: OpenAI API access, Responses API support
-- **Fara-7B**: Model availability, HuggingFace/inference endpoint access
+- **@filename Syntax**: Existing `context_paths` infrastructure
 
 ### Risks & Mitigations
 1. **API Changes**: *Mitigation*: Monitor OpenAI API updates, implement version checks
-2. **Model Availability**: *Mitigation*: Fallback to alternative models if Fara-7B unavailable
+2. **Path Edge Cases**: *Mitigation*: Handle email addresses, escaped @, and special characters
 3. **Backend Compatibility**: *Mitigation*: Implement proper fallback for non-OpenAI backends
 
 ---
 
-## Future Enhancements (Post-v0.1.39)
+## Future Enhancements (Post-v0.1.40)
 
-### v0.1.40 Plans
+### v0.1.41 Plans
 - **Integrate Smart Semantic Search** (@ncrispino): Advanced semantic search capabilities ([#639](https://github.com/massgen/MassGen/issues/639))
 - **Add Model Selector for Log Analysis** (@ncrispino): Choose model for `massgen logs analyze` self-analysis mode ([#766](https://github.com/massgen/MassGen/issues/766))
 
-### v0.1.41 Plans
+### v0.1.42 Plans
 - **Improve Log Sharing and Analysis** (@ncrispino): Enhanced log sharing workflows ([#722](https://github.com/massgen/MassGen/issues/722))
+- **Add Fara-7B for Computer Use** (@ncrispino): Support for Fara-7B model for computer use tasks ([#646](https://github.com/massgen/MassGen/issues/646))
 
 ### Long-term Vision
 - **Advanced Agent Communication**: Sophisticated inter-agent protocols and negotiation
@@ -148,9 +158,9 @@ Version 0.1.39 focuses on OpenAI Responses API improvements and computer use mod
 | Phase | Focus | Key Deliverables | Owner | Priority |
 |-------|-------|------------------|-------|----------|
 | Phase 1 | OpenAI Compact Endpoint | API integration, token savings | @ncrispino | **REQUIRED** |
-| Phase 2 | Fara-7B Computer Use | Model integration, GUI automation | @ncrispino | **REQUIRED** |
+| Phase 2 | @filename Syntax | Path parsing, context inclusion | @ncrispino | **REQUIRED** |
 
-**Target Release**: January 17, 2026 (Friday @ 9am PT)
+**Target Release**: January 19, 2026 (Sunday @ 9am PT)
 
 ---
 
@@ -165,26 +175,27 @@ Version 0.1.39 focuses on OpenAI Responses API improvements and computer use mod
 4. Test with various conversation lengths
 5. Benchmark token savings
 
-**Fara-7B for Computer Use:**
-1. Research Fara-7B model capabilities
-2. Add to capabilities registry
-3. Integrate with computer use infrastructure
-4. Create example configurations
-5. Update documentation
+**@filename Syntax for Inline Context Paths:**
+1. Review existing `context_paths` implementation
+2. Implement path parser in `cli.py` or new module
+3. Add path validation and error handling
+4. Implement smart directory consolidation
+5. Update documentation with examples
 
 ### For Users
 
-- v0.1.39 brings API improvements and new model support:
+- v0.1.40 brings API improvements and new prompt syntax:
 
   **OpenAI Responses /compact Endpoint:**
   - Native context compression via OpenAI API
   - Reduced token usage
   - Better response quality
 
-  **Fara-7B for Computer Use:**
-  - Alternative model for GUI automation
-  - Integration with existing computer use workflows
-  - Optimized for browser and desktop tasks
+  **@filename Syntax:**
+  - Include files in prompts: `massgen "Analyze @src/utils.py"`
+  - Include directories: `massgen "Review @src/"`
+  - Multiple files: `massgen "Compare @old.py with @new.py"`
+  - Smart consolidation for 3+ sibling files
 
 ---
 
@@ -198,11 +209,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 **Contact Track Owner:**
 - OpenAI Compact Endpoint: @ncrispino on Discord (nickcrispino)
-- Fara-7B Computer Use: @ncrispino on Discord (nickcrispino)
+- @filename Syntax: @ncrispino on Discord (nickcrispino)
 
 ---
 
-*This roadmap reflects v0.1.39 priorities focusing on OpenAI compact endpoint and Fara-7B model support.*
+*This roadmap reflects v0.1.40 priorities focusing on OpenAI compact endpoint and @filename syntax for inline context paths.*
 
-**Last Updated:** January 15, 2026
+**Last Updated:** January 16, 2026
 **Maintained By:** MassGen Team
