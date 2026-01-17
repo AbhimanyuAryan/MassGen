@@ -20,6 +20,7 @@ from .multi_line_input import MultiLineInput
 from .path_suggestion import PathSuggestion, PathSuggestionDropdown
 from .tab_bar import AgentTab, AgentTabBar, AgentTabChanged
 from .task_plan_card import TaskPlanCard
+from .task_plan_modal import TaskPlanModal
 from .tool_card import ToolCallCard, format_tool_display_name, get_tool_category
 from .tool_detail_modal import ToolDetailModal
 
@@ -33,8 +34,9 @@ __all__ = [
     "ToolDetailModal",
     "get_tool_category",
     "format_tool_display_name",
-    # Task plan card
+    # Task plan card and modal
     "TaskPlanCard",
+    "TaskPlanModal",
     # Injection sub-card
     "InjectionSubCard",
     # Content sections

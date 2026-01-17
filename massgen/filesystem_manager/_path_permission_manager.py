@@ -917,11 +917,14 @@ class PathPermissionManager:
 
         # Check for file overwrite protection: write_file should not overwrite existing files
         # Use edit_file instead, or delete the file first then recreate
+        # Exception: allow overwriting empty files (e.g., created by touch)
         if self._is_pure_write_tool(tool_name) and path.exists() and path.is_file():
-            return (
-                False,
-                f"Cannot overwrite existing file '{path.name}' with write_file. " f"Use edit_file to modify existing files, or delete the file first then recreate it.",
-            )
+            # Allow writing to empty files (size == 0)
+            if path.stat().st_size > 0:
+                return (
+                    False,
+                    f"Cannot overwrite existing file '{path.name}' with write_file. " f"Use edit_file to modify existing files, or delete the file first then recreate it.",
+                )
 
         permission = self.get_permission(path)
         logger.debug(f"[PathPermissionManager] Validating write tool '{tool_name}' for path: {path} with permission: {permission}")

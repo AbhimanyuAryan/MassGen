@@ -320,6 +320,65 @@ def test_validate_write_tool():
         helper.teardown()
 
 
+def test_write_file_overwrite_protection():
+    """Test that write_file blocks non-empty files but allows empty files."""
+    print("\n📝 Testing write_file overwrite protection...")
+
+    helper = TestHelper()
+    helper.setup()
+
+    try:
+        manager = helper.create_permission_manager(context_write_enabled=True)
+
+        # Create a non-empty file in workspace
+        non_empty_file = helper.workspace_dir / "non_empty.txt"
+        non_empty_file.write_text("some content")
+
+        # Create an empty file in workspace (simulating `touch`)
+        empty_file = helper.workspace_dir / "empty.txt"
+        empty_file.touch()
+
+        # Test 1: Non-empty file should be blocked by write_file
+        print("  Testing non-empty file blocking...")
+        tool_args = {"path": str(non_empty_file)}
+        allowed, reason = manager._validate_write_tool("mcp__filesystem__write_file", tool_args)
+
+        if allowed:
+            print("❌ Failed: write_file should block non-empty existing files")
+            return False
+        if "Cannot overwrite existing file" not in reason:
+            print(f"❌ Failed: Expected 'Cannot overwrite' in reason, got: {reason}")
+            return False
+        print("    ✓ Non-empty file correctly blocked")
+
+        # Test 2: Empty file should be allowed by write_file
+        print("  Testing empty file allowance...")
+        tool_args = {"path": str(empty_file)}
+        allowed, reason = manager._validate_write_tool("mcp__filesystem__write_file", tool_args)
+
+        if not allowed:
+            print(f"❌ Failed: write_file should allow empty files. Reason: {reason}")
+            return False
+        print("    ✓ Empty file correctly allowed")
+
+        # Test 3: New file (doesn't exist) should be allowed
+        print("  Testing new file creation...")
+        new_file = helper.workspace_dir / "new_file.txt"
+        tool_args = {"path": str(new_file)}
+        allowed, reason = manager._validate_write_tool("mcp__filesystem__write_file", tool_args)
+
+        if not allowed:
+            print(f"❌ Failed: write_file should allow new files. Reason: {reason}")
+            return False
+        print("    ✓ New file correctly allowed")
+
+        print("✅ write_file overwrite protection works correctly")
+        return True
+
+    finally:
+        helper.teardown()
+
+
 def test_validate_command_tool():
     print("\n🔧 Testing _validate_command_tool method...")
 
@@ -2026,6 +2085,7 @@ async def main():
     sync_tests = [
         test_is_write_tool,
         test_validate_write_tool,
+        test_write_file_overwrite_protection,
         test_validate_command_tool,
         test_validate_execute_command_tool,
         test_context_write_access_toggle,

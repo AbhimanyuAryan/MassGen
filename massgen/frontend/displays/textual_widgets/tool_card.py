@@ -533,21 +533,23 @@ class ToolCallCard(Static):
             text.append(args_display, style="dim")
 
         # Expanded workspace content
-        if self._expanded and self._workspace_content:
-            text.append("\n    ┌─ Workspace ─────────────────────────────────\n", style="dim #a371f7")
-            # Show workspace content with indentation
-            lines = self._workspace_content.split("\n")[:10]  # Limit lines
-            for line in lines:
-                if len(line) > 65:
-                    line = line[:62] + "..."
-                text.append(f"    │ {line}\n", style="dim")
-            if len(self._workspace_content.split("\n")) > 10:
-                text.append("    │ ...(more)...\n", style="dim italic")
-            text.append("    └──────────────────────────────────────────", style="dim #a371f7")
+        if self._expanded:
+            content = self._workspace_content or self._get_formatted_result()
+            if content:
+                text.append("\n    ┌─ Details ──────────────────────────────────\n", style="dim #a371f7")
+                # Show workspace content with indentation
+                lines = content.split("\n")[:15]  # Limit lines
+                for line in lines:
+                    if len(line) > 70:
+                        line = line[:67] + "..."
+                    text.append(f"    │ {line}\n", style="dim")
+                if len(content.split("\n")) > 15:
+                    text.append("    │ ...(more)...\n", style="dim italic")
+                text.append("    └──────────────────────────────────────────", style="dim #a371f7")
         elif not self._expanded and (self._workspace_content or self._result):
             # Show expand hint
             text.append("\n    ", style="dim")
-            text.append("[click to expand workspace]", style="dim italic #a371f7")
+            text.append("[click to expand]", style="dim italic #a371f7")
 
         # Result/error summary (when completed)
         if self._result and not self._expanded:
@@ -756,6 +758,58 @@ class ToolCallCard(Static):
         if 0 <= task_index < len(self._subagent_tasks):
             self._subagent_tasks[task_index]["status"] = status
             self.refresh()
+
+    def _get_formatted_result(self) -> Optional[str]:
+        """Get a formatted version of the result, parsing JSON if applicable.
+
+        For subagent tools, this extracts meaningful information from the JSON result.
+        """
+        if not self._result:
+            return None
+
+        import json
+
+        try:
+            data = json.loads(self._result)
+            if isinstance(data, dict):
+                # Format subagent-specific results nicely
+                lines = []
+
+                # Common subagent result fields
+                if "subagent_id" in data:
+                    lines.append(f"Subagent: {data['subagent_id']}")
+                if "status" in data:
+                    lines.append(f"Status: {data['status']}")
+                if "message" in data:
+                    lines.append(f"Message: {data['message']}")
+                if "result" in data:
+                    result = data["result"]
+                    if isinstance(result, str):
+                        lines.append(f"Result: {result[:200]}")
+                    elif isinstance(result, dict):
+                        lines.append("Result:")
+                        for k, v in list(result.items())[:5]:
+                            v_str = str(v)[:60]
+                            lines.append(f"  {k}: {v_str}")
+                if "error" in data:
+                    lines.append(f"Error: {data['error']}")
+                if "spawned_subagents" in data:
+                    lines.append("Spawned Subagents:")
+                    for sa in data["spawned_subagents"][:5]:
+                        sa_id = sa.get("id", sa.get("subagent_id", "unknown"))
+                        sa_prompt = sa.get("prompt", sa.get("task", ""))[:50]
+                        lines.append(f"  • {sa_id}: {sa_prompt}")
+
+                if lines:
+                    return "\n".join(lines)
+
+                # Fallback: pretty print JSON
+                return json.dumps(data, indent=2)[:500]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Return raw result if not JSON
+        return self._result[:500] if self._result else None
 
     def set_workspace_content(self, content: str) -> None:
         """Set the workspace content for expanded view.

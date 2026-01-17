@@ -53,6 +53,8 @@ try:
         CompletionFooter,
         MultiLineInput,
         PathSuggestionDropdown,
+        TaskPlanCard,
+        TaskPlanModal,
         TimelineSection,
         ToolCallCard,
         ToolDetailModal,
@@ -1982,13 +1984,14 @@ if TEXTUAL_AVAILABLE:
 
         def on_click(self, event: events.Click) -> None:
             """Handle click on the events counter, cancel button, or CWD."""
-            target = event.target
-            if target and hasattr(target, "id"):
-                if target.id == "status_events":
+            # Textual uses event.widget, not event.target
+            widget = getattr(event, "widget", None)
+            if widget and hasattr(widget, "id"):
+                if widget.id == "status_events":
                     self.post_message(StatusBarEventsClicked())
-                elif target.id == "status_cancel":
+                elif widget.id == "status_cancel":
                     self.post_message(StatusBarCancelClicked())
-                elif target.id == "status_cwd":
+                elif widget.id == "status_cwd":
                     self.toggle_cwd_auto_include()
 
         def toggle_cwd_auto_include(self) -> None:
@@ -3690,6 +3693,15 @@ Type your question and press Enter to ask the agents.
             self.push_screen(modal)
             event.stop()
 
+        def on_task_plan_card_open_modal(self, event: TaskPlanCard.OpenModal) -> None:
+            """Handle task plan card click - show task plan modal."""
+            modal = TaskPlanModal(
+                tasks=event.tasks,
+                focused_task_id=event.focused_task_id,
+            )
+            self.push_screen(modal)
+            event.stop()
+
         def on_button_pressed(self, event: Button.Pressed) -> None:
             """Handle button clicks in main app."""
             if event.button.id == "cancel_button":
@@ -4853,12 +4865,27 @@ Type your question and press Enter to ask the agents.
             # Timeout state tracking (for per-agent timeout display)
             self._timeout_state: Optional[Dict[str, Any]] = None
 
+            # Task plan tracking for toggle feature
+            self._active_task_plan_id: Optional[str] = None
+            self._active_task_plan_tasks: Optional[List[Dict[str, Any]]] = None
+            self._task_plan_visible: bool = False
+            self._task_plan_toggle_id = f"task_plan_toggle_{self._dom_safe_id}"
+            self._task_plan_display_id = f"task_plan_display_{self._dom_safe_id}"
+
         def compose(self) -> ComposeResult:
             with Vertical():
-                yield Label(
-                    self._header_text(),
-                    id=self._header_dom_id,
-                )
+                # Header row with main info on left, tasks on right
+                with Horizontal(id=self._header_dom_id, classes="agent-header-row"):
+                    yield Label(
+                        self._header_text_left(),
+                        id=f"{self._header_dom_id}_left",
+                        classes="agent-header-left",
+                    )
+                    yield Label(
+                        self._header_text_right(),
+                        id=f"{self._header_dom_id}_right",
+                        classes="agent-header-right",
+                    )
                 # Context sources label (hidden by default, shown when context is injected)
                 yield Label(
                     "",
@@ -4879,6 +4906,24 @@ Type your question and press Enter to ask the agents.
                 # Legacy RichLog kept for fallback/compatibility
                 yield self.content_log
                 yield self.current_line_label
+
+        def on_click(self, event: events.Click) -> None:
+            """Handle click on the header to open task plan modal."""
+            # Textual uses event.widget, not event.target
+            widget = getattr(event, "widget", None)
+            if widget and hasattr(widget, "id"):
+                # Check if clicked on header row or the right label (Tasks indicator)
+                header_ids = [
+                    self._header_dom_id,
+                    f"{self._header_dom_id}_left",
+                    f"{self._header_dom_id}_right",
+                ]
+                if widget.id in header_ids:
+                    # Clicked on header - open task plan modal if we have tasks
+                    if self._active_task_plan_tasks:
+                        # Re-use TaskPlanCard's message type for consistency
+                        self.post_message(TaskPlanCard.OpenModal(self._active_task_plan_tasks))
+                        event.stop()
 
         def _hide_loading(self):
             """Hide the loading indicator when content arrives."""
@@ -4945,6 +4990,78 @@ Type your question and press Enter to ask the agents.
                 else:
                     context_label.update("")
                     context_label.add_class("hidden")
+            except Exception:
+                pass
+
+        def update_task_plan(self, tasks: List[Dict[str, Any]], plan_id: str = None, operation: str = "create") -> None:
+            """Update the active task plan for this agent.
+
+            Args:
+                tasks: List of task dictionaries
+                plan_id: ID of the task plan (tool_id)
+                operation: Type of operation (create, update, etc.)
+            """
+            self._active_task_plan_id = plan_id
+            self._active_task_plan_tasks = tasks.copy() if tasks else None
+
+            # Debug: log task statuses
+            if tasks:
+                completed = sum(1 for t in tasks if t.get("status") == "completed")
+                in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
+                tui_log(f"update_task_plan: {completed}/{len(tasks)} completed, {in_progress} in_progress")
+
+            # Refresh the header to show task plan info
+            self._refresh_header()
+
+        def _refresh_header(self) -> None:
+            """Refresh the header display (used when task plan changes)."""
+            try:
+                # Update both left and right labels
+                left_label = self.query_one(f"#{self._header_dom_id}_left", Label)
+                left_label.update(self._header_text_left())
+            except Exception:
+                pass
+            try:
+                right_label = self.query_one(f"#{self._header_dom_id}_right", Label)
+                right_label.update(self._header_text_right())
+            except Exception:
+                pass
+
+        def toggle_task_plan(self) -> None:
+            """Toggle the visibility of the task plan display (for future use with keybindings)."""
+            if not self._active_task_plan_tasks:
+                return
+
+            self._task_plan_visible = not self._task_plan_visible
+
+            # Show or hide the task plan in the timeline
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+
+                if self._task_plan_visible:
+                    # Add a TaskPlanCard to the beginning of timeline
+                    from massgen.frontend.displays.textual_widgets import TaskPlanCard
+
+                    # Check if a toggle card already exists
+                    existing = timeline.query(f"#{self._task_plan_display_id}")
+                    if existing:
+                        for card in existing:
+                            card.remove()
+
+                    card = TaskPlanCard(
+                        tasks=self._active_task_plan_tasks,
+                        operation="get",  # Use "get" to show full view
+                        id=self._task_plan_display_id,
+                    )
+                    card.expanded = True  # Start expanded
+                    timeline.mount(card, before=0)
+                else:
+                    # Remove the toggle card
+                    try:
+                        card = timeline.query_one(f"#{self._task_plan_display_id}")
+                        card.remove()
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -5252,6 +5369,9 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
 
+                # Check if this is a Planning MCP tool - we'll show TaskPlanCard instead
+                is_planning_tool = self._is_planning_mcp_tool(tool_data.tool_name)
+
                 if tool_data.status == "running":
                     # Check if this is an args update for existing tool
                     existing_card = timeline.get_tool(tool_data.tool_id)
@@ -5259,12 +5379,13 @@ Type your question and press Enter to ask the agents.
                         # Update existing card with args (both truncated and full)
                         if tool_data.args_summary:
                             existing_card.set_params(tool_data.args_summary, tool_data.args_full)
-                    else:
-                        # New tool started - add card to timeline
+                    elif not is_planning_tool:
+                        # New tool started - add card to timeline (skip planning tools)
                         timeline.add_tool(tool_data)
                 else:
-                    # Tool completed/failed - update existing card
-                    timeline.update_tool(tool_data.tool_id, tool_data)
+                    # Tool completed/failed - update existing card (if it exists)
+                    if not is_planning_tool:
+                        timeline.update_tool(tool_data.tool_id, tool_data)
 
                     # Check if this is a Planning MCP tool and display TaskPlanCard
                     if tool_data.status == "success":
@@ -5272,8 +5393,9 @@ Type your question and press Enter to ask the agents.
 
                 # Update running tools count in status bar
                 self._update_running_tools_count()
-            except Exception:
+            except Exception as e:
                 # Fallback to legacy RichLog
+                tui_log(f"Tool content error: {e}")
                 self._handle_tool_content(raw_content)
 
             self._line_buffer = ""
@@ -5466,6 +5588,28 @@ Type your question and press Enter to ask the agents.
                 # Fallback to legacy RichLog
                 self.content_log.write(Text(f"💡 Reminder: {preview}", style="bold yellow"))
 
+        def _is_planning_mcp_tool(self, tool_name: str) -> bool:
+            """Check if a tool is a Planning MCP tool (should show TaskPlanCard instead of tool card).
+
+            Args:
+                tool_name: The tool name to check
+
+            Returns:
+                True if this is a Planning MCP tool
+            """
+            planning_tools = [
+                "create_task_plan",
+                "update_task_status",
+                "add_task",
+                "edit_task",
+                "get_task_plan",
+                "delete_task",
+                "get_ready_tasks",
+                "get_blocked_tasks",
+            ]
+            tool_lower = tool_name.lower()
+            return any(pt in tool_lower for pt in planning_tools)
+
         def _check_and_display_task_plan(self, tool_data, timeline) -> None:
             """Check if tool result is from Planning MCP and display TaskPlanCard.
 
@@ -5489,6 +5633,7 @@ Type your question and press Enter to ask the agents.
 
             # Check if tool name matches a planning tool
             tool_name = tool_data.tool_name.lower()
+            tui_log(f"_check_and_display_task_plan: tool_name={tool_name}")
             operation = None
             for planning_tool, op in PLANNING_TOOLS.items():
                 if planning_tool in tool_name:
@@ -5496,16 +5641,20 @@ Type your question and press Enter to ask the agents.
                     break
 
             if not operation:
+                tui_log(f"_check_and_display_task_plan: no operation match for {tool_name}")
                 return
 
             # Try to parse the result as JSON to extract tasks
             result = tool_data.result_full
+            tui_log(f"_check_and_display_task_plan: result_full={result[:200] if result else 'None'}...")
             if not result:
+                tui_log("_check_and_display_task_plan: no result_full")
                 return
 
             try:
                 result_data = json.loads(result)
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as e:
+                tui_log(f"_check_and_display_task_plan: JSON parse error: {e}")
                 return
 
             # Check if the result has task data
@@ -5514,19 +5663,32 @@ Type your question and press Enter to ask the agents.
 
             # Extract tasks list
             tasks = []
+            focused_task_id = None
+
             if "tasks" in result_data:
                 tasks = result_data["tasks"]
             elif "plan" in result_data and isinstance(result_data["plan"], dict):
                 tasks = result_data["plan"].get("tasks", [])
 
+            # For update_task_status, update the existing task plan with the new status
+            if operation in ("update", "edit") and "task" in result_data:
+                updated_task = result_data["task"]
+                focused_task_id = updated_task.get("id")
+
+                # If we have a cached task plan, update it with the new task status
+                if self._active_task_plan_tasks and not tasks:
+                    tasks = self._active_task_plan_tasks.copy()
+                    # Update the task in our cached list
+                    for i, task in enumerate(tasks):
+                        if task.get("id") == focused_task_id:
+                            tasks[i] = updated_task
+                            break
+
             if not tasks:
+                tui_log("_check_and_display_task_plan: no tasks found in result")
                 return
 
-            # Get focused task ID for update operations
-            focused_task_id = None
-            if operation in ("update", "edit") and "task" in result_data:
-                focused_task_id = result_data["task"].get("id")
-
+            tui_log(f"_check_and_display_task_plan: found {len(tasks)} tasks, adding TaskPlanCard")
             # Create and add TaskPlanCard to timeline
             from massgen.frontend.displays.textual_widgets import TaskPlanCard
 
@@ -5537,6 +5699,9 @@ Type your question and press Enter to ask the agents.
                 id=f"task_plan_{tool_data.tool_id}",
             )
             timeline.add_widget(card)
+
+            # Update the agent panel's task plan tracking for toggle feature
+            self.update_task_plan(tasks, plan_id=tool_data.tool_id, operation=operation)
 
         def _clear_timeline(self):
             """Clear the timeline for a new session."""
@@ -5655,8 +5820,8 @@ Type your question and press Enter to ask the agents.
             except Exception:
                 pass  # Timeline section not found or not available
 
-        def _header_text(self) -> str:
-            """Compose header text with backend metadata, keyboard hint, elapsed time, and timeout."""
+        def _header_text_left(self) -> str:
+            """Compose left side of header: agent info, backend, status."""
             backend = self.coordination_display._get_agent_backend_name(self.agent_id)
             status_icon = self._status_icon(self.status)
 
@@ -5678,10 +5843,43 @@ Type your question and press Enter to ask the agents.
                 if timeout_text:
                     parts.append(timeout_text)
 
-            # Status in brackets at the end
+            # Status in brackets
             parts.append(f"  [{self.status}]")
 
             return " ".join(parts)
+
+        def _header_text_right(self) -> str:
+            """Compose right side of header: task plan summary."""
+            task_plan_text = self._format_task_plan_header()
+            return task_plan_text if task_plan_text else ""
+
+        def _header_text(self) -> str:
+            """Compose full header text (for compatibility)."""
+            left = self._header_text_left()
+            right = self._header_text_right()
+            if right:
+                return f"{left}  {right}"
+            return left
+
+        def _format_task_plan_header(self) -> Optional[str]:
+            """Format task plan summary for header display.
+
+            Returns:
+                Formatted task plan string or None if no active plan.
+            """
+            if not self._active_task_plan_tasks:
+                return None
+
+            total = len(self._active_task_plan_tasks)
+            completed = sum(1 for t in self._active_task_plan_tasks if t.get("status") == "completed")
+            in_progress = sum(1 for t in self._active_task_plan_tasks if t.get("status") == "in_progress")
+
+            # Format: "Tasks: 3/9" or "Tasks: 3/9 ●2" if tasks in progress
+            task_text = f"Tasks: {completed}/{total}"
+            if in_progress > 0:
+                task_text += f" ●{in_progress}"
+
+            return task_text
 
         def _format_timeout_display(self) -> Optional[str]:
             """Format timeout countdown for display in header.
