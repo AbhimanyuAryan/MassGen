@@ -205,6 +205,7 @@ class WebDisplay(BaseDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
+        tool_call_id: Optional[str] = None,
     ) -> None:
         """Stream content updates to a specific agent panel.
 
@@ -212,6 +213,7 @@ class WebDisplay(BaseDisplay):
             agent_id: The agent's identifier
             content: Content to append
             content_type: Type of content ("thinking", "tool", "status")
+            tool_call_id: Optional unique ID for tool calls (enables tracking across events)
         """
         if agent_id not in self.agent_ids:
             return

@@ -3057,6 +3057,7 @@ class RichTerminalDisplay(TerminalDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
+        tool_call_id: Optional[str] = None,
     ) -> None:
         """Update content for a specific agent with rich formatting and file output."""
 

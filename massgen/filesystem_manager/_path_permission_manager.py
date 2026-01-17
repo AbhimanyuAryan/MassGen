@@ -446,9 +446,12 @@ class PathPermissionManager:
         # Check if this is a write operation using pattern matching
         if self._is_write_tool(tool_name):
             result = self._validate_write_tool(tool_name, tool_args)
-            # Track file creation for write tools that succeed
-            if result[0] and self._is_create_tool(tool_name):
-                self._track_create_operation(tool_name, tool_args)
+            # For successful write operations, ensure parent directories exist
+            # and track file creation
+            if result[0]:
+                self._ensure_parent_directories_exist(tool_name, tool_args)
+                if self._is_create_tool(tool_name):
+                    self._track_create_operation(tool_name, tool_args)
             return result
 
         # Check if this is a delete operation
@@ -716,6 +719,63 @@ class PathPermissionManager:
         if file_path:
             resolved_path = self._resolve_path_against_workspace(file_path)
             self.file_operation_tracker.mark_as_created(Path(resolved_path))
+
+    def _ensure_parent_directories_exist(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
+        """
+        Ensure parent directories exist for write_file operations.
+
+        This is called before write_file to automatically create nested directories
+        when writing to paths like "tasks/evolving_skill/SKILL.md" where the
+        parent directory doesn't exist yet.
+
+        Only creates directories within the workspace - won't create directories
+        in context paths or other managed locations.
+
+        Args:
+            tool_name: Name of the write tool
+            tool_args: Arguments passed to the tool
+        """
+        # Only do this for pure write tools (write_file, Write)
+        if not self._is_pure_write_tool(tool_name):
+            return
+
+        file_path = self._extract_file_path(tool_args)
+        if not file_path:
+            return
+
+        resolved_path = self._resolve_path_against_workspace(file_path)
+        path = Path(resolved_path)
+        parent_dir = path.parent
+
+        # Only create directories within workspace (first managed path)
+        mcp_paths = self.get_mcp_filesystem_paths()
+        if not mcp_paths:
+            return
+
+        workspace_path = Path(mcp_paths[0]).resolve()
+        try:
+            parent_resolved = parent_dir.resolve()
+        except (OSError, ValueError):
+            # Path resolution failed - don't create directories
+            return
+
+        # Check if parent is within workspace
+        try:
+            parent_resolved.relative_to(workspace_path)
+        except ValueError:
+            # Parent is outside workspace - don't create directories
+            logger.debug(
+                f"[PathPermissionManager] Not creating parent dir for '{file_path}' - " f"parent '{parent_resolved}' is outside workspace '{workspace_path}'",
+            )
+            return
+
+        # Create parent directories if they don't exist
+        if not parent_dir.exists():
+            try:
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                logger.info(f"[PathPermissionManager] Created parent directories: {parent_dir}")
+            except OSError as e:
+                logger.warning(f"[PathPermissionManager] Failed to create parent directories for '{file_path}': {e}")
 
     def _validate_delete_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """
