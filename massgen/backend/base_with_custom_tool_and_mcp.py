@@ -1514,6 +1514,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                         status=config.status_error,
                         content=f"{config.error_emoji} {error_msg}",
                         source=f"{config.source_prefix}{tool_name}",
+                        tool_call_id=call_id,
                     )
                     # Still need to add error result to messages
                     self._append_tool_error_message(
@@ -1545,6 +1546,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 status=config.status_called,
                 content=f"{config.emoji_prefix} Calling {tool_name}...",
                 source=f"{config.source_prefix}{tool_name}",
+                tool_call_id=call_id,
             )
 
             # Yield arguments chunk (arguments_str already extracted above)
@@ -1553,6 +1555,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 status="function_call",
                 content=f"Arguments for Calling {tool_name}: {arguments_str}",
                 source=f"{config.source_prefix}{tool_name}",
+                tool_call_id=call_id,
             )
 
             # Record tool call to execution trace (if available via mixin)
@@ -1602,6 +1605,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                                     status="custom_tool_output",
                                     content=chunk.data,
                                     source=f"{config.source_prefix}{tool_name}",
+                                    tool_call_id=call_id,
                                 )
                             elif hasattr(chunk, "completed") and chunk.completed:
                                 # Extract final accumulated result and metadata
@@ -1651,6 +1655,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                     status=config.status_error,
                     content=f"{config.error_emoji} {error_msg}",
                     source=f"{config.source_prefix}{tool_name}",
+                    tool_call_id=call_id,
                 )
                 # Record MCP failure metrics (use pre-captured execution end time)
                 metric.end_time = execution_end_time
@@ -1835,6 +1840,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 status="function_call_output",
                 content=f"Results for Calling {tool_name}: {display_result}",
                 source=f"{config.source_prefix}{tool_name}",
+                tool_call_id=call_id,
             )
 
             # Yield injection chunk if there was mid-stream injection
@@ -1846,6 +1852,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                     status="injection",
                     content=f"📥 [INJECTION] {display_injection}",
                     source="mid_stream_injection",
+                    tool_call_id=call_id,
                 )
 
             # Yield reminder chunk if there was a user_message hook injection
@@ -1858,6 +1865,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                     status="reminder",
                     content=f"💡 [REMINDER] {display_reminder}",
                     source="high_priority_task_reminder",
+                    tool_call_id=call_id,
                 )
 
             # Yield completion status
@@ -1866,6 +1874,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 status=config.status_response,
                 content=f"{config.success_emoji} {tool_name} completed",
                 source=f"{config.source_prefix}{tool_name}",
+                tool_call_id=call_id,
             )
 
             processed_call_ids.add(call.get("call_id", ""))
@@ -1919,6 +1928,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 status="function_call",
                 content=f"Arguments for Calling {tool_name}: {arguments_str}",
                 source=f"{config.source_prefix}{tool_name}",
+                tool_call_id=call_id,
             )
 
             # Yield error status chunk
@@ -1927,6 +1937,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 status=config.status_error,
                 content=f"{config.error_emoji} {error_msg}",
                 source=f"{config.source_prefix}{tool_name}",
+                tool_call_id=call_id,
             )
 
             # Append error to messages
@@ -2155,6 +2166,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             status=config.status_called,
             content=f"{config.emoji_prefix} Calling {tool_name}...",
             source=f"{config.source_prefix}{tool_name}",
+            tool_call_id=call_id,
         )
 
         yield StreamChunk(
@@ -2162,6 +2174,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             status="function_call",
             content=f"Arguments for Calling {tool_name}: {arguments_str}",
             source=f"{config.source_prefix}{tool_name}",
+            tool_call_id=call_id,
         )
 
         request = self._build_nlip_request(call)
@@ -2176,6 +2189,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             status="nlip_transfer",
             content=transfer_message,
             source=f"{config.source_prefix}{tool_name}",
+            tool_call_id=call_id,
         )
 
         # Properly handle the async generator to avoid GeneratorExit issues
@@ -2215,6 +2229,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                             status=config.status_error,
                             content=f"{config.error_emoji} {tool_name}: {error_msg}",
                             source=f"{config.source_prefix}{tool_name}",
+                            tool_call_id=call_id,
                         )
                         result_found = True
                         break
@@ -2236,6 +2251,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                         status="function_call_output",
                         content=f"Results for Calling {tool_name}: {result_text}",
                         source=f"{config.source_prefix}{tool_name}",
+                        tool_call_id=call_id,
                     )
 
                     yield StreamChunk(
@@ -2243,6 +2259,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                         status=config.status_response,
                         content=f"{config.success_emoji} {tool_name} completed",
                         source=f"{config.source_prefix}{tool_name}",
+                        tool_call_id=call_id,
                     )
                     result_found = True
                     break

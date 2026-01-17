@@ -11,7 +11,6 @@ from typing import Optional
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, ScrollableContainer
-from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
@@ -47,12 +46,6 @@ class ToolDetailModal(ModalScreen[None]):
         ("escape", "close", "Close"),
     ]
 
-    # Threshold for showing expand button (chars)
-    LONG_CONTENT_THRESHOLD = 500
-
-    # Track expanded state
-    is_expanded = reactive(False)
-
     DEFAULT_CSS = """
     ToolDetailModal {
         align: center middle;
@@ -68,30 +61,33 @@ class ToolDetailModal(ModalScreen[None]):
         padding: 1 2;
     }
 
-    ToolDetailModal.expanded > Container {
-        max-height: 95%;
-    }
-
     ToolDetailModal .modal-header {
-        height: 3;
+        height: auto;
         width: 100%;
         padding: 0 1;
+        layout: horizontal;
     }
 
     ToolDetailModal .modal-title {
         text-style: bold;
+        width: 1fr;
     }
 
     ToolDetailModal .modal-close {
-        dock: right;
         width: auto;
-        min-width: 5;
+        min-width: 3;
     }
 
     ToolDetailModal .modal-divider {
         height: 1;
         width: 100%;
         color: $primary-darken-2;
+    }
+
+    ToolDetailModal .modal-body {
+        height: 1fr;
+        max-height: 40;
+        overflow-y: auto;
     }
 
     ToolDetailModal .modal-section-title {
@@ -103,14 +99,7 @@ class ToolDetailModal(ModalScreen[None]):
 
     ToolDetailModal .modal-content {
         height: auto;
-        max-height: 40;
         padding: 0 1;
-        overflow-y: auto;
-        scrollbar-gutter: stable;
-    }
-
-    ToolDetailModal.expanded .modal-content {
-        max-height: 70;
     }
 
     ToolDetailModal .args-content {
@@ -126,7 +115,7 @@ class ToolDetailModal(ModalScreen[None]):
     }
 
     ToolDetailModal .modal-footer {
-        height: 3;
+        height: auto;
         width: 100%;
         align: center middle;
         margin-top: 1;
@@ -135,12 +124,6 @@ class ToolDetailModal(ModalScreen[None]):
     ToolDetailModal .close-button {
         width: auto;
         min-width: 16;
-    }
-
-    ToolDetailModal .expand-button {
-        width: auto;
-        min-width: 12;
-        margin-right: 2;
     }
     """
 
@@ -175,10 +158,6 @@ class ToolDetailModal(ModalScreen[None]):
         self.result = ContentNormalizer.strip_injection_markers(result) if result else None
         self.error = error
 
-        # Check if content is long enough to warrant expand button
-        total_len = len(args or "") + len(result or "") + len(error or "")
-        self._has_long_content = total_len > self.LONG_CONTENT_THRESHOLD
-
     def compose(self) -> ComposeResult:
         with Container():
             # Header with icon, name, status
@@ -188,38 +167,33 @@ class ToolDetailModal(ModalScreen[None]):
 
             yield Static("─" * 60, classes="modal-divider")
 
-            # Arguments section - always show, with placeholder if not available
-            yield Static("ARGUMENTS", classes="modal-section-title")
-            with ScrollableContainer(classes="modal-content"):
-                if self.args:
-                    yield Static(self.args, classes="args-content")
-                else:
-                    yield Static("[dim]Arguments not captured[/]", classes="args-content", markup=True)
-
-            # Result/Error section - always show, with status-based placeholder
-            if self.error:
-                yield Static("ERROR", classes="modal-section-title")
-                with ScrollableContainer(classes="modal-content"):
-                    yield Static(self.error, classes="error-content")
-            else:
-                yield Static("OUTPUT", classes="modal-section-title")
-                with ScrollableContainer(classes="modal-content"):
-                    if self.result:
-                        yield Static(self.result, classes="result-content")
-                    elif self.status == "running":
-                        yield Static("[dim]⏳ Waiting for output...[/]", classes="result-content", markup=True)
+            # Scrollable body containing all sections
+            with ScrollableContainer(classes="modal-body"):
+                # Arguments section - always show, with placeholder if not available
+                yield Static("ARGUMENTS", classes="modal-section-title")
+                with Container(classes="modal-content"):
+                    if self.args:
+                        yield Static(self.args, classes="args-content")
                     else:
-                        yield Static("[dim]No output captured[/]", classes="result-content", markup=True)
+                        yield Static("[dim]Arguments not captured[/]", classes="args-content", markup=True)
 
-            # Footer with expand (if long content) and close button
+                # Result/Error section - always show, with status-based placeholder
+                if self.error:
+                    yield Static("ERROR", classes="modal-section-title")
+                    with Container(classes="modal-content"):
+                        yield Static(self.error, classes="error-content")
+                else:
+                    yield Static("OUTPUT", classes="modal-section-title")
+                    with Container(classes="modal-content"):
+                        if self.result:
+                            yield Static(self.result, classes="result-content")
+                        elif self.status == "running":
+                            yield Static("[dim]⏳ Waiting for output...[/]", classes="result-content", markup=True)
+                        else:
+                            yield Static("[dim]No output captured[/]", classes="result-content", markup=True)
+
+            # Footer with close button - always visible at bottom
             with Container(classes="modal-footer"):
-                if self._has_long_content:
-                    yield Button(
-                        "⤢ Expand" if not self.is_expanded else "⤡ Collapse",
-                        variant="default",
-                        classes="expand-button",
-                        id="expand_btn",
-                    )
                 yield Button("Close (Esc)", variant="primary", classes="close-button", id="close_btn_footer")
 
     def _build_header(self) -> Text:
@@ -245,22 +219,6 @@ class ToolDetailModal(ModalScreen[None]):
         """Handle button presses."""
         if event.button.id in ("close_btn", "close_btn_footer"):
             self.dismiss()
-        elif event.button.id == "expand_btn":
-            self.is_expanded = not self.is_expanded
-
-    def watch_is_expanded(self, expanded: bool) -> None:
-        """Update UI when expanded state changes."""
-        if expanded:
-            self.add_class("expanded")
-        else:
-            self.remove_class("expanded")
-
-        # Update expand button text
-        try:
-            expand_btn = self.query_one("#expand_btn", Button)
-            expand_btn.label = "⤡ Collapse" if expanded else "⤢ Expand"
-        except Exception:
-            pass
 
     def action_close(self) -> None:
         """Close the modal."""

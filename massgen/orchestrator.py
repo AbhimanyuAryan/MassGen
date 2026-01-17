@@ -1164,11 +1164,20 @@ class Orchestrator(ChatAgent):
 
         return str(chunk_type)
 
-    def _trace_tuple(self, text: str, *, kind: str = "agent_status") -> tuple:
-        """Map coordination/status text to a non-content type when strict tracing is enabled."""
+    def _trace_tuple(
+        self,
+        text: str,
+        *,
+        kind: str = "agent_status",
+        tool_call_id: str | None = None,
+    ) -> tuple:
+        """Map coordination/status text to a non-content type when strict tracing is enabled.
+
+        Returns a 3-tuple (type, content, tool_call_id) to preserve tool tracking info.
+        """
         if self.trace_classification == "strict":
-            return (kind, text)
-        return ("content", text)
+            return (kind, text, tool_call_id)
+        return ("content", text, tool_call_id)
 
     @staticmethod
     def _is_tool_related_content(content: str) -> bool:
@@ -2580,7 +2589,11 @@ Your answer:"""
                 del active_tasks[agent_id]
 
                 try:
-                    chunk_type, chunk_data = await task
+                    # Unpack chunk tuple - may be 2-tuple (type, data) or 3-tuple (type, data, tool_call_id)
+                    chunk_tuple = await task
+                    chunk_type = chunk_tuple[0]
+                    chunk_data = chunk_tuple[1]
+                    chunk_tool_call_id = chunk_tuple[2] if len(chunk_tuple) > 2 else None
 
                     if chunk_type == "content":
                         # Stream agent content in real-time with source info
@@ -2878,11 +2891,26 @@ Your answer:"""
                         yield StreamChunk(type="debug", content=chunk_data, source=agent_id)
 
                     elif chunk_type == "mcp_status":
-                        # MCP status messages - forward with proper formatting
+                        # MCP status messages - keep mcp_status type to preserve tool tracking
                         mcp_message = f"🔧 MCP: {chunk_data}"
                         log_stream_chunk("orchestrator", "mcp_status", chunk_data, agent_id)
-                        mcp_type = "coordination" if self.trace_classification == "strict" else "content"
-                        yield StreamChunk(type=mcp_type, content=mcp_message, source=agent_id)
+                        yield StreamChunk(
+                            type="mcp_status",
+                            content=mcp_message,
+                            source=agent_id,
+                            tool_call_id=chunk_tool_call_id,
+                        )
+
+                    elif chunk_type == "custom_tool_status":
+                        # Custom tool status messages - keep custom_tool_status type for tool tracking
+                        custom_message = f"🔧 Custom Tool: {chunk_data}"
+                        log_stream_chunk("orchestrator", "custom_tool_status", chunk_data, agent_id)
+                        yield StreamChunk(
+                            type="custom_tool_status",
+                            content=custom_message,
+                            source=agent_id,
+                            tool_call_id=chunk_tool_call_id,
+                        )
 
                     elif chunk_type == "done":
                         # Stream completed - this is just an end-of-stream marker
@@ -4667,13 +4695,19 @@ Your answer:"""
                     elif chunk_type == "backend_status":
                         pass
                     elif chunk_type == "mcp_status":
-                        # Forward MCP status messages with proper formatting
-                        mcp_content = f"🔧 MCP: {chunk.content}"
-                        yield self._trace_tuple(mcp_content, kind="coordination")
+                        # Forward MCP status messages preserving type for tool tracking
+                        yield (
+                            "mcp_status",
+                            chunk.content,
+                            getattr(chunk, "tool_call_id", None),
+                        )
                     elif chunk_type == "custom_tool_status":
-                        # Forward custom tool status messages with proper formatting
-                        custom_tool_content = f"🔧 Custom Tool: {chunk.content}"
-                        yield self._trace_tuple(custom_tool_content, kind="coordination")
+                        # Forward custom tool status messages preserving type for tool tracking
+                        yield (
+                            "custom_tool_status",
+                            chunk.content,
+                            getattr(chunk, "tool_call_id", None),
+                        )
                     elif chunk_type == "debug":
                         # Forward debug chunks
                         yield ("debug", chunk.content)

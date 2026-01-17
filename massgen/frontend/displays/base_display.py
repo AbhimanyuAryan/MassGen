@@ -25,13 +25,20 @@ class BaseDisplay(ABC):
         """Initialize the display with question and optional log file."""
 
     @abstractmethod
-    def update_agent_content(self, agent_id: str, content: str, content_type: str = "thinking"):
+    def update_agent_content(
+        self,
+        agent_id: str,
+        content: str,
+        content_type: str = "thinking",
+        tool_call_id: Optional[str] = None,
+    ):
         """Update content for a specific agent.
 
         Args:
             agent_id: The agent whose content to update
             content: The content to add/update
             content_type: Type of content ("thinking", "tool", "status")
+            tool_call_id: Optional unique ID for tool calls (enables tracking across events)
         """
 
     @abstractmethod

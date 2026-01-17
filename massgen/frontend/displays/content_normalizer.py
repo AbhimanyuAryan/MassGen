@@ -18,6 +18,7 @@ from typing import Any, Dict, Literal, Optional
 # Content types recognized by the display system
 ContentType = Literal[
     "tool_start",
+    "tool_args",
     "tool_complete",
     "tool_failed",
     "tool_info",
@@ -96,7 +97,7 @@ TOOL_COMPLETE_PATTERNS = [
     r"Tool ['\"]?(\w+)['\"]? (?:completed|finished|succeeded)",
     r"(\w+) completed",
     r"Result from (\w+)",
-    r"Results for Calling ([^\s:]+):",  # MCP result pattern
+    r"Results for Calling ([^\s:]+):\s*(.+)",  # MCP result pattern - capture tool name and result
 ]
 
 TOOL_FAILED_PATTERNS = [
@@ -214,6 +215,7 @@ class ToolMetadata:
     result: Optional[str] = None
     error: Optional[str] = None
     tool_count: Optional[int] = None  # For "Registered X tools" messages
+    tool_call_id: Optional[str] = None  # Unique ID for this tool call  # For "Registered X tools" messages
 
 
 @dataclass
@@ -227,6 +229,7 @@ class NormalizedContent:
     tool_metadata: Optional[ToolMetadata] = None
     should_display: bool = True  # Set to False to filter out
     is_coordination: bool = False  # Flag for coordination content (for grouping)
+    tool_call_id: Optional[str] = None  # Unique ID for this tool call  # Flag for coordination content (for grouping)
 
 
 class ContentNormalizer:
@@ -315,10 +318,12 @@ class ContentNormalizer:
 
         # Check for tool complete
         for pattern in TOOL_COMPLETE_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE)
+            match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
             if match:
-                tool_name = match.group(1) if match.groups() else "unknown"
-                return ToolMetadata(tool_name=tool_name, event="complete")
+                tool_name = match.group(1) if len(match.groups()) >= 1 else "unknown"
+                # Extract result if captured (e.g., "Results for Calling tool: result_text")
+                result_text = match.group(2).strip() if len(match.groups()) >= 2 else None
+                return ToolMetadata(tool_name=tool_name, event="complete", result=result_text)
 
         # Check for tool failed
         for pattern in TOOL_FAILED_PATTERNS:
@@ -474,7 +479,12 @@ class ContentNormalizer:
 
         # Explicit type mappings
         if raw_type == "tool":
-            if "calling" in content_lower or "executing" in content_lower:
+            # Check args/results first - they contain "calling" but are different events
+            if "arguments for" in content_lower:
+                return "tool_args"
+            elif "results for" in content_lower:
+                return "tool_complete"
+            elif "calling" in content_lower or "executing" in content_lower:
                 return "tool_start"
             elif "completed" in content_lower or "finished" in content_lower:
                 return "tool_complete"
@@ -505,6 +515,8 @@ class ContentNormalizer:
         if tool_meta:
             if tool_meta.event == "start":
                 return "tool_start"
+            elif tool_meta.event == "args":
+                return "tool_args"
             elif tool_meta.event == "complete":
                 return "tool_complete"
             elif tool_meta.event == "failed":
@@ -515,7 +527,7 @@ class ContentNormalizer:
         return "text"
 
     @classmethod
-    def normalize(cls, content: str, raw_type: str = "") -> NormalizedContent:
+    def normalize(cls, content: str, raw_type: str = "", tool_call_id: Optional[str] = None) -> NormalizedContent:
         """Normalize content for display.
 
         This is the main entry point. It:
@@ -528,6 +540,7 @@ class ContentNormalizer:
         Args:
             content: Raw content from orchestrator
             raw_type: The content_type provided by orchestrator
+            tool_call_id: Optional unique ID for this tool call
 
         Returns:
             NormalizedContent with all processing applied
@@ -542,6 +555,9 @@ class ContentNormalizer:
         tool_metadata = None
         if content_type.startswith("tool_"):
             tool_metadata = cls.detect_tool_event(content)
+            # Pass tool_call_id to metadata
+            if tool_metadata and tool_call_id:
+                tool_metadata.tool_call_id = tool_call_id
 
         # Check if this is coordination content (for grouping, not filtering)
         is_coordination = cls.is_coordination_content(content)
@@ -558,7 +574,8 @@ class ContentNormalizer:
             should_display = False
 
         # Filter workspace state content (internal messages)
-        if cls.is_workspace_state_content(content):
+        # BUT: Don't filter tool content - tool args contain JSON that we need to display
+        if not content_type.startswith("tool_") and cls.is_workspace_state_content(content):
             should_display = False
 
         # Apply light cleaning
@@ -576,4 +593,5 @@ class ContentNormalizer:
             tool_metadata=tool_metadata,
             should_display=should_display,
             is_coordination=is_coordination,
+            tool_call_id=tool_call_id,
         )

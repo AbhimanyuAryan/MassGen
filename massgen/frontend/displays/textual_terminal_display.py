@@ -1148,13 +1148,20 @@ class TextualTerminalDisplay(TerminalDisplay):
                 buffer_flush_interval=self.buffer_flush_interval,
             )
 
-    def update_agent_content(self, agent_id: str, content: str, content_type: str = "thinking"):
+    def update_agent_content(
+        self,
+        agent_id: str,
+        content: str,
+        content_type: str = "thinking",
+        tool_call_id: Optional[str] = None,
+    ):
         """Update agent content with appropriate formatting.
 
         Args:
             agent_id: Agent identifier
             content: Content to display
             content_type: Type of content - "thinking", "tool", "status", "presentation"
+            tool_call_id: Optional unique ID for tool calls (enables tracking across events)
         """
         if not content:
             return
@@ -1178,6 +1185,7 @@ class TextualTerminalDisplay(TerminalDisplay):
                     "type": display_type,
                     "timestamp": datetime.now(),
                     "force_jump": False,
+                    "tool_call_id": tool_call_id,
                 },
             )
             buffered_len = len(self._buffers[agent_id])
@@ -2741,6 +2749,9 @@ if TEXTUAL_AVAILABLE:
                     "size": {"width": widget.size.width, "height": widget.size.height} if hasattr(widget, "size") else None,
                     "region": {"x": widget.region.x, "y": widget.region.y, "width": widget.region.width, "height": widget.region.height} if hasattr(widget, "region") else None,
                     "content_size": {"width": widget.content_size.width, "height": widget.content_size.height} if hasattr(widget, "content_size") else None,
+                    "virtual_size": {"width": widget.virtual_size.width, "height": widget.virtual_size.height} if hasattr(widget, "virtual_size") else None,
+                    "scroll_y": widget.scroll_y if hasattr(widget, "scroll_y") else None,
+                    "max_scroll_y": widget.max_scroll_y if hasattr(widget, "max_scroll_y") else None,
                     "styles": {
                         "width": str(widget.styles.width) if hasattr(widget.styles, "width") else None,
                         "height": str(widget.styles.height) if hasattr(widget.styles, "height") else None,
@@ -2750,7 +2761,7 @@ if TEXTUAL_AVAILABLE:
                     },
                     "children": [],
                 }
-                if depth < 6:  # Limit depth
+                if depth < 10:  # Limit depth (increased from 6 to see timeline children)
                     for child in widget.children:
                         info["children"].append(get_widget_info(child, depth + 1))
                 return info
@@ -2758,7 +2769,70 @@ if TEXTUAL_AVAILABLE:
             tree = get_widget_info(self)
             with open("/tmp/widget_sizes.json", "w") as f:
                 json.dump(tree, f, indent=2, default=str)
-            tui_log("Widget sizes dumped to /tmp/widget_sizes.json")
+
+            # Also dump specific timeline info to separate file for easier debugging
+            timeline_debug = []
+            try:
+                from massgen.frontend.displays.textual_widgets.content_sections import (
+                    TimelineSection,
+                )
+
+                for ts in self.query(TimelineSection):
+                    ts_info = {
+                        "id": ts.id,
+                        "size": {"width": ts.size.width, "height": ts.size.height},
+                        "region": {"x": ts.region.x, "y": ts.region.y, "width": ts.region.width, "height": ts.region.height},
+                        "content_size": {"width": ts.content_size.width, "height": ts.content_size.height},
+                    }
+                    # Get the scroll container
+                    try:
+                        container = ts.query_one("#timeline_container")
+                        ts_info["container"] = {
+                            "type": type(container).__name__,
+                            "size": {"width": container.size.width, "height": container.size.height},
+                            "region": {"x": container.region.x, "y": container.region.y, "width": container.region.width, "height": container.region.height},
+                            "content_size": {"width": container.content_size.width, "height": container.content_size.height},
+                            "virtual_size": {"width": container.virtual_size.width, "height": container.virtual_size.height},
+                            "scroll_y": container.scroll_y,
+                            "max_scroll_y": container.max_scroll_y,
+                            "children_count": len(list(container.children)),
+                            "children": [],
+                        }
+                        # Get first and last few children for debugging
+                        children = list(container.children)
+
+                        def get_child_info(child, idx):
+                            info = {
+                                "index": idx,
+                                "type": type(child).__name__,
+                                "id": child.id,
+                                "classes": list(child.classes),
+                                "size": {"width": child.size.width, "height": child.size.height},
+                                "region": {"y": child.region.y, "height": child.region.height},
+                            }
+                            # For Static widgets, try to get the renderable content
+                            if hasattr(child, "renderable"):
+                                content = str(child.renderable)[:100]  # First 100 chars
+                                info["content_preview"] = content if content else "(empty)"
+                            return info
+
+                        for i, child in enumerate(children[:5]):  # First 5
+                            ts_info["container"]["children"].append(get_child_info(child, i))
+                        if len(children) > 10:
+                            ts_info["container"]["children"].append({"...": f"{len(children) - 10} more items..."})
+                        for i, child in enumerate(children[-5:]):  # Last 5
+                            if len(children) > 5:
+                                ts_info["container"]["children"].append(get_child_info(child, len(children) - 5 + i))
+                    except Exception as e:
+                        ts_info["container_error"] = str(e)
+                    timeline_debug.append(ts_info)
+            except Exception as e:
+                timeline_debug.append({"error": str(e)})
+
+            with open("/tmp/timeline_debug.json", "w") as f:
+                json.dump(timeline_debug, f, indent=2, default=str)
+
+            tui_log("Widget sizes dumped to /tmp/widget_sizes.json and /tmp/timeline_debug.json")
 
         def _update_safe_indicator(self):
             """Show/hide safe keyboard status in footer area."""
@@ -3217,6 +3291,7 @@ Type your question and press Enter to ask the agents.
                                 agent_id,
                                 item["content"],
                                 item.get("type", "thinking"),
+                                item.get("tool_call_id"),
                             )
                             if item.get("force_jump"):
                                 widget = self.agent_widgets.get(agent_id)
@@ -3244,10 +3319,16 @@ Type your question and press Enter to ask the agents.
 
             self.call_later(lambda: self.run_worker(_show()))
 
-        async def update_agent_widget(self, agent_id: str, content: str, content_type: str):
+        async def update_agent_widget(
+            self,
+            agent_id: str,
+            content: str,
+            content_type: str,
+            tool_call_id: Optional[str] = None,
+        ):
             """Update agent widget with content."""
             if agent_id in self.agent_widgets:
-                self.agent_widgets[agent_id].add_content(content, content_type)
+                self.agent_widgets[agent_id].add_content(content, content_type, tool_call_id)
 
         def update_agent_status(self, agent_id: str, status: str):
             """Update agent status."""
@@ -5108,7 +5189,7 @@ Type your question and press Enter to ask the agents.
 
                 print(f"[ERROR] show_restart_separator failed: {e}", file=sys.stderr)
 
-        def add_content(self, content: str, content_type: str):
+        def add_content(self, content: str, content_type: str, tool_call_id: Optional[str] = None):
             """Add content to agent panel using section-based routing.
 
             Content is normalized and routed to appropriate sections:
@@ -5117,11 +5198,16 @@ Type your question and press Enter to ask the agents.
             - Status -> Updates status badge
             - Presentation -> ThinkingSection with completion footer
             - Restart -> Restart separator in ThinkingSection
+
+            Args:
+                content: The content to add
+                content_type: Type hint from backend
+                tool_call_id: Optional unique ID for this tool call
             """
             self._hide_loading()  # Hide loading when any content arrives
 
-            # Normalize content first
-            normalized = ContentNormalizer.normalize(content, content_type)
+            # Normalize content first, passing tool_call_id
+            normalized = ContentNormalizer.normalize(content, content_type, tool_call_id)
 
             # Route based on detected content type
             if normalized.content_type.startswith("tool_"):
@@ -5159,6 +5245,7 @@ Type your question and press Enter to ask the agents.
 
             # Process through handler
             tool_data = self._tool_handler.process(normalized)
+
             if not tool_data:
                 return
 
@@ -6282,6 +6369,7 @@ Type your question and press Enter to ask the agents.
             vote_counts: Dict[str, int],
             agent_ids: List[str],
             winner_agent_id: Optional[str] = None,
+            initial_tab: str = "timeline",
         ):
             super().__init__()
             self.answers = answers
@@ -6289,17 +6377,29 @@ Type your question and press Enter to ask the agents.
             self.vote_counts = vote_counts
             self.agent_ids = agent_ids
             self.winner_agent_id = winner_agent_id
-            self._current_tab = "answers"
+            self._current_tab = initial_tab
 
         def compose(self) -> ComposeResult:
             with Container(id="browser_tabs_container"):
                 yield Label(
-                    "[bold reverse] 1 Answers [/]  [bold]2[/] Votes  [bold]3[/] Workspace  [bold]4[/] Timeline",
+                    self._build_tab_bar_text(),
                     id="browser_tab_bar",
                 )
                 with VerticalScroll(id="browser_content"):
                     yield Static(self._render_current_tab(), id="browser_content_text", markup=True)
                 yield Button("Close (ESC)", id="close_browser_button")
+
+        def _build_tab_bar_text(self) -> str:
+            """Build tab bar text with correct highlight for current tab."""
+            tabs = ["answers", "votes", "workspace", "timeline"]
+            tab_labels = ["Answers", "Votes", "Workspace", "Timeline"]
+            parts = []
+            for i, (t, label) in enumerate(zip(tabs, tab_labels), 1):
+                if t == self._current_tab:
+                    parts.append(f"[bold reverse] {i} {label} [/]")
+                else:
+                    parts.append(f"[bold]{i}[/] {label}")
+            return "  ".join(parts)
 
         def _render_current_tab(self) -> str:
             """Render content for the current tab."""
@@ -6399,6 +6499,9 @@ Type your question and press Enter to ask the agents.
 
         def _render_timeline_tab(self) -> str:
             """Render swimlane-style timeline visualization (like WebUI)."""
+            import datetime as dt_module
+            import re
+
             # Get unique agents
             seen = set()
             all_agents = []
@@ -6412,11 +6515,7 @@ Type your question and press Enter to ask the agents.
                     all_agents.append(a["agent_id"])
 
             if not all_agents:
-                return "[dim]No activity yet[/]"
-
-            # Calculate column widths (min 14 chars per agent)
-            col_width = 14
-            num_agents = len(all_agents)
+                return "[dim]No activity yet[/dim]"
 
             # Collect all events with timestamps
             events = []
@@ -6447,73 +6546,76 @@ Type your question and press Enter to ask the agents.
             events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
 
             if not events:
-                return "[dim]No activity yet[/]"
+                return "[dim]No activity yet[/dim]"
 
             # Build swimlane visualization
-            lines = ["[bold cyan]📊 Timeline - Swimlane View[/]", ""]
+            col_width = 16
+            num_agents = len(all_agents)
+            lines = ["[bold cyan]📊 Timeline - Swimlane View[/bold cyan]", ""]
 
             # Header row with agent names
-            header = ""
-            for i, agent in enumerate(all_agents, 1):
-                short_name = f"Agent {i}".center(col_width)
-                header += f"[bold cyan]{short_name}[/]"
-            lines.append(header)
-
-            # Separator
+            header_parts = []
+            for i, _agent in enumerate(all_agents, 1):
+                header_parts.append(f"[bold cyan]{f'Agent {i}':^{col_width}}[/bold cyan]")
+            lines.append("".join(header_parts))
             lines.append("─" * (col_width * num_agents))
+
+            # Helper to calculate visible length (without Rich markup)
+            def visible_len(s: str) -> int:
+                return len(re.sub(r"\[/?[^\]]*\]", "", s))
 
             # Event rows
             for event in events:
-                import datetime as dt_module
-
                 ts = event.get("timestamp", 0)
                 time_str = dt_module.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "??:??"
 
-                # Build row with proper placement
-                row = ""
+                # Build cells for each agent column
+                cells = []
                 for agent in all_agents:
-                    cell = " " * col_width
-
                     if event["type"] == "answer" and event["agent_id"] == agent:
-                        label = event.get("label", "?")[:6]
-                        # Format context sources if present
-                        ctx = event.get("context_sources", [])
-                        ctx_str = ""
-                        if ctx:
-                            short_ctx = [c.replace("agent", "A")[:4] for c in ctx[:1]]
-                            ctx_str = f"[dim cyan]←{','.join(short_ctx)}[/]"
+                        # Format label like "agent1.5" -> "1.5"
+                        raw_label = event.get("label", "?")
+                        if raw_label.lower().startswith("agent"):
+                            label = raw_label[5:]  # Strip "agent" prefix
+                        else:
+                            label = raw_label[:6]
 
                         if event.get("is_winner"):
-                            cell = f" [bold yellow]★{label}[/]{ctx_str}"
+                            cells.append(f"[bold yellow]★{label}[/bold yellow]")
                         else:
-                            cell = f" [green]○{label}[/]{ctx_str}"
-
+                            cells.append(f"[green]○{label}[/green]")
                     elif event["type"] == "vote" and event["agent_id"] == agent:
-                        target = event.get("target", "?")[:6]
-                        cell = f" [magenta]◇→{target}[/]"
+                        # Show vote target more clearly
+                        target = event.get("target", "?")
+                        if "agent" in target.lower():
+                            target_num = "".join(c for c in target if c.isdigit())[:1]
+                            target = f"A{target_num}" if target_num else target[:6]
+                        else:
+                            target = target[:6]
+                        cells.append(f"[magenta]◇→{target}[/magenta]")
+                    else:
+                        cells.append("")
 
-                    # Pad cell to column width (extra for Rich markup)
-                    row += cell.ljust(col_width + 20)[: col_width + 20]
+                # Format row with padding after markup (not slicing through it)
+                row_parts = []
+                for cell in cells:
+                    vis_len = visible_len(cell)
+                    padding = " " * max(0, col_width - vis_len)
+                    row_parts.append(cell + padding)
 
-                # Add timestamp at end
-                lines.append(f"{row} [dim]{time_str}[/]")
+                lines.append(f"{''.join(row_parts)}[dim]{time_str}[/dim]")
 
-            # Separator
+            # Footer
             lines.append("─" * (col_width * num_agents))
-
-            # Legend
             lines.append("")
-            lines.append("[dim]○ answer  ◇ vote  ★ winner  ← context[/]")
+            lines.append("[dim]○ answer  ◇ vote  ★ winner[/dim]")
 
-            # Summary
             answer_count = len([e for e in events if e["type"] == "answer"])
             vote_count = len([e for e in events if e["type"] == "vote"])
-
             summary_parts = [f"{answer_count} answers", f"{vote_count} votes"]
             if self.winner_agent_id:
                 summary_parts.append(f"Winner: {self.winner_agent_id}")
-
-            lines.append(f"[dim]{' • '.join(summary_parts)}[/]")
+            lines.append(f"[dim]{' • '.join(summary_parts)}[/dim]")
 
             return "\n".join(lines)
 
@@ -6526,15 +6628,7 @@ Type your question and press Enter to ask the agents.
 
                 # Update tab bar to show active tab
                 tab_bar = self.query_one("#browser_tab_bar", Label)
-                tabs = ["answers", "votes", "workspace", "timeline"]
-                tab_labels = ["Answers", "Votes", "Workspace", "Timeline"]
-                parts = []
-                for i, (t, label) in enumerate(zip(tabs, tab_labels), 1):
-                    if t == tab:
-                        parts.append(f"[bold reverse] {i} {label} [/]")
-                    else:
-                        parts.append(f"[bold]{i}[/] {label}")
-                tab_bar.update("  ".join(parts))
+                tab_bar.update(self._build_tab_bar_text())
             except Exception:
                 pass
 

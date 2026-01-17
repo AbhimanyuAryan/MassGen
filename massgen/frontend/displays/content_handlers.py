@@ -50,6 +50,7 @@ class ToolState:
     color: str
     start_time: datetime
     args_full: Optional[str] = None  # Store full args when they arrive
+    tool_call_id: Optional[str] = None  # Unique ID for this tool call  # Store full args when they arrive
 
 
 # Tool categories with icons and colors (same as tool_card.py)
@@ -308,6 +309,7 @@ class ToolContentHandler(BaseContentHandler):
         self._pending_tools: Dict[str, ToolState] = {}
         self._tool_counter = 0
         self._completed_tools: set = set()  # Track completed tool IDs to avoid duplicates
+        self._deferred_args: Dict[str, str] = {}  # Queue for args arriving before tool start
 
     def process(self, normalized: NormalizedContent) -> Optional[ToolDisplayData]:
         """Process tool content and return display data."""
@@ -316,13 +318,15 @@ class ToolContentHandler(BaseContentHandler):
 
         meta = normalized.tool_metadata
         event = meta.event
+        # Get tool_call_id from metadata or normalized content
+        tool_call_id = meta.tool_call_id or normalized.tool_call_id
 
         if event == "start":
-            return self._handle_start(meta)
+            return self._handle_start(meta, tool_call_id)
         elif event == "args":
-            return self._handle_args(meta)
+            return self._handle_args(meta, tool_call_id)
         elif event == "complete":
-            return self._handle_complete(meta, normalized.cleaned_content)
+            return self._handle_complete(meta, normalized.cleaned_content, tool_call_id)
         elif event == "failed":
             return self._handle_failed(meta, normalized.cleaned_content)
         elif event == "info":
@@ -349,12 +353,14 @@ class ToolContentHandler(BaseContentHandler):
             return parts[-1].lower()
         return name.lower()
 
-    def _handle_start(self, meta) -> Optional[ToolDisplayData]:
+    def _handle_start(self, meta, tool_call_id: Optional[str] = None) -> Optional[ToolDisplayData]:
         """Handle tool start event."""
         normalized_name = self._normalize_tool_name(meta.tool_name)
+        # Use tool_call_id as key if available, otherwise fall back to normalized name
+        key = tool_call_id or normalized_name
 
-        # Check if we already have a pending tool with this name (avoid duplicates)
-        if normalized_name in self._pending_tools:
+        # Check if we already have a pending tool with this key (avoid duplicates)
+        if key in self._pending_tools:
             return None  # Skip duplicate start
 
         self._tool_counter += 1
@@ -364,7 +370,13 @@ class ToolContentHandler(BaseContentHandler):
         category_info = get_tool_category(meta.tool_name)
         display_name = format_tool_display_name(meta.tool_name)
 
-        # Create pending state using normalized name as key
+        # Check for deferred args (args that arrived before tool start)
+        # Try both tool_call_id and normalized_name for deferred args
+        deferred_args = self._deferred_args.pop(key, None)
+        if not deferred_args and tool_call_id:
+            deferred_args = self._deferred_args.pop(normalized_name, None)
+
+        # Create pending state using tool_call_id as key when available
         state = ToolState(
             tool_id=tool_id,
             tool_name=meta.tool_name,
@@ -374,13 +386,20 @@ class ToolContentHandler(BaseContentHandler):
             icon=category_info["icon"],
             color=category_info["color"],
             start_time=datetime.now(),
+            args_full=deferred_args,  # Use deferred args if available
+            tool_call_id=tool_call_id,
         )
-        self._pending_tools[normalized_name] = state
+        self._pending_tools[key] = state
 
-        # Extract args summary if available
+        # Extract args summary if available (from meta or deferred)
         args_summary = None
+        args_full = None
         if meta.args and "summary" in meta.args:
-            args_summary = meta.args["summary"]
+            args_full = meta.args["summary"]
+            args_summary = args_full[:77] + "..." if len(args_full) > 80 else args_full
+        elif deferred_args:
+            args_full = deferred_args
+            args_summary = deferred_args[:77] + "..." if len(deferred_args) > 80 else deferred_args
 
         return ToolDisplayData(
             tool_id=tool_id,
@@ -393,16 +412,14 @@ class ToolContentHandler(BaseContentHandler):
             status="running",
             start_time=state.start_time,
             args_summary=args_summary,
+            args_full=args_full,
         )
 
-    def _handle_args(self, meta) -> Optional[ToolDisplayData]:
+    def _handle_args(self, meta, tool_call_id: Optional[str] = None) -> Optional[ToolDisplayData]:
         """Handle tool args event - update existing tool with args."""
         normalized_name = self._normalize_tool_name(meta.tool_name)
-
-        # Find the pending tool
-        state = self._pending_tools.get(normalized_name)
-        if not state:
-            return None  # No matching tool to update
+        # Use tool_call_id as key if available, otherwise fall back to normalized name
+        key = tool_call_id or normalized_name
 
         # Extract full args and create summary
         args_full = None
@@ -416,6 +433,17 @@ class ToolContentHandler(BaseContentHandler):
                 args_summary = args_full
 
         if not args_full:
+            return None
+
+        # Find the pending tool - try key first, then try other key format
+        state = self._pending_tools.get(key)
+        if not state and tool_call_id:
+            # Fallback: try normalized name in case start came without tool_call_id
+            state = self._pending_tools.get(normalized_name)
+
+        if not state:
+            # Args arrived before tool start - defer for later
+            self._deferred_args[key] = args_full
             return None
 
         # Store full args in state for later use
@@ -436,12 +464,17 @@ class ToolContentHandler(BaseContentHandler):
             args_full=args_full,
         )
 
-    def _handle_complete(self, meta, content: str) -> Optional[ToolDisplayData]:
+    def _handle_complete(self, meta, content: str, tool_call_id: Optional[str] = None) -> Optional[ToolDisplayData]:
         """Handle tool complete event."""
         normalized_name = self._normalize_tool_name(meta.tool_name)
+        # Use tool_call_id as key if available, otherwise fall back to normalized name
+        key = tool_call_id or normalized_name
 
-        # Find the pending tool using normalized name
-        state = self._pending_tools.pop(normalized_name, None)
+        # Find the pending tool using key
+        state = self._pending_tools.pop(key, None)
+        if not state and tool_call_id:
+            # Fallback: try normalized name in case start came without tool_call_id
+            state = self._pending_tools.pop(normalized_name, None)
 
         if not state:
             # No matching start - skip to avoid orphan completions creating cards
@@ -456,8 +489,27 @@ class ToolContentHandler(BaseContentHandler):
         end_time = datetime.now()
         elapsed = (end_time - state.start_time).total_seconds()
 
-        # Strip injection markers from result content
-        cleaned_content = ContentNormalizer.strip_injection_markers(content) if content else ""
+        # Use result from metadata if available (extracted from "Results for Calling..." pattern)
+        # Otherwise fall back to cleaned content
+        result_content = meta.result if meta.result else content
+        cleaned_content = ContentNormalizer.strip_injection_markers(result_content) if result_content else ""
+
+        # Fallback: if args weren't captured earlier, try to extract from content
+        args_full = state.args_full
+        if not args_full:
+            # Try to find args in content (may have arrived inline with result)
+            args_match = re.search(
+                r"Arguments for Calling [^\s:]+:\s*(.+?)(?:Results for Calling|\Z)",
+                content,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if args_match:
+                args_full = args_match.group(1).strip()
+
+        # Create args summary if we have args_full
+        args_summary = None
+        if args_full:
+            args_summary = args_full[:77] + "..." if len(args_full) > 80 else args_full
 
         return ToolDisplayData(
             tool_id=state.tool_id,
@@ -471,8 +523,9 @@ class ToolContentHandler(BaseContentHandler):
             start_time=state.start_time,
             end_time=end_time,
             elapsed_seconds=elapsed,
-            args_full=state.args_full,  # Pass through stored args
-            result_summary=summarize_result(content),
+            args_full=args_full,
+            args_summary=args_summary,
+            result_summary=summarize_result(cleaned_content),
             result_full=cleaned_content,  # Store cleaned result for modal
         )
 
@@ -493,6 +546,22 @@ class ToolContentHandler(BaseContentHandler):
         end_time = datetime.now()
         elapsed = (end_time - state.start_time).total_seconds()
 
+        # Fallback: if args weren't captured earlier, try to extract from content
+        args_full = state.args_full
+        if not args_full:
+            args_match = re.search(
+                r"Arguments for Calling [^\s:]+:\s*(.+?)(?:Results for Calling|Error|\Z)",
+                content,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if args_match:
+                args_full = args_match.group(1).strip()
+
+        # Create args summary if we have args_full
+        args_summary = None
+        if args_full:
+            args_summary = args_full[:77] + "..." if len(args_full) > 80 else args_full
+
         return ToolDisplayData(
             tool_id=state.tool_id,
             tool_name=state.tool_name,
@@ -505,7 +574,8 @@ class ToolContentHandler(BaseContentHandler):
             start_time=state.start_time,
             end_time=end_time,
             elapsed_seconds=elapsed,
-            args_full=state.args_full,  # Pass through stored args
+            args_full=args_full,
+            args_summary=args_summary,
             error=content if content else "Unknown error",  # Store full error
         )
 
@@ -523,6 +593,7 @@ class ToolContentHandler(BaseContentHandler):
         """Reset handler state (for new session)."""
         self._pending_tools.clear()
         self._completed_tools.clear()
+        self._deferred_args.clear()
         self._tool_counter = 0
 
 

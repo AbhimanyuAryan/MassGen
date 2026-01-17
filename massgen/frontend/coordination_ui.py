@@ -225,19 +225,32 @@ class CoordinationUI:
                     partial_saved = orchestrator.cancellation_manager._partial_saved if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager else False
                     raise CancellationRequested(partial_saved=partial_saved)
 
-                # Filter out mcp_status chunks - display via agent panel instead of console
-                elif chunk_type == "mcp_status":
-                    # Let the display handle MCP status via agent panel
-                    if self.display and source and source in self.agent_ids:
-                        self.display.update_agent_content(source, content, "tool")
+                # Filter out tool status chunks - display via agent panel instead of console
+                elif chunk_type in ("mcp_status", "custom_tool_status"):
+                    # Let the display handle tool status via agent panel
+                    # source may be agent_id or tool name (e.g., "mcp_mcp__filesystem__write_file")
+                    target_agent = source if source in self.agent_ids else None
+                    if not target_agent and self.agent_ids:
+                        # Fallback: route to first agent if source is a tool name
+                        target_agent = self.agent_ids[0]
+                    if self.display and target_agent:
+                        self.display.update_agent_content(
+                            target_agent,
+                            content,
+                            "tool",
+                            tool_call_id=chunk.tool_call_id,
+                        )
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
                 # Display compression status - show in agent panel
                 elif chunk_type == "compression_status":
-                    if self.display and source and source in self.agent_ids:
-                        self.display.update_agent_content(source, content, "tool")
+                    target_agent = source if source in self.agent_ids else None
+                    if not target_agent and self.agent_ids:
+                        target_agent = self.agent_ids[0]
+                    if self.display and target_agent:
+                        self.display.update_agent_content(target_agent, content, "tool")
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
@@ -768,19 +781,31 @@ class CoordinationUI:
                     partial_saved = orchestrator.cancellation_manager._partial_saved if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager else False
                     raise CancellationRequested(partial_saved=partial_saved)
 
-                # Filter out mcp_status chunks - display via agent panel instead of console
-                elif chunk_type == "mcp_status":
-                    # Let the display handle MCP status via agent panel
-                    if source and source in self.agent_ids:
-                        self.display.update_agent_content(source, content, "tool")
+                # Filter out tool status chunks - display via agent panel instead of console
+                elif chunk_type in ("mcp_status", "custom_tool_status"):
+                    # Let the display handle tool status via agent panel
+                    # source may be agent_id or tool name (e.g., "mcp_mcp__filesystem__write_file")
+                    target_agent = source if source in self.agent_ids else None
+                    if not target_agent and self.agent_ids:
+                        target_agent = self.agent_ids[0]
+                    if target_agent:
+                        self.display.update_agent_content(
+                            target_agent,
+                            content,
+                            "tool",
+                            tool_call_id=chunk.tool_call_id,
+                        )
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
                 # Display compression status - show in agent panel
                 elif chunk_type == "compression_status":
-                    if source and source in self.agent_ids:
-                        self.display.update_agent_content(source, content, "tool")
+                    target_agent = source if source in self.agent_ids else None
+                    if not target_agent and self.agent_ids:
+                        target_agent = self.agent_ids[0]
+                    if target_agent:
+                        self.display.update_agent_content(target_agent, content, "tool")
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
@@ -1206,19 +1231,31 @@ class CoordinationUI:
                     partial_saved = orchestrator.cancellation_manager._partial_saved if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager else False
                     raise CancellationRequested(partial_saved=partial_saved)
 
-                # Filter out mcp_status chunks - display via agent panel instead of console
-                elif chunk_type == "mcp_status":
-                    # Let the display handle MCP status via agent panel
-                    if source and source in self.agent_ids:
-                        self.display.update_agent_content(source, content, "tool")
+                # Filter out tool status chunks - display via agent panel instead of console
+                elif chunk_type in ("mcp_status", "custom_tool_status"):
+                    # Let the display handle tool status via agent panel
+                    # source may be agent_id or tool name (e.g., "mcp_mcp__filesystem__write_file")
+                    target_agent = source if source in self.agent_ids else None
+                    if not target_agent and self.agent_ids:
+                        target_agent = self.agent_ids[0]
+                    if target_agent:
+                        self.display.update_agent_content(
+                            target_agent,
+                            content,
+                            "tool",
+                            tool_call_id=chunk.tool_call_id,
+                        )
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
                 # Display compression status - show in agent panel
                 elif chunk_type == "compression_status":
-                    if source and source in self.agent_ids:
-                        self.display.update_agent_content(source, content, "tool")
+                    target_agent = source if source in self.agent_ids else None
+                    if not target_agent and self.agent_ids:
+                        target_agent = self.agent_ids[0]
+                    if target_agent:
+                        self.display.update_agent_content(target_agent, content, "tool")
                     if self.logger:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
@@ -1647,9 +1684,11 @@ class CoordinationUI:
     async def _emit_agent_content(self, agent_id: str, content: str):
         """Emit agent content to the display after filtering."""
         # Determine content type and process
-        if "🔧" in content or "🔄 Vote invalid" in content:
+        # Check for tool-related content markers
+        is_tool_content = "🔧" in content or "Arguments for Calling" in content or "Results for Calling" in content
+        if is_tool_content or "🔄 Vote invalid" in content:
             # Tool usage or status messages
-            content_type = "tool" if "🔧" in content else "status"
+            content_type = "tool" if is_tool_content else "status"
             self.display.update_agent_content(agent_id, content, content_type)
 
             # Note: Status updates to "completed" are handled by the authoritative
