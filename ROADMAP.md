@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.37
+**Current Version:** v0.1.39
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** January 12, 2026
+**Last Updated:** January 16, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,52 +42,55 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.38** | 01/14/26 | OpenAI Responses /compact Endpoint | @ncrispino | Use OpenAI's native compact endpoint instead of custom summarization |
-| | | Add Fara-7B for Computer Use | @ncrispino | Support for Fara-7B model for computer use tasks |
-| **v0.1.39** | 01/16/26 | Integrate Smart Semantic Search | @ncrispino | Advanced semantic search capabilities for improved retrieval |
+| **v0.1.40** | 01/19/26 | OpenAI Responses /compact Endpoint | @ncrispino | Use OpenAI's native compact endpoint instead of custom summarization |
+| | | TUI Production Upgrade | @ncrispino | Migrate to Textual as primary terminal interface |
+| **v0.1.41** | 01/21/26 | Integrate Smart Semantic Search | @ncrispino | Advanced semantic search capabilities for improved retrieval |
 | | | Add Model Selector for Log Analysis | @ncrispino | Choose model for `massgen logs analyze` self-analysis mode |
-| **v0.1.40** | 01/19/26 | Improve Log Sharing and Analysis | @ncrispino | Enhanced log sharing workflows and analysis tools |
+| **v0.1.42** | 01/24/26 | Improve Log Sharing and Analysis | @ncrispino | Enhanced log sharing workflows and analysis tools |
+| | | Add Fara-7B for Computer Use | @ncrispino | Support for Fara-7B model for computer use tasks |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## ✅ v0.1.37 - Execution Traces & Thinking Mode Improvements (COMPLETED)
+## ✅ v0.1.39 - Plan and Execute Workflow (COMPLETED)
 
-**Released: January 12, 2026**
+**Released: January 16, 2026**
 
 ### Features
 
-- **Execution Traces**: Full execution history preserved as searchable markdown files ([MAS-226](https://linear.app/massgen-ai/issue/MAS-226), [PR #783](https://github.com/massgen/MassGen/pull/783))
-  - Human-readable `execution_trace.md` saved alongside snapshots
-  - Compression recovery - agents can read trace files to recover detailed history
-  - Cross-agent access - other agents can access traces in temp workspaces
-  - Full tool calls, results, and reasoning blocks without truncation
-  - Grep-friendly searchable format for debugging
+- **Plan and Execute Workflow**: Complete plan-then-execute workflow separating "what to build" from "how to build it" ([PR #794](https://github.com/massgen/MassGen/pull/794))
+  - `--plan-and-execute`: Create plan then immediately execute it
+  - `--execute-plan <id|path|latest>`: Execute existing plans without re-planning
+  - `--plan-depth <shallow|medium|deep>`: Control plan granularity (5-10, 20-50, or 100-200+ tasks)
+  - `--broadcast <human|agents|false>`: Control planning collaboration
 
-- **Claude Code Thinking Mode**: Streaming buffer support for Claude Code reasoning
-  - Thinking content captured in streaming buffer for trace files
-  - Integration with execution trace system
+- **Task Verification Workflow**: New `verified` status for distinguishing implementation from validation
+  - Status flow: `pending` → `in_progress` → `completed` → `verified`
+  - `verification_group` labels for batch verification (e.g., "foundation", "frontend_ui")
+  - Agents verify entire groups at logical checkpoints
 
-- **Voting Execution Traces**: Vote reasoning captured in execution trace files
-
-### Changed
-
-- **Standardized Agent Labeling**: Consistent agent identification across backends
-- **Gemini Thinking Mode**: Fixed thinking/reasoning content handling
-- **Streaming Buffer Improvements**: Enhanced reasoning content capture
+- **Plan Storage System**: Persistent plan management in `.massgen/plans/`
+  - Plan structure: `plan_metadata.json`, `execution_log.jsonl`, `plan_diff.json`
+  - `frozen/` directory for immutable planning-phase snapshots
+  - `workspace/` directory for modified plan after execution
+  - Plan IDs use timestamp format: `YYYYMMDD_HHMMSS_microseconds`
 
 ### Fixed
 
-- Claude Code backend skills and tool handling issues
-- Config builder configuration generation edge cases
-- Round timeout handling during coordination
+- **Response API Function Call Messages**: Sanitized function_call messages for OpenAI Response API compatibility ([PR #792](https://github.com/massgen/MassGen/pull/792))
+  - Filter function_call messages to only include valid fields
+  - Ensure 'arguments' field is JSON-serialized string, not an object
+
+- **Plan Execution Edge Cases**: Various fixes for plan execution workflow
+  - Single-agent config handling for both `agent:` and `agents:` shapes
+  - Progress calculation now counts `verified` tasks as completed
 
 *See [Ongoing Work](#-ongoing-work--continuous-releases) section for detailed track information.*
 
 ---
 
-## 📋 v0.1.38 - OpenAI Compact Endpoint & Model Support
+## 📋 v0.1.40 - OpenAI Compact Endpoint & TUI Production Upgrade
 
 ### Features
 
@@ -97,19 +100,20 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Leverage API-level context compression for better efficiency
 - **Use Case**: Reduce token usage and improve response quality with native compression
 
-**2. Add Fara-7B for Computer Use** (@ncrispino)
-- Issue: [#646](https://github.com/massgen/MassGen/issues/646)
-- Support for Fara-7B model for computer use tasks
-- Integration with existing computer use infrastructure
-- **Use Case**: Alternative model option for GUI automation workflows
+**2. TUI Production Upgrade** (@ncrispino)
+- Issue: [#778](https://github.com/massgen/MassGen/issues/778)
+- Migrate to Textual as primary terminal interface
+- Replace rich_terminal with production-ready Textual TUI
+- Improved stability, layout, and user experience
+- **Use Case**: Professional-grade terminal interface for daily use
 
 ### Success Criteria
 - ✅ OpenAI compact endpoint integration working
-- ✅ Fara-7B working with computer use features
+- ✅ Textual TUI as default terminal interface
 
 ---
 
-## 📋 v0.1.39 - Smart Semantic Search & Log Analysis Model Selector
+## 📋 v0.1.41 - Smart Semantic Search & Log Analysis Model Selector
 
 ### Features
 
@@ -131,7 +135,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.40 - Log Sharing & Analysis
+## 📋 v0.1.42 - Log Sharing & Fara-7B Support
 
 ### Features
 
@@ -141,8 +145,15 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Improved analysis tools and visualizations
 - **Use Case**: Better collaboration and debugging workflows
 
+**2. Add Fara-7B for Computer Use** (@ncrispino)
+- Issue: [#646](https://github.com/massgen/MassGen/issues/646)
+- Support for Fara-7B model for computer use tasks
+- Integration with existing computer use infrastructure
+- **Use Case**: Alternative model option for GUI automation workflows
+
 ### Success Criteria
 - ✅ Log sharing improvements deployed
+- ✅ Fara-7B working with computer use features
 
 ---
 
@@ -644,7 +655,7 @@ These features are being actively developed on **separate parallel tracks** and 
 - Issue: [#739](https://github.com/massgen/MassGen/issues/739)
 - Use OpenAI's native `/compact` endpoint instead of custom summarization
 - Leverage API-level context compression for better efficiency
-- **Target:** v0.1.37
+- **Target:** v0.1.40
 
 ### Track: Improve Logging (@ncrispino, nickcrispino)
 - Issue: [#683](https://github.com/massgen/MassGen/issues/683)
@@ -657,19 +668,25 @@ These features are being actively developed on **separate parallel tracks** and 
 - Issue: [#646](https://github.com/massgen/MassGen/issues/646)
 - Support for Fara-7B model for computer use tasks
 - Integration with existing computer use infrastructure
-- **Target:** v0.1.37
+- **Target:** v0.1.42
+
+### Track: @filename Syntax for Inline Context Paths (@ncrispino, nickcrispino)
+- Issue: [#767](https://github.com/massgen/MassGen/issues/767)
+- Add `@path/to/file` syntax to include files/directories as read-only context
+- Smart directory consolidation when 3+ sibling files referenced
+- **Target:** v0.1.40
 
 ### Track: Integrate Smart Semantic Search (@ncrispino, nickcrispino)
 - Issue: [#639](https://github.com/massgen/MassGen/issues/639)
 - Advanced semantic search capabilities for improved retrieval
 - Integration with existing search infrastructure
-- **Target:** v0.1.38
+- **Target:** v0.1.41
 
 ### Track: Add Model Selector for Log Analysis (@ncrispino, nickcrispino)
 - Issue: [#766](https://github.com/massgen/MassGen/issues/766)
 - Allow users to choose which model to use for `massgen logs analyze` self-analysis mode
 - Configurable model selection for different analysis requirements
-- **Target:** v0.1.38
+- **Target:** v0.1.41
 
 ### Track: General Hook Framework (@ncrispino, nickcrispino)
 - Issue: [#745](https://github.com/massgen/MassGen/issues/745)
@@ -678,11 +695,19 @@ These features are being actively developed on **separate parallel tracks** and 
 - Enable custom actions at key orchestration points
 - **Status:** ✅ Completed in v0.1.36
 
+### Track: Plan and Execute Workflow (@ncrispino, nickcrispino)
+- PR: [#794](https://github.com/massgen/MassGen/pull/794)
+- Complete plan-then-execute workflow separating "what to build" from "how to build it"
+- `--plan-and-execute` and `--execute-plan` CLI options
+- Task verification workflow with `verified` status and verification groups
+- Plan storage system in `.massgen/plans/` with frozen snapshots
+- **Status:** ✅ Completed in v0.1.39
+
 ### Track: Improve Log Sharing and Analysis (@ncrispino, nickcrispino)
 - Issue: [#722](https://github.com/massgen/MassGen/issues/722)
 - Enhanced log sharing workflows
 - Improved analysis tools and visualizations
-- **Target:** v0.1.39
+- **Target:** v0.1.42
 
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
 - PR: [#251](https://github.com/massgen/MassGen/pull/251)
@@ -697,6 +722,12 @@ These features are being actively developed on **separate parallel tracks** and 
 - Task/subtask decomposition and parallel coordination
 - Assignment of agents to specific tasks and increasing of diversity
 - Improvement in voting as tasks continue
+
+**Self-Learning & Adaptation**
+- Agents learn from past executions to improve future performance
+- Automatic skill acquisition from successful task completions
+- Feedback loops for continuous improvement
+- Memory systems for retaining learned patterns across sessions
 
 **Visual Workflow Designer**
 - No-code multi-agent workflow creation
@@ -759,5 +790,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** January 12, 2026
+**Last Updated:** January 16, 2026
 **Maintained By:** MassGen Team

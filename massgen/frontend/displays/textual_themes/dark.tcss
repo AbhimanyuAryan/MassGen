@@ -2576,3 +2576,48 @@ ProgressIndicator.hidden {
 #input_area.hidden {
     display: none;
 }
+
+/* ============================================
+   Injection Sub-Card Styling
+   ============================================ */
+
+/* Base injection sub-card within tool cards */
+InjectionSubCard {
+    height: auto;
+    margin: 1 0 0 2;
+    padding: 0 1;
+    color: #d2a8ff;
+}
+
+/* Collapsed state - single line */
+InjectionSubCard.collapsed {
+    height: 1;
+    background: transparent;
+}
+
+/* Expanded state - full content with border */
+InjectionSubCard.expanded {
+    background: #2d2d4a;
+    border: solid #a371f7;
+    border-left: thick #a371f7;
+    padding: 1;
+}
+
+/* Hover feedback for clickability */
+InjectionSubCard:hover {
+    background: #363650;
+}
+
+/* Injection sub-card within tool cards - nested styling */
+ToolCallCard InjectionSubCard {
+    margin-left: 2;
+}
+
+ToolCallCard InjectionSubCard.collapsed {
+    margin-top: 1;
+}
+
+ToolCallCard InjectionSubCard.expanded {
+    margin-top: 1;
+    margin-bottom: 1;
+}

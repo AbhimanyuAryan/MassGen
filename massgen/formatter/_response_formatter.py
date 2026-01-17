@@ -6,6 +6,7 @@ Handles formatting for OpenAI Response API format with multimodal support.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
 
 from ._formatter_base import FormatterBase
@@ -103,7 +104,13 @@ class ResponseFormatter(FormatterBase):
                 call_id = message.get("call_id")
                 # Preserve 'id' field to maintain pairing with reasoning items (required by OpenAI Responses API)
                 # See: https://github.com/langchain-ai/langchainjs/pull/9082
-                cleaned_fc = message.copy()
+                # Only keep valid function_call fields - Response API rejects unknown fields like 'content'
+                valid_fc_fields = {"type", "name", "arguments", "call_id", "id"}
+                cleaned_fc = {k: v for k, v in message.items() if k in valid_fc_fields}
+
+                # Ensure arguments is a JSON string, not an object (Response API requirement)
+                if "arguments" in cleaned_fc and not isinstance(cleaned_fc["arguments"], str):
+                    cleaned_fc["arguments"] = json.dumps(cleaned_fc["arguments"])
 
                 if call_id and call_id not in output_call_ids:
                     converted_messages.append(cleaned_fc)

@@ -15,6 +15,7 @@ from .content_sections import (
     TimelineSection,
     ToolSection,
 )
+from .injection_card import InjectionSubCard
 from .multi_line_input import MultiLineInput
 from .path_suggestion import PathSuggestion, PathSuggestionDropdown
 from .tab_bar import AgentTab, AgentTabBar, AgentTabChanged
@@ -34,6 +35,8 @@ __all__ = [
     "format_tool_display_name",
     # Task plan card
     "TaskPlanCard",
+    # Injection sub-card
+    "InjectionSubCard",
     # Content sections
     "ToolSection",
     "TimelineSection",

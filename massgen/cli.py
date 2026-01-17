@@ -33,7 +33,20 @@ import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+)
+
+if TYPE_CHECKING:
+    from .plan_storage import PlanSession
 
 import questionary
 import yaml
@@ -214,6 +227,337 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
+def get_task_planning_prompt_prefix(
+    plan_depth: str = "medium",
+    enable_subagents: bool = False,
+    broadcast_mode: Union[Literal["human", "agents"], bool] = "human",
+) -> str:
+    """Generate the user prompt prefix for task planning mode.
+
+    This prefix is prepended to the user's question when --plan mode is active.
+    It instructs agents to interactively create structured feature lists.
+
+    Args:
+        plan_depth: One of "shallow", "medium", or "deep" controlling task granularity.
+        enable_subagents: Whether subagents are enabled for research tasks.
+        broadcast_mode: One of "human", "agents", or False. Controls whether ask_others() is available.
+
+    Returns:
+        The prompt prefix string to prepend to the user's question.
+    """
+    depth_config = {
+        "shallow": {"target": "5-10", "detail": "high-level phases only"},
+        "medium": {"target": "20-50", "detail": "sections with tasks"},
+        "deep": {"target": "100-200+", "detail": "granular step-by-step"},
+    }
+    cfg = depth_config.get(plan_depth, depth_config["medium"])
+
+    # Subagent research section (only if enabled)
+    subagent_section = ""
+    if enable_subagents:
+        subagent_section = """
+## Research with Subagents
+
+You have subagents available for research. Use them to:
+- Investigate specific areas of the codebase in parallel
+- Research technical options or dependencies
+- Explore integration points with existing code
+- Gather information to inform scope decisions
+
+Spawn subagents for research tasks before finalizing your plan.
+"""
+
+    # Conditional scope confirmation section based on broadcast mode
+    if broadcast_mode == "human":
+        scope_section = """### 1. Scope Confirmation (REQUIRED FIRST)
+
+Before any deep research, analyze the request and verify scope with the user.
+
+**Step 1: Categorize requirements and assumptions**
+
+Parse the user's request into three categories:
+
+1. **Explicitly Stated** - Things the user directly mentioned
+   - Example: "Build a REST API" → User said "REST API"
+
+2. **Critical Assumptions** - High-level decisions that affect scope/direction (NEED HUMAN VERIFICATION)
+   - User intent or business logic
+   - Major architectural choices (monolith vs microservices, SQL vs NoSQL)
+   - Security/compliance requirements
+   - Feature scope boundaries
+   - Example: "Build a REST API" → Is this for internal use or public? What data sensitivity?
+
+3. **Technical/Implementation Assumptions** - Lower-level choices (AGENT CONSENSUS via voting)
+   - Specific technologies/frameworks
+   - Code organization patterns
+   - Standard practices (error handling, logging, validation)
+   - Example: "Build a REST API" → Express vs FastAPI, JWT details, specific DB choice
+
+**Step 2: Verify ONLY THE MOST CRITICAL assumptions with human**
+
+Be selective - only ask about assumptions where you truly cannot make a good decision without human input.
+
+**When to ask the human**:
+- User intent is ambiguous (internal tool vs public product?)
+- Business/domain knowledge required (compliance, data sensitivity)
+- Major scope decisions (which features are in/out?)
+- Trade-offs that depend on user priorities (speed vs security vs cost)
+
+**When NOT to ask the human** (let consensus decide):
+- Technical implementation details (framework, database, auth method)
+- Standard practices (error handling, logging, testing approach)
+- Scope refinements that you can revisit after initial consensus
+- Decisions where you can make a reasonable recommendation
+
+**IMPORTANT**: When you DO ask, offer recommendations with reasoning:
+
+GOOD (selective + recommendations):
+```
+I need to clarify scope before planning this REST API:
+
+1. **Usage context**: Is this for internal use or public-facing?
+   - Recommendation: I'll assume internal unless you specify, which means simpler auth and fewer rate limits
+
+2. **Data sensitivity**: What type of data will this handle?
+   - Recommendation: I'll plan for standard business data (not public, not highly sensitive) unless you need HIPAA/PCI compliance
+
+3. **Integration needs**: Do you have existing systems this must integrate with?
+   - If yes, please specify - this affects the approach significantly
+
+Let me know if my assumptions are wrong or if there are other critical requirements.
+```
+
+BAD (asking everything):
+```
+Should I use Express or FastAPI?
+Should I use JWT or OAuth?
+Should I use PostgreSQL or MongoDB?
+Which testing framework?
+How should I structure the code?
+```
+
+**Step 3: Document technical assumptions and recommendations for consensus**
+
+For technical/implementation assumptions, present your recommendations with reasoning in your answer.
+
+**Be opinionated**: Make specific technical recommendations based on:
+- The user's explicit requirements
+- Industry best practices
+- Your analysis of the codebase (if extending existing project)
+- Trade-offs you've considered
+
+Other agents will:
+- Propose alternative approaches if they disagree
+- Challenge your technical choices with their reasoning
+- Refine scope to keep tasks focused and useful
+- Vote when they're happy with the combination of choices
+
+**Benefits of consensus**:
+- Explores wider design space through agent debate
+- Ensures all tasks are critical and actively useful
+- Prevents scope divergence through multi-agent validation
+- Catches assumptions one agent might miss
+
+**Note**: You can always ask the human for clarification in later rounds after seeing consensus. Start with your best recommendations, refine through voting, then verify critical decisions if needed.
+
+**Step 4: Feature scope (with recommendations)**
+
+If the request contains **multiple distinct features**, recommend which to prioritize:
+
+GOOD (scoped recommendation):
+```
+I see this request involves three main features:
+1. User authentication (CORE - needed for everything else)
+2. Todo CRUD operations (CORE - primary functionality)
+3. Email notifications (NICE-TO-HAVE - can add later)
+
+Recommendation: Let's scope this planning session to features 1-2, then add notifications in a follow-up. Does that work?
+```
+
+BAD (asking without recommendation):
+```
+This has multiple features. Which ones do you want?
+```
+
+**After critical verification (minimal ask_others calls), proceed to research. Technical assumptions and scope refinements will be refined through voting.**"""
+    else:
+        # No human interaction - agents make all decisions through consensus
+        scope_section = """### 1. Scope Analysis (REQUIRED FIRST)
+
+Before any deep research, analyze the request and make decisions through agent consensus.
+
+**Step 1: Categorize requirements and assumptions**
+
+Parse the user's request into three categories:
+
+1. **Explicitly Stated** - Things the user directly mentioned
+   - Example: "Build a REST API" → User said "REST API"
+
+2. **Critical Assumptions** - High-level decisions that affect scope/direction
+   - User intent or business logic
+   - Major architectural choices (monolith vs microservices, SQL vs NoSQL)
+   - Security/compliance requirements
+   - Feature scope boundaries
+   - Example: "Build a REST API" → Assume internal use or public-facing?
+
+3. **Technical/Implementation Assumptions** - Lower-level choices
+   - Specific technologies/frameworks
+   - Code organization patterns
+   - Standard practices (error handling, logging, validation)
+   - Example: "Build a REST API" → Express vs FastAPI, JWT details, specific DB choice
+
+**Step 2: Make opinionated recommendations for ALL assumptions**
+
+Since you don't have human interaction, you MUST make decisions autonomously.
+
+**Be opinionated**: Make specific recommendations for ALL assumptions based on:
+- The user's explicit requirements
+- Industry best practices
+- Your analysis of the codebase (if extending existing project)
+- Trade-offs you've considered
+- Reasonable defaults when ambiguous
+
+**Document your reasoning**: For each assumption, explain WHY you chose that approach.
+
+Example:
+```
+I'm making these decisions for this REST API:
+
+1. **Usage context**: Internal use (simpler auth, no rate limiting needed)
+   - Reasoning: No mention of public users, so assuming internal tooling
+
+2. **Data sensitivity**: Standard business data (moderate security)
+   - Reasoning: No compliance requirements mentioned, so standard practices
+
+3. **Tech stack**: FastAPI + PostgreSQL + JWT
+   - Reasoning: FastAPI for async support, PostgreSQL for reliability, JWT for stateless auth
+
+4. **Scope**: Core features only (auth + CRUD), no notifications yet
+   - Reasoning: Start with MVP, can add features later
+```
+
+**Step 3: Refine through consensus**
+
+Other agents will:
+- Propose alternative approaches if they disagree
+- Challenge your assumptions with their reasoning
+- Suggest different scope boundaries
+- Vote when they're happy with the combination of choices
+
+**Benefits of consensus**:
+- Explores wider design space through agent debate
+- Ensures all tasks are critical and actively useful
+- Prevents scope divergence through multi-agent validation
+- Catches assumptions one agent might miss
+
+**Critical**: ALL decisions must be made through consensus. No human will verify them, so agents must carefully debate and validate each choice.
+
+**After consensus is reached, proceed to research. All assumptions and scope will be refined through voting.**"""
+
+    return f"""# TASK PLANNING MODE
+
+You are in task planning mode. Your goal is to **interactively** create a comprehensive task plan.
+
+## Planning Process
+
+Follow this process in order:
+
+{scope_section}
+
+### 2. Research & Exploration
+Once scope is confirmed:
+- Explore the codebase to understand existing structure
+- Investigate integration points
+- Identify potential technical challenges{subagent_section}
+
+### 3. Clarifying Questions
+As you research, ask follow-up questions about:
+- Edge cases and error handling expectations
+- Performance or security requirements
+- User experience preferences
+- Anything ambiguous you discovered
+
+### 4. Plan Creation
+Only after scope confirmation and sufficient research:
+- Create the feature list at the specified depth
+- Organize features by logical grouping
+- If multiple distinct features exist, consider separate spec files
+
+## Output Requirements
+
+1. **Primary artifact**: `project_plan.json` - Write this file using file write tools:
+   - If `deliverable/` folder exists in your workspace, put it there: `deliverable/project_plan.json`
+   - Otherwise, put it in your workspace root: `project_plan.json`
+2. **Supporting docs**: Create additional markdown docs as needed (same location as project_plan.json):
+   - User stories or requirements docs
+   - Technical approach / design decisions
+   - Separate spec files if request contains multiple distinct features
+
+**IMPORTANT**: Write `project_plan.json` directly as a file. Do NOT use MCP planning tools
+(create_task_plan, update_task_status, etc.) to create this deliverable - those tools are for
+tracking your own internal work progress, not for creating the project plan deliverable.
+
+## Planning Principles
+
+**Focus on outcomes, not implementation details.** Describe WHAT the final product needs, not HOW to build it. Implementation choices happen during execution.
+
+**Think about final product quality:**
+- If it's visual, it should LOOK good - include quality visuals, not just code
+- If it produces output, that output should be polished and professional
+- Consider what a user/viewer would actually experience
+
+**Verification should test the PRODUCT FIRST, then source code:**
+1. Does the final product work? (run it, use it, see it)
+2. Does it look/feel right? (visual quality, UX)
+3. Only then: is the code correct? (builds, tests pass)
+
+**Tasks should be achievable with the available tools.** Executing agents will have access to the configured tools and will figure out how to use them.
+
+## Task List Format
+Write `project_plan.json` with this structure:
+```json
+{{
+  "tasks": [
+    {{
+      "id": "F001",
+      "description": "Feature Name - What this feature accomplishes and the expected outcome",
+      "status": "pending",
+      "depends_on": ["F000"],
+      "priority": "high|medium|low",
+      "metadata": {{
+        "verification": "How to verify this task is complete",
+        "verification_method": "Automated verification approach",
+        "verification_group": "optional_group_name"
+      }}
+    }}
+  ]
+}}
+```
+
+### Metadata Fields (Optional but Recommended)
+- **verification**: What to check - testable completion criteria (e.g., "Homepage displays correctly", "API returns 200")
+- **verification_method**: Automated verification approach (no manual human steps). Can check both correctness (builds, tests, API responses) and quality (visual analysis, output review).
+- **verification_group**: Group related tasks for batch verification (e.g., "foundation", "frontend_ui", "api_endpoints").
+  During execution, tasks are marked `completed` then later `verified` in groups.
+
+## Depth: {plan_depth.upper()}
+- Target: {cfg["target"]} features/tasks
+- Detail level: {cfg["detail"]}
+
+## Quality Criteria
+- Each task should be independently verifiable
+- Dependencies (depends_on) should form a valid DAG (no cycles)
+- Descriptions should be specific enough to implement
+- Scope should be confirmed with user before detailed planning
+- Verification criteria should be testable and specific
+- Use verification_group to batch related tasks (e.g., verify all pages after building them)
+
+---
+
+USER'S REQUEST:
+"""
+
+
 # Global PromptSession instance (reused across prompts for better terminal handling)
 _prompt_session: Optional[PromptSession] = None
 
@@ -262,7 +606,10 @@ async def read_multiline_input_async(
         loop = asyncio.get_running_loop()
         # Strip ANSI codes for fallback
         plain_prompt = prompt if not use_ansi_prompt else "User: "
-        first_line = await loop.run_in_executor(None, lambda: input(plain_prompt).strip())
+        first_line = await loop.run_in_executor(
+            None,
+            lambda: input(plain_prompt).strip(),
+        )
 
     # Check for multi-line delimiters
     if first_line.startswith('"""'):
@@ -1007,6 +1354,15 @@ def create_agents_from_config(
         # Inject rate limiting flag from CLI
         backend_config["enable_rate_limit"] = enable_rate_limit
 
+        # Inject two-tier workspace setting from coordination config
+        orchestrator_section = orchestrator_config or {}
+        coordination_settings_for_injection = orchestrator_section.get(
+            "coordination",
+            {},
+        )
+        if coordination_settings_for_injection.get("use_two_tier_workspace", False):
+            backend_config["use_two_tier_workspace"] = True
+
         # Inject session mount parameters for multi-turn Docker support
         # This enables the session directory to be pre-mounted so all turn
         # workspaces are automatically visible without container recreation
@@ -1206,7 +1562,7 @@ def create_agents_from_config(
                 enabled=True,
             )
             logger.info(
-                f"📊 Context monitor created for {agent_config.agent_id}: " f"{context_monitor.context_window:,} tokens, " f"trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%",
+                f"📊 Context monitor created for {agent_config.agent_id}: " f"{context_monitor.context_window:,} tokens, " f"trigger={trigger_threshold * 100:.0f}%, target={target_ratio * 100:.0f}%",
             )
 
         # Enable NLIP per-agent if configured in YAML
@@ -1932,6 +2288,7 @@ async def run_question_with_history(
             subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
             subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
             subagent_orchestrator=subagent_orchestrator_config,
+            use_two_tier_workspace=coord_cfg.get("use_two_tier_workspace", False),
         )
 
     # Get session_id from session_info (will be generated in save_final_state if not exists)
@@ -2081,12 +2438,16 @@ async def run_question_with_history(
                     3,
                 ),
                 subagent_orchestrator=subagent_orchestrator_config,
+                use_two_tier_workspace=coordination_settings.get(
+                    "use_two_tier_workspace",
+                    False,
+                ),
             )
 
     print(f"\n🤖 {BRIGHT_CYAN}{mode_text}{RESET}", flush=True)
     print(f"Agents: {', '.join(agents.keys())}", flush=True)
     if history:
-        print(f"History: {len(history)//2} previous exchanges", flush=True)
+        print(f"History: {len(history) // 2} previous exchanges", flush=True)
     print(f"Question: {question}", flush=True)
     print("\n" + "=" * 60, flush=True)
 
@@ -2149,11 +2510,11 @@ async def run_question_with_history(
             # Check if restart is needed
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
-                print(f"\n{'='*80}")
+                print(f"\n{'=' * 80}")
                 print(
                     f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
                 )
-                print(f"{'='*80}\n")
+                print(f"{'=' * 80}\n")
 
                 # Reset all agent backends to ensure clean state for next attempt
                 for agent_id, agent in orchestrator.agents.items():
@@ -2228,9 +2589,9 @@ async def run_question_with_history(
             agent_state = orchestrator.agent_states.get(selected_agent_id)
             if agent_state and agent_state.answer:
                 print(f"\n{BRIGHT_CYAN}📋 Selected winner: {selected_agent_id}{RESET}")
-                print(f"{BRIGHT_WHITE}{'-'*60}{RESET}")
+                print(f"{BRIGHT_WHITE}{'-' * 60}{RESET}")
                 print(agent_state.answer)
-                print(f"{BRIGHT_WHITE}{'-'*60}{RESET}")
+                print(f"{BRIGHT_WHITE}{'-' * 60}{RESET}")
 
         logger.info("Turn cancelled by user in multi-turn mode")
     finally:
@@ -2279,7 +2640,11 @@ async def run_question_with_history(
     log_dir = get_log_session_root()
     log_dir_name = log_dir.name  # Get log_YYYYMMDD_HHMMSS from path
 
-    session_id_to_use, updated_turn, normalized_response = await handle_session_persistence(
+    (
+        session_id_to_use,
+        updated_turn,
+        normalized_response,
+    ) = await handle_session_persistence(
         orchestrator,
         question,
         session_info,
@@ -2664,11 +3029,11 @@ async def run_single_question(
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
                 if display_type not in ("none", "silent"):
-                    print(f"\n{'='*80}")
+                    print(f"\n{'=' * 80}")
                     print(
                         f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
                     )
-                    print(f"{'='*80}\n")
+                    print(f"{'=' * 80}\n")
 
                 # Set log attempt BEFORE creating new UI so display gets correct path
                 # orchestrator.current_attempt was already incremented by _reset_for_restart()
@@ -4898,11 +5263,76 @@ async def run_textual_interactive_mode(
                         f"[Textual] Could not restore session for previous turns: {e}",
                     )
 
-            # Build orchestrator config
+            # Build orchestrator config (matching Rich terminal path setup)
             orchestrator_config = AgentConfig()
             if orchestrator_cfg:
                 if "voting_sensitivity" in orchestrator_cfg:
                     orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
+                if "max_new_answers_per_agent" in orchestrator_cfg:
+                    orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
+                if "answer_novelty_requirement" in orchestrator_cfg:
+                    orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
+                if orchestrator_cfg.get("skip_coordination_rounds", False):
+                    orchestrator_config.skip_coordination_rounds = True
+                if orchestrator_cfg.get("debug_final_answer"):
+                    orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
+
+                # Parse coordination config if present
+                if "coordination" in orchestrator_cfg:
+                    from .agent_config import CoordinationConfig
+                    from .persona_generator import PersonaGeneratorConfig
+                    from .subagent.models import SubagentOrchestratorConfig
+
+                    coord_cfg = orchestrator_cfg["coordination"]
+
+                    # Parse persona_generator config if present
+                    persona_generator_config = PersonaGeneratorConfig()
+                    if "persona_generator" in coord_cfg:
+                        pg_cfg = coord_cfg["persona_generator"]
+                        persona_generator_config = PersonaGeneratorConfig(
+                            enabled=pg_cfg.get("enabled", False),
+                            diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
+                            persona_guidelines=pg_cfg.get("persona_guidelines"),
+                            persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                        )
+
+                    # Parse subagent_orchestrator config if present
+                    subagent_orchestrator_config = None
+                    if "subagent_orchestrator" in coord_cfg:
+                        so_cfg = coord_cfg["subagent_orchestrator"]
+                        subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(so_cfg)
+
+                    orchestrator_config.coordination_config = CoordinationConfig(
+                        enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
+                        planning_mode_instruction=coord_cfg.get(
+                            "planning_mode_instruction",
+                            "During coordination, describe what you would do without actually executing actions. Only provide concrete implementation details without calling external APIs or tools.",
+                        ),
+                        max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
+                        enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                        max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
+                        broadcast=coord_cfg.get("broadcast", False),
+                        broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
+                        response_depth=coord_cfg.get("response_depth", "medium"),
+                        broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
+                        broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                        max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
+                        task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
+                        enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                        use_skills=coord_cfg.get("use_skills", False),
+                        skills_directory=coord_cfg.get("skills_directory"),
+                        load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
+                        persona_generator=persona_generator_config,
+                        enable_subagents=coord_cfg.get("enable_subagents", False),
+                        subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
+                        subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+                        subagent_orchestrator=subagent_orchestrator_config,
+                    )
+
+            # Set timeout config if provided
+            timeout_config = kwargs.get("timeout_config")
+            if timeout_config:
+                orchestrator_config.timeout_config = timeout_config
 
             # Create orchestrator with multi-turn state
             orchestrator = Orchestrator(
@@ -5228,7 +5658,10 @@ async def run_interactive_mode(
             mode = f"Multi-Agent ({num_agents} agents)"
             mode_icon = "🤝"
         config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
-        config_table.add_row("  └─ Status:", "[dim]Agents will be created after first prompt[/dim]")
+        config_table.add_row(
+            "  └─ Status:",
+            "[dim]Agents will be created after first prompt[/dim]",
+        )
     elif len(agents) == 1:
         mode = "Single Agent"
         mode_icon = "🤖"
@@ -5651,7 +6084,7 @@ async def run_interactive_mode(
                             )
                             print("   Mode: Deferred creation", flush=True)
                         print(
-                            f"   History: {len(conversation_history)//2} exchanges",
+                            f"   History: {len(conversation_history) // 2} exchanges",
                             flush=True,
                         )
                         if config_path:
@@ -5816,7 +6249,9 @@ async def run_interactive_mode(
                                 original_config["orchestrator"]["context_paths"] = []
 
                             for ctx in new_paths:
-                                original_config["orchestrator"]["context_paths"].append(ctx)
+                                original_config["orchestrator"]["context_paths"].append(
+                                    ctx,
+                                )
                                 existing_paths.add(ctx["path"])
 
                             # Update orchestrator_cfg reference
@@ -5836,12 +6271,17 @@ async def run_interactive_mode(
                             session_storage_base=session_storage_base or SESSION_STORAGE,
                         )
                         if not agents:
-                            print(f"{BRIGHT_RED}❌ Failed to create agents{RESET}", flush=True)
+                            print(
+                                f"{BRIGHT_RED}❌ Failed to create agents{RESET}",
+                                flush=True,
+                            )
                             continue
                         print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
                     elif new_paths:
                         # Agents exist but we have new paths - need to recreate
-                        print(f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}")
+                        print(
+                            f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}",
+                        )
 
                         # Clean up existing agents before recreating to avoid resource leaks
                         for agent_id, agent in agents.items():
@@ -5850,7 +6290,9 @@ async def run_interactive_mode(
                                     try:
                                         agent.backend.filesystem_manager.cleanup()
                                     except Exception as e:
-                                        logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                                        logger.warning(
+                                            f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                        )
                                 if hasattr(agent.backend, "__aexit__"):
                                     await agent.backend.__aexit__(None, None, None)
 
@@ -5864,7 +6306,9 @@ async def run_interactive_mode(
                             filesystem_session_id=memory_session_id,
                             session_storage_base=session_storage_base or SESSION_STORAGE,
                         )
-                        print(f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}")
+                        print(
+                            f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}",
+                        )
                     if parsed.context_paths:
                         print()  # Add spacing after context path info
                 except PromptParserError as e:
@@ -5904,7 +6348,12 @@ async def run_interactive_mode(
                     "winning_agents_history": winning_agents_history,
                     "multi_turn": True,  # Enable soft cancellation (return to prompt instead of exit)
                 }
-                response, updated_session_id, updated_turn, was_cancelled = await run_question_with_history(
+                (
+                    response,
+                    updated_session_id,
+                    updated_turn,
+                    was_cancelled,
+                ) = await run_question_with_history(
                     question,
                     agents,
                     ui_config,
@@ -5936,7 +6385,7 @@ async def run_interactive_mode(
                     )
 
                     rich_console.print(
-                        f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history)//2} exchanges[/cyan]",
+                        f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history) // 2} exchanges[/cyan]",
                     )
                     rich_console.print(
                         "[dim]Tip: Use /inspect to view agent outputs[/dim]",
@@ -5978,6 +6427,635 @@ async def run_interactive_mode(
     except KeyboardInterrupt:
         # Outer handler for any uncaught KeyboardInterrupt - just continue
         print()  # Clean line after ^C
+
+
+def _build_execution_prompt(question: str) -> str:
+    """Build the execution prompt that guides agents through plan-based work.
+
+    Args:
+        question: The original user question/task
+
+    Returns:
+        Formatted execution prompt with plan context
+    """
+    return f"""# PLAN EXECUTION MODE
+
+Your task plan has been AUTO-LOADED into `tasks/plan.json`. Start executing!
+
+## Your Task
+{question}
+
+## Getting Started
+
+1. **Check ready tasks**: Use `get_ready_tasks()` to see what to work on first
+2. **Track progress**: Use `update_task_status(task_id, status, completion_notes)` as you work
+3. **Execute all tasks**: Implement everything in the plan
+4. **Evaluate others**: See system prompt for how to assess CURRENT_ANSWERS
+
+## Reference Materials
+- `planning_docs/` - supporting docs from planning phase (user stories, design, etc.)
+- Frozen plan available via context path for validation
+
+Begin execution now."""
+
+
+def resolve_plan_path(plan_path: str) -> "PlanSession":
+    """Resolve a plan path/ID to a PlanSession object.
+
+    Args:
+        plan_path: Can be:
+            - "latest" - most recent plan
+            - Plan ID like "20260115_173113_836955"
+            - Full path like ".massgen/plans/plan_20260115_173113_836955"
+
+    Returns:
+        PlanSession object
+
+    Raises:
+        FileNotFoundError: If plan not found
+    """
+    from .plan_storage import PLANS_DIR, PlanSession, PlanStorage
+
+    storage = PlanStorage()
+
+    if plan_path == "latest":
+        session = storage.get_latest_plan()
+        if not session:
+            raise FileNotFoundError("No plans found in .massgen/plans/")
+        return session
+
+    # Check if it's a full path
+    plan_path_obj = Path(plan_path)
+    if plan_path_obj.exists() and plan_path_obj.is_dir():
+        # Extract plan_id from directory name
+        plan_id = plan_path_obj.name.replace("plan_", "")
+        session = PlanSession(plan_id)
+        if not session.plan_dir.exists():
+            raise FileNotFoundError(f"Plan directory not valid: {plan_path}")
+        return session
+
+    # Assume it's a plan ID
+    session = PlanSession(plan_path)
+    if not session.plan_dir.exists():
+        # Try with plan_ prefix stripped if present
+        if plan_path.startswith("plan_"):
+            plan_id = plan_path[5:]  # Remove "plan_" prefix
+            session = PlanSession(plan_id)
+
+    if not session.plan_dir.exists():
+        available_plans = list(PLANS_DIR.glob("plan_*")) if PLANS_DIR.exists() else []
+        msg = f"Plan not found: {plan_path}"
+        if available_plans:
+            msg += "\n\nAvailable plans:"
+            for plan_dir in sorted(available_plans, reverse=True)[:10]:
+                msg += f"\n  - {plan_dir.name.replace('plan_', '')}"
+        raise FileNotFoundError(msg)
+
+    return session
+
+
+async def _execute_plan_phase(
+    config: Dict[str, Any],
+    plan_session: "PlanSession",
+    question: str,
+    automation: bool = False,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Internal: Execute a plan (Phase 2) and collect results (Phase 3).
+
+    This is the shared implementation used by both run_plan_and_execute
+    and run_execute_plan.
+
+    Args:
+        config: Full config dict
+        plan_session: PlanSession with frozen plan
+        question: Task description
+        automation: Whether in automation mode
+
+    Returns:
+        Tuple of (final_answer, diff_dict)
+    """
+    import copy
+
+    from rich.console import Console
+
+    from .logger_config import get_log_session_root
+
+    console = Console()
+
+    console.print("\n[bold blue]═══ EXECUTION ═══[/bold blue]")
+    console.print("Executing plan with agents...")
+
+    # Update metadata
+    metadata = plan_session.load_metadata()
+    metadata.status = "executing"
+    plan_session.save_metadata(metadata)
+    plan_session.log_event("execution_started", {"question": question})
+
+    # Build execution prompt
+    execution_prompt = _build_execution_prompt(question)
+
+    # Modify config to add plan context paths and enable planning tools for execution
+    exec_config = copy.deepcopy(config)
+    orchestrator_cfg = exec_config.setdefault("orchestrator", {})
+    context_paths = orchestrator_cfg.setdefault("context_paths", [])
+
+    # Add frozen plan as read-only context (for reference)
+    context_paths.append(
+        {
+            "path": str(plan_session.frozen_dir),
+            "permission": "read",
+        },
+    )
+
+    # Enable planning MCP tools for task tracking
+    coordination_cfg = orchestrator_cfg.setdefault("coordination", {})
+    coordination_cfg["enable_agent_task_planning"] = True
+    coordination_cfg["task_planning_filesystem_mode"] = True
+
+    # Inject plan execution guidance into each agent's system message
+    plan_execution_guidance = """
+## Plan Execution Mode
+
+You are executing a pre-approved task plan. The plan has been AUTO-LOADED into `tasks/plan.json`.
+
+### Getting Started - Plan is Ready
+
+Your task plan is already loaded. Use MCP planning tools to track progress:
+
+1. **See all tasks**: `get_task_plan()` - view full plan with current status
+2. **See ready tasks**: `get_ready_tasks()` - tasks with dependencies satisfied
+3. **Start a task**: `update_task_status("T001", "in_progress")`
+4. **Complete a task**: `update_task_status("T001", "completed", "How you completed it")`
+
+Supporting docs from planning phase are in `planning_docs/` for reference.
+
+### CRITICAL: Verification Workflow
+
+**Do NOT just write code and mark tasks complete. You MUST verify your work actually runs.**
+
+#### Task Status Flow
+- `pending` → `in_progress` → `completed` → `verified`
+- **completed**: Implementation is done (code written)
+- **verified**: Task has been tested and confirmed working
+
+#### How to Use Verification
+1. Mark task `completed` when implementation is done
+2. At logical checkpoints, verify groups of completed tasks together
+3. Mark tasks `verified` after verification passes
+
+#### Verification Checkpoints (when to verify)
+Tasks have `verification_group` labels (e.g., "foundation", "frontend_ui", "api"). Verify when:
+
+1. **After completing all tasks in a verification_group** - e.g., after all "foundation" tasks, run `npm run dev`
+2. **After major milestones** - e.g., project setup, feature completion
+3. **Before declaring work complete** - Run full build (`npm run build`)
+
+Use `get_task_plan()` to see tasks grouped by `verification_group` under `verification_groups`.
+
+#### Verification Commands
+Tasks have `verification_method` in metadata - USE IT:
+```
+update_task_status("F001", "completed", "Created Next.js project")
+# ... complete more foundation tasks ...
+# Verify the group:
+# npm run dev → works!
+update_task_status("F001", "verified", "Dev server runs on localhost:3000")
+```
+
+**A task should NOT be marked `verified` if:**
+- The code doesn't compile/build
+- The dev server crashes on startup
+- The feature doesn't render or function as described
+
+Fix issues before marking as verified.
+
+### Evaluating CURRENT_ANSWERS
+
+When you see other agents' work, you'll receive **progress stats** showing task completion.
+These are INFORMATIONAL only - they help you understand where others are, but task count alone
+doesn't determine quality.
+
+**Focus on Deliverable Quality** (the end product matters most):
+- Does the deliverable work? (website loads, app runs, API responds)
+- Does it meet the original requirements from the planning docs?
+- Is the user-facing quality good? (UI looks right, features work as expected)
+
+**Progress stats are context, not judgment**:
+- An agent with fewer tasks completed might have better quality work
+- An agent with all tasks done might have rushed and produced poor quality
+- Use progress info to understand scope, but evaluate the actual deliverable
+
+**Only vote when work is TRULY COMPLETE and HIGH QUALITY**:
+- All planned tasks should be done (or have documented reasons for deviation)
+- The deliverable must be functional and meet quality expectations
+- Don't vote for partial implementations, even if task count looks good
+
+### Adopting Another Agent's Work
+
+If you see a CURRENT_ANSWER that's excellent and you want to build on it:
+1. Their plan progress is in their `tasks/plan.json`
+2. To adopt: copy their plan.json content into YOUR `tasks/plan.json` via `create_task_plan(tasks=[...])`
+3. Then continue from where they left off
+
+If no agent is fully complete with quality work, continue your own implementation rather than voting for incomplete work.
+"""
+
+    # Append guidance to each agent's system message (handle both single and multi-agent configs)
+    if "agents" in exec_config:
+        for agent_cfg in exec_config["agents"]:
+            existing_msg = agent_cfg.get("system_message", "")
+            agent_cfg["system_message"] = existing_msg + plan_execution_guidance
+    elif "agent" in exec_config:
+        agent_cfg = exec_config["agent"]
+        existing_msg = agent_cfg.get("system_message", "")
+        agent_cfg["system_message"] = existing_msg + plan_execution_guidance
+
+    # Create agents with plan context
+    agents = create_agents_from_config(
+        exec_config,
+        orchestrator_cfg,
+        memory_session_id=f"plan_exec_{plan_session.plan_id}",
+    )
+
+    # Read the frozen plan tasks - fail fast if missing or unreadable
+    frozen_plan_file = plan_session.frozen_dir / "plan.json"
+    if not frozen_plan_file.exists():
+        console.print(f"[bold red]Error: Frozen plan not found at {frozen_plan_file}[/bold red]")
+        console.print("[red]Cannot execute plan without a valid frozen plan.json[/red]")
+        raise SystemExit(1)
+
+    try:
+        plan_data = json.loads(frozen_plan_file.read_text())
+    except json.JSONDecodeError as e:
+        console.print(f"[bold red]Error: Failed to parse frozen plan: {e}[/bold red]")
+        console.print(f"[red]File: {frozen_plan_file}[/red]")
+        raise SystemExit(1)
+
+    plan_tasks = plan_data.get("tasks", [])
+    console.print(f"[dim]Loaded {len(plan_tasks)} tasks from frozen plan[/dim]")
+
+    # Copy plan and supporting docs to each agent's workspace
+    for agent_id, agent in agents.items():
+        if hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
+            agent_workspace = Path(agent.backend.filesystem_manager.cwd)
+
+            # Copy supporting docs (*.md files) to planning_docs/ for reference
+            planning_docs_dest = agent_workspace / "planning_docs"
+            planning_docs_dest.mkdir(exist_ok=True)
+            for doc in plan_session.frozen_dir.glob("*.md"):
+                shutil.copy2(doc, planning_docs_dest / doc.name)
+                logger.info(f"[ExecutePlan] Copied {doc.name} to {agent_id}'s planning_docs/")
+
+            # Copy plan.json directly to tasks/plan.json so agents can read it immediately
+            # Write full plan_data to preserve top-level metadata (agent_id, timestamps, subagents)
+            if plan_tasks:
+                tasks_dir = agent_workspace / "tasks"
+                tasks_dir.mkdir(exist_ok=True)
+                plan_file = tasks_dir / "plan.json"
+                plan_file.write_text(json.dumps(plan_data, indent=2))
+                logger.info(f"[ExecutePlan] Copied plan.json to {agent_id}'s tasks/plan.json ({len(plan_tasks)} tasks)")
+                console.print(f"[dim]Copied plan to {agent_id}'s workspace[/dim]")
+
+    # Build UI config
+    ui_config = {
+        "display_type": "silent" if automation else "rich_terminal",
+        "logging_enabled": True,
+        "automation_mode": automation,
+    }
+
+    # Run execution
+    result = await run_single_question(
+        execution_prompt,
+        agents,
+        ui_config,
+        return_metadata=True,
+        orchestrator=orchestrator_cfg,
+    )
+
+    final_answer = result["answer"]
+    coordination_result = result.get("coordination_result", {})
+
+    # ========== Collection & Reporting ==========
+    console.print("\n[bold blue]═══ COLLECTION ═══[/bold blue]")
+
+    # Get winning agent's workspace and collect their modified plan
+    if coordination_result:
+        winning_agent_id = coordination_result.get("selected_agent")
+        if winning_agent_id and winning_agent_id in agents:
+            winning_agent = agents[winning_agent_id]
+            if hasattr(winning_agent.backend, "filesystem_manager") and winning_agent.backend.filesystem_manager:
+                winner_workspace = Path(winning_agent.backend.filesystem_manager.cwd)
+
+                # Look for plan.json: agents work with tasks/plan.json during execution
+                winner_plan_file = winner_workspace / "tasks" / "plan.json"
+                if not winner_plan_file.exists():
+                    # Fallback to workspace root
+                    winner_plan_file = winner_workspace / "plan.json"
+
+                if winner_plan_file.exists():
+                    # Copy winning agent's modified plan.json to workspace_dir/plan.json
+                    # This is needed for compute_plan_diff() which compares workspace/plan.json vs frozen/plan.json
+                    plan_session.workspace_dir.mkdir(parents=True, exist_ok=True)
+                    dest_plan_file = plan_session.workspace_dir / "plan.json"
+                    shutil.copy2(winner_plan_file, dest_plan_file)
+                    logger.info(f"[ExecutePlan] Collected modified plan from {winning_agent_id}")
+
+    # Compute plan diff
+    diff = plan_session.compute_plan_diff()
+    plan_session.diff_file.write_text(json.dumps(diff, indent=2))
+    plan_session.log_event("diff_computed", diff)
+
+    # Update metadata
+    metadata = plan_session.load_metadata()
+    metadata.status = "completed"
+    metadata.execution_session_id = coordination_result.get("session_id") if coordination_result else None
+    try:
+        metadata.execution_log_dir = str(get_log_session_root())
+    except Exception:
+        metadata.execution_log_dir = None
+    plan_session.save_metadata(metadata)
+
+    # Print adherence summary
+    adherence = 100 - diff.get("divergence_score", 0) * 100
+    console.print(f"\n[green]Plan Adherence: {adherence:.1f}%[/green]")
+    console.print(f"Plan stored at: {plan_session.plan_dir}")
+
+    if diff.get("tasks_added"):
+        console.print(f"[yellow]Tasks added: {len(diff['tasks_added'])}[/yellow]")
+    if diff.get("tasks_removed"):
+        console.print(f"[yellow]Tasks removed: {len(diff['tasks_removed'])}[/yellow]")
+    if diff.get("tasks_modified"):
+        console.print(f"[yellow]Tasks modified: {len(diff['tasks_modified'])}[/yellow]")
+
+    return final_answer, diff
+
+
+async def run_execute_plan(
+    config: Dict[str, Any],
+    plan_path: str,
+    question: Optional[str] = None,
+    automation: bool = False,
+) -> Tuple[str, Any]:
+    """
+    Execute an existing plan (skips planning phase).
+
+    Args:
+        config: Full config dict
+        plan_path: Path to plan directory, plan ID, or "latest"
+        question: Optional task description override
+        automation: Whether in automation mode
+
+    Returns:
+        Tuple of (final_answer, plan_session)
+    """
+    from rich.console import Console
+
+    console = Console()
+
+    # Resolve plan path to session
+    plan_session = resolve_plan_path(plan_path)
+
+    # Load plan metadata
+    metadata = plan_session.load_metadata()
+    console.print(f"\n[bold cyan]Executing plan: {plan_session.plan_id}[/bold cyan]")
+    console.print(f"Created: {metadata.created_at}")
+    console.print(f"Status: {metadata.status}")
+
+    # Read frozen plan to get task count - fail fast if missing or unreadable
+    frozen_plan_file = plan_session.frozen_dir / "plan.json"
+    if not frozen_plan_file.exists():
+        console.print(f"[bold red]Error: Frozen plan not found at {frozen_plan_file}[/bold red]")
+        console.print("[red]Cannot execute plan without a valid frozen plan.json[/red]")
+        raise SystemExit(1)
+
+    try:
+        plan_data = json.loads(frozen_plan_file.read_text())
+    except json.JSONDecodeError as e:
+        console.print(f"[bold red]Error: Failed to parse frozen plan: {e}[/bold red]")
+        console.print(f"[red]File: {frozen_plan_file}[/red]")
+        raise SystemExit(1)
+
+    task_count = len(plan_data.get("tasks", []))
+    console.print(f"Tasks: {task_count}")
+
+    # Build question if not provided
+    if question is None:
+        question = "Execute the plan in tasks/plan.json."
+
+    # Run execution phase
+    final_answer, _ = await _execute_plan_phase(
+        config=config,
+        plan_session=plan_session,
+        question=question,
+        automation=automation,
+    )
+
+    return final_answer, plan_session
+
+
+async def run_plan_and_execute(
+    config: Dict[str, Any],
+    question: str,
+    plan_depth: str = "medium",
+    broadcast_mode: str = "human",
+    automation: bool = False,
+    debug: bool = False,
+    config_path: Optional[str] = None,
+) -> Tuple[str, Any]:
+    """
+    Run full plan-and-execute workflow:
+    1. Phase 1: Run planning subprocess to create task plan
+    2. Phase 2: Execute the plan with plan context injected
+
+    Args:
+        config: Full config dict
+        question: User's task/question
+        plan_depth: shallow/medium/deep
+        broadcast_mode: human/agents/false
+        automation: Whether in automation mode
+        debug: Debug mode flag
+        config_path: Path to config file (for subprocess)
+
+    Returns:
+        Tuple of (final_answer, plan_session)
+    """
+    import subprocess
+    import tempfile
+
+    import yaml
+    from rich.console import Console
+
+    from .plan_storage import PlanStorage
+
+    console = Console()
+
+    # ========== PHASE 1: Planning ==========
+    console.print("\n[bold blue]═══ PHASE 1: PLANNING ═══[/bold blue]")
+    console.print(f"Running agents to create task plan (depth: {plan_depth})...")
+
+    # Create plan storage
+    storage = PlanStorage()
+
+    # Handle broadcast mode for automation
+    # In automation mode, "human" broadcast doesn't work (no human to respond)
+    # Auto-switch to "false" for fully autonomous planning
+    effective_broadcast_mode = broadcast_mode
+    if automation and broadcast_mode == "human":
+        console.print(
+            "[yellow]Note: Switching broadcast mode from 'human' to 'false' for automation mode[/yellow]",
+        )
+        effective_broadcast_mode = "false"
+
+    # Build planning subprocess command
+    # Write config to temp file if not provided
+    temp_config_path = None
+    if not config_path:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(config, f)
+            temp_config_path = f.name
+            config_path = temp_config_path
+
+    cmd = [
+        "uv",
+        "run",
+        "massgen",
+        "--automation",
+        "--plan",
+        "--plan-depth",
+        plan_depth,
+        "--broadcast",
+        effective_broadcast_mode,
+        "--config",
+        config_path,
+    ]
+
+    if debug:
+        cmd.append("--debug")
+
+    # Add end-of-options marker and question last, so question starting with '-' is treated as data
+    cmd.extend(["--", question])
+
+    # Run planning subprocess
+    logger.info(f"[PlanAndExecute] Starting planning subprocess: {' '.join(cmd)}")
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout to avoid deadlock
+            text=True,
+            bufsize=1,  # Line buffered
+        )
+
+        # Parse LOG_DIR, STATUS, and FINAL_DIR from stdout
+        log_dir = None
+        final_dir = None
+
+        stdout_lines = []
+        for line in process.stdout:
+            stdout_lines.append(line)
+            if line.startswith("LOG_DIR:"):
+                log_dir = line.split(":", 1)[1].strip()
+            elif line.startswith("FINAL_DIR:"):
+                final_dir = Path(line.split(":", 1)[1].strip())
+            # Print output in non-automation mode for visibility
+            if not automation:
+                print(line, end="")
+
+        # Wait for process to complete
+        process.wait()
+
+        if process.returncode != 0:
+            # stderr is merged into stdout, so show captured output
+            output = "".join(stdout_lines)
+            raise RuntimeError(f"Planning subprocess failed:\n{output}")
+
+        if not log_dir:
+            raise RuntimeError("Planning subprocess did not provide LOG_DIR")
+
+        logger.info(f"[PlanAndExecute] Planning complete. Log dir: {log_dir}")
+
+    except Exception as e:
+        console.print(f"[red]Planning failed: {e}[/red]")
+        raise
+    finally:
+        # Clean up temp config file
+        if temp_config_path:
+            try:
+                Path(temp_config_path).unlink()
+            except Exception:
+                pass
+
+    # Create plan session and copy workspace
+    planning_session_id = Path(log_dir).name
+    plan_session = storage.create_plan(planning_session_id, log_dir)
+
+    # Use FINAL_DIR from subprocess output, or fall back to log_dir/final/
+    if not final_dir:
+        final_dir = Path(log_dir) / "final"
+
+    if final_dir.exists():
+        # Find the actual workspace directory within final/
+        # Structure is: final/agent_*/workspace/ (we want only workspace content)
+        workspace_source = None
+
+        # Look for agent workspace directories
+        agent_dirs = list(final_dir.glob("agent_*/workspace"))
+        if agent_dirs:
+            # Use first agent's workspace (in planning mode, typically one agent or winner)
+            workspace_source = agent_dirs[0]
+
+            # Check if two-tier workspace is enabled (deliverable/ exists)
+            # If so, only copy the deliverable part
+            deliverable_dir = workspace_source / "deliverable"
+            if deliverable_dir.exists():
+                console.print("[dim]Two-tier workspace detected, copying deliverable/ only[/dim]")
+                workspace_source = deliverable_dir
+
+            logger.info(f"[PlanAndExecute] Using workspace source: {workspace_source}")
+        else:
+            # Fallback to final_dir if no agent workspace structure found
+            # This handles legacy or non-standard setups
+            workspace_source = final_dir
+            logger.warning(f"[PlanAndExecute] No agent workspace found in {final_dir}, using full directory")
+
+        # Copy only workspace artifacts to plan storage
+        storage.finalize_planning_phase(plan_session, workspace_source)
+
+        # Verify a valid plan was created - if not, clean up and fail
+        frozen_plan = plan_session.frozen_dir / "plan.json"
+        if not frozen_plan.exists():
+            console.print("[bold red]Error: Planning phase did not produce a valid plan.json[/bold red]")
+            console.print("[red]The planning agent may have ended early or failed to create a task plan.[/red]")
+            # Clean up the empty plan session directory
+            if plan_session.plan_dir.exists():
+                shutil.rmtree(plan_session.plan_dir)
+                logger.info(f"[PlanAndExecute] Cleaned up empty plan session: {plan_session.plan_dir}")
+            raise SystemExit(1)
+
+        console.print(f"[green]Plan created and frozen: {plan_session.plan_dir}[/green]")
+    else:
+        console.print("[bold red]Error: No final/ directory found in planning logs[/bold red]")
+        console.print("[red]Planning phase did not complete successfully.[/red]")
+        # Clean up the empty plan session directory
+        if plan_session.plan_dir.exists():
+            shutil.rmtree(plan_session.plan_dir)
+            logger.info(f"[PlanAndExecute] Cleaned up empty plan session: {plan_session.plan_dir}")
+        raise SystemExit(1)
+
+    # ========== PHASE 2: Execution ==========
+    console.print("\n[bold blue]═══ PHASE 2: EXECUTION ═══[/bold blue]")
+
+    # Use shared execution phase implementation
+    final_answer, _ = await _execute_plan_phase(
+        config=config,
+        plan_session=plan_session,
+        question=question,
+        automation=automation,
+    )
+
+    return final_answer, plan_session
 
 
 async def main(args):
@@ -6218,6 +7296,52 @@ async def main(args):
         # Update config with timeout settings
         config["timeout_settings"] = timeout_settings
 
+        # Handle --plan mode: auto-configure for task planning
+        if getattr(args, "plan", False):
+            # Ensure orchestrator section exists
+            if "orchestrator" not in config:
+                config["orchestrator"] = {}
+            orchestrator_cfg_plan = config["orchestrator"]
+
+            # Ensure coordination section exists
+            if "coordination" not in orchestrator_cfg_plan:
+                orchestrator_cfg_plan["coordination"] = {}
+
+            # Broadcast mode: CLI flag wins; otherwise default to "human"
+            broadcast_arg = getattr(args, "broadcast", None)
+            if broadcast_arg == "false":
+                orchestrator_cfg_plan["coordination"]["broadcast"] = False
+            elif broadcast_arg is not None:
+                orchestrator_cfg_plan["coordination"]["broadcast"] = broadcast_arg
+            else:
+                orchestrator_cfg_plan["coordination"].setdefault("broadcast", "human")
+
+            # Set plan_depth
+            orchestrator_cfg_plan["coordination"]["plan_depth"] = getattr(
+                args,
+                "plan_depth",
+                "medium",
+            )
+
+            # Auto-add cwd to context_paths if not already present
+            if "context_paths" not in orchestrator_cfg_plan:
+                orchestrator_cfg_plan["context_paths"] = []
+
+            cwd_str = str(Path.cwd())
+            existing_paths = {p.get("path") if isinstance(p, dict) else p for p in orchestrator_cfg_plan["context_paths"]}
+            if cwd_str not in existing_paths:
+                # Use read-only permission - agents write to their workspace, not directly to cwd
+                orchestrator_cfg_plan["context_paths"].append(
+                    {"path": cwd_str, "permission": "read"},
+                )
+                logger.info(f"[Plan Mode] Auto-added cwd to context_paths (read-only): {cwd_str}")
+
+            logger.info(
+                "[Plan Mode] Enabled with depth=%s, broadcast=%s",
+                args.plan_depth,
+                orchestrator_cfg_plan["coordination"].get("broadcast"),
+            )
+
         # Check for prompt in config if not provided via CLI
         if not args.question and "prompt" in config:
             args.question = config["prompt"]
@@ -6336,9 +7460,39 @@ async def main(args):
             # Update orchestrator_cfg with any new context_paths
             orchestrator_cfg = config.get("orchestrator", {})
 
+        # Prepend task planning instructions if --plan mode is active
+        if args.question and getattr(args, "plan", False):
+            plan_depth = getattr(args, "plan_depth", "medium")
+            # Check if subagents are enabled in config
+            coordination_cfg = config.get("orchestrator", {}).get("coordination", {})
+            enable_subagents = coordination_cfg.get("enable_subagents", False)
+
+            # Broadcast mode priority: CLI arg > config > default "human"
+            cli_broadcast = getattr(args, "broadcast", None)
+            if cli_broadcast == "false":
+                broadcast_mode = False
+            elif cli_broadcast is not None:
+                broadcast_mode = cli_broadcast
+            else:
+                broadcast_mode = coordination_cfg.get("broadcast", "human")
+
+            planning_prefix = get_task_planning_prompt_prefix(
+                plan_depth,
+                enable_subagents=enable_subagents,
+                broadcast_mode=broadcast_mode,
+            )
+            args.question = planning_prefix + args.question
+            logger.info(
+                f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, subagents={enable_subagents}, broadcast={broadcast_mode})",
+            )
+
         # For interactive mode without initial question, defer agent creation until first prompt
         # This allows @path references in the first prompt to be included in Docker mounts
-        is_interactive_without_question = not args.question and not getattr(args, "interactive_with_initial_question", None)
+        is_interactive_without_question = not args.question and not getattr(
+            args,
+            "interactive_with_initial_question",
+            None,
+        )
 
         if is_interactive_without_question:
             # Defer agent creation - will be done in run_interactive_mode after first prompt
@@ -6401,6 +7555,96 @@ async def main(args):
                 cli_args=vars(args),
             )
 
+        # Handle plan-and-execute mode
+        if getattr(args, "plan_and_execute", False):
+            if not args.question:
+                print("❌ --plan-and-execute requires a question/task to plan and execute")
+                sys.exit(1)
+
+            from rich.console import Console
+            from rich.panel import Panel
+
+            # Default broadcast to "false" for plan-and-execute (batch workflow)
+            # "human" broadcast is not supported because planning runs as subprocess with piped I/O
+            broadcast = getattr(args, "broadcast", None)
+            if broadcast == "human":
+                print("❌ --broadcast human is not currently supported with --plan-and-execute")
+                print("   Planning runs as a subprocess and cannot receive human input.")
+                print("")
+                print("   For human interaction, run planning and execution separately:")
+                print('     1. uv run massgen --plan --broadcast human "your task"')
+                print("     2. uv run massgen --execute-plan latest")
+                print("")
+                print("   Or use --broadcast false (default) or --broadcast agents for autonomous mode.")
+                sys.exit(1)
+            if broadcast is None:
+                broadcast = "false"
+
+            final_answer, plan_session = await run_plan_and_execute(
+                config=config,
+                question=args.question,
+                plan_depth=getattr(args, "plan_depth", "medium") or "medium",
+                broadcast_mode=broadcast,
+                automation=args.automation,
+                debug=args.debug,
+                config_path=str(resolved_path) if resolved_path else None,
+            )
+
+            # Print results
+            if not args.automation:
+                console = Console()
+                console.print(Panel(final_answer, title="Final Answer", border_style="green"))
+
+            # Write output file if specified
+            if args.output_file:
+                output_path = Path(args.output_file)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(final_answer)
+                print(f"OUTPUT_FILE: {output_path.resolve()}")
+
+            # Print plan location for automation mode
+            if args.automation:
+                print(f"PLAN_DIR: {plan_session.plan_dir}")
+                print(f"PLAN_ID: {plan_session.plan_id}")
+
+            sys.exit(0)
+
+        # Handle --execute-plan mode (execute existing plan without planning phase)
+        if getattr(args, "execute_plan", None):
+            from rich.console import Console
+            from rich.panel import Panel
+
+            try:
+                final_answer, plan_session = await run_execute_plan(
+                    config=config,
+                    plan_path=args.execute_plan,
+                    question=args.question,  # Optional override
+                    automation=args.automation,
+                )
+
+                # Print results
+                if not args.automation:
+                    console = Console()
+                    console.print(Panel(final_answer, title="Final Answer", border_style="green"))
+
+                # Write output file if specified
+                if args.output_file:
+                    output_path = Path(args.output_file)
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_text(final_answer)
+                    print(f"OUTPUT_FILE: {output_path.resolve()}")
+
+                # Print plan location for automation mode
+                if args.automation:
+                    print(f"PLAN_DIR: {plan_session.plan_dir}")
+                    print(f"PLAN_ID: {plan_session.plan_id}")
+
+                sys.exit(0)
+
+            except FileNotFoundError as e:
+                print(f"❌ {e}")
+                sys.exit(1)
+
         # Run mode based on whether question was provided
         try:
             if args.question:
@@ -6412,6 +7656,17 @@ async def main(args):
                     restore_session_if_exists=restore_existing_session,
                     **kwargs,
                 )
+
+                # Print FINAL_DIR for automation mode (allows plan-and-execute to capture workspace)
+                if args.automation:
+                    try:
+                        from massgen.logger_config import get_log_session_dir
+
+                        final_dir = get_log_session_dir() / "final"
+                        if final_dir.exists():
+                            print(f"FINAL_DIR: {final_dir}")
+                    except Exception:
+                        pass  # Log paths not available
             else:
                 # Pass the config path and session_id to interactive mode
                 config_file_path = str(resolved_path) if args.config and resolved_path else None
@@ -6481,7 +7736,14 @@ async def main(args):
                         with ThreadPoolExecutor(
                             max_workers=len(agents_with_docker),
                         ) as executor:
-                            futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                            futures = {
+                                executor.submit(
+                                    cleanup_agent,
+                                    agent_id,
+                                    agent,
+                                ): agent_id
+                                for agent_id, agent in agents_with_docker
+                            }
                             for future in as_completed(futures):
                                 agent_id, error = future.result()
                                 if error:
@@ -6697,10 +7959,29 @@ def cli_main():
             prog="massgen serve",
             description="Run MassGen OpenAI-compatible server (FastAPI + Uvicorn)",
         )
-        serve_parser.add_argument("--host", type=str, default=None, help="Host to bind (default: 0.0.0.0)")
-        serve_parser.add_argument("--port", type=int, default=None, help="Port to bind (default: 4000)")
-        serve_parser.add_argument("--config", type=str, default=None, help="Default MassGen config file path")
-        serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
+        serve_parser.add_argument(
+            "--host",
+            type=str,
+            default=None,
+            help="Host to bind (default: 0.0.0.0)",
+        )
+        serve_parser.add_argument(
+            "--port",
+            type=int,
+            default=None,
+            help="Port to bind (default: 4000)",
+        )
+        serve_parser.add_argument(
+            "--config",
+            type=str,
+            default=None,
+            help="Default MassGen config file path",
+        )
+        serve_parser.add_argument(
+            "--reload",
+            action="store_true",
+            help="Enable auto-reload (dev only)",
+        )
 
         serve_args = serve_parser.parse_args(sys.argv[2:])
 
@@ -6738,7 +8019,12 @@ def cli_main():
             settings = replace(settings, **overrides)
 
         app = create_app(settings=settings)
-        uvicorn.run(app, host=settings.host, port=settings.port, reload=serve_args.reload)
+        uvicorn.run(
+            app,
+            host=settings.host,
+            port=settings.port,
+            reload=serve_args.reload,
+        )
         return
 
     # Handle 'export' subcommand specially before main argument parsing
@@ -7003,6 +8289,38 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Task planning mode. Agents interactively create structured feature lists and planning documents. " "Auto-adds cwd to context paths and enables user questions via ask_others.",
+    )
+    parser.add_argument(
+        "--plan-depth",
+        choices=["shallow", "medium", "deep"],
+        default="medium",
+        help="Plan granularity for --plan mode: shallow (5-10 tasks), medium (20-50 tasks), deep (100-200+ tasks). Default: medium.",
+    )
+    parser.add_argument(
+        "--broadcast",
+        choices=["human", "agents", "false"],
+        default=None,
+        help="Broadcast mode for --plan mode: 'human' (agents ask critical questions), 'agents' (agents debate), 'false' (fully autonomous). "
+        "If not specified, uses config file value or defaults to 'human'.",
+    )
+    parser.add_argument(
+        "--plan-and-execute",
+        action="store_true",
+        help="Run full plan-and-execute workflow: agents create plan (Phase 1), then automatically execute it (Phase 2). "
+        "Combines --plan with automatic execution. Plan stored in .massgen/plans/ for validation and adherence tracking.",
+    )
+    parser.add_argument(
+        "--execute-plan",
+        type=str,
+        metavar="PLAN_PATH",
+        help="Execute an existing plan. Provide the plan directory path (e.g., .massgen/plans/plan_20260115_173113_836955) "
+        "or plan ID (e.g., 20260115_173113_836955) or 'latest' for most recent plan. "
+        "Skips planning phase and runs execution directly from the frozen plan.",
     )
     parser.add_argument(
         "--no-session-registry",

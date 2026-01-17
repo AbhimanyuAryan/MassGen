@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.37 Features](#-latest-features-v0137)
+- [v0.1.39 Features](#-latest-features-v0139)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.37)](#recent-achievements-v0137)
-- [Previous Achievements (v0.0.3 - v0.1.36)](#previous-achievements-v003---v0136)
+- [Recent Achievements (v0.1.39)](#recent-achievements-v0139)
+- [Previous Achievements (v0.0.3 - v0.1.38)](#previous-achievements-v003---v0138)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.38 Roadmap](#v0138-roadmap)
+- [v0.1.40 Roadmap](#v0140-roadmap)
 </details>
 
 <details open>
@@ -155,27 +155,27 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.37)
+## 🆕 Latest Features (v0.1.39)
 
-**🎉 Released: January 12, 2026** | **Next Update: January 14, 2026**
+**🎉 Released: January 16, 2026** | **Next Update: January 19, 2026**
 
-**What's New in v0.1.37:**
-- **📜 Execution Traces** - Full execution history preserved as searchable markdown files for compression recovery and cross-agent coordination
-- **🧠 Thinking Mode Improvements** - Claude Code streaming buffer support and Gemini reasoning content fixes
-- **🏷️ Standardized Agent Labeling** - Consistent agent identification across all backends with improved anonymization
+**What's New in v0.1.39:**
+- **🔄 Plan and Execute Workflow** - Complete plan-then-execute with `--plan-and-execute` for autonomous planning and execution
+- **✅ Task Verification System** - New `verified` status with verification groups for batch validation at checkpoints
+- **📂 Plan Storage** - Persistent plans in `.massgen/plans/` with frozen snapshots and execution tracking
+- **🔧 Response API Fix** - Function call message sanitization for OpenAI compatibility
 
-**Try v0.1.37 Features:**
+**Try v0.1.39 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Run a multi-agent task - execution traces are saved automatically
-uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "Explain the benefits of functional programming"
+# Plan and execute in one command - creates a plan then runs it
+uv run massgen --plan-and-execute --plan-depth medium \
+  "Build a REST API for a todo application"
 
-# Test round timeout behavior
-uv run massgen --config massgen/configs/debug/round_timeout_test.yaml \
-  "Write a short story"
+# Execute an existing plan (prompt auto-fills from plan)
+uv run massgen --execute-plan latest
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1186,7 +1186,7 @@ result = asyncio.run(massgen.run(
 print(result["final_answer"])  # Consensus answer from winning agent
 ```
 
-> **Full API reference:** [Programmatic API Guide](https://docs.massgen.ai/en/latest/user_guide/programmatic_api.html)
+> **Full API reference:** [Programmatic API Guide](https://docs.massgen.ai/en/latest/user_guide/integration/python_api.html)
 
 ---
 
@@ -1210,29 +1210,32 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.37)
+### Recent Achievements (v0.1.39)
 
-**🎉 Released: January 12, 2026**
+**🎉 Released: January 16, 2026**
 
-#### Execution Traces
-- **Full History Preservation**: Human-readable `execution_trace.md` files saved alongside agent snapshots with complete tool calls, results, and reasoning
-- **Compression Recovery**: Agents read trace files to recover detailed history after context compression
-- **Cross-Agent Access**: Other agents can access execution traces in temp workspaces to understand approaches
+#### Plan and Execute Workflow
+- **Autonomous Execution**: `--plan-and-execute` creates a structured plan then immediately executes it
+- **Execute Existing Plans**: `--execute-plan <id|path|latest>` runs saved plans without re-planning
 
-#### Thinking Mode Improvements
-- **Claude Code Thinking**: Streaming buffer support for Claude Code reasoning content
-- **Gemini Thinking Fixes**: Proper reasoning content handling and streaming buffer integration
-- **Vote Reasoning Traces**: Full vote context captured in execution trace files
+#### Task Verification System
+- **Verified Status**: New `verified` status distinguishing implementation from validation
+- **Verification Groups**: Batch validation with labels like "foundation", "frontend_ui"
+- **Checkpoint Verification**: Agents verify entire groups at logical milestones
 
-#### Standardized Agent Labeling
-- **Unified Format**: Consistent agent identification across all backends with improved workspace anonymization
+#### Plan Storage System
+- **Persistent Plans**: Plans saved to `.massgen/plans/` with metadata and execution logs
+- **Frozen Snapshots**: Immutable planning-phase snapshots in `frozen/` directory
+- **Execution Tracking**: Plan diffs and execution logs for audit trails
 
-#### Bug Fixes
-- Fixed Claude Code skills and tool handling issues
-- Fixed configuration builder edge cases
-- Improved round timeout behavior during coordination
+#### Response API Compatibility
+- **Function Call Sanitization**: Fixed OpenAI Response API compatibility issues with function_call messages
 
-### Previous Achievements (v0.0.3 - v0.1.36)
+### Previous Achievements (v0.0.3 - v0.1.38)
+
+✅ **Task Planning & Two-Tier Workspaces (v0.1.38)**: Task planning mode with `--plan` flag for structured work breakdown (plan-only, no auto-execution), git-backed two-tier workspaces separating scratch exploration from final deliverables, automatic CLAUDE.md/AGENTS.md discovery for project context, batch image analysis with multi-image comparison, circuit breaker for timeout denial loops, Docker health monitoring
+
+✅ **Execution Traces & Thinking Mode (v0.1.37)**: Full execution history preserved as `execution_trace.md` for compression recovery and cross-agent coordination, Claude Code and Gemini reasoning content streaming buffer integration, standardized agent labeling across all backends
 
 ✅ **@path Context Handling & Hook Framework (v0.1.36)**: Inline file picker with `@path` syntax and autocomplete, PreToolUse/PostToolUse hooks for permission validation and content injection, global and per-agent hook registration, built-in `MidStreamInjectionHook` and `HighPriorityTaskReminderHook`, Claude Code hooks compatibility, improved Docker resource management
 
@@ -1450,19 +1453,19 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.38 Roadmap
+### v0.1.40 Roadmap
 
-Version 0.1.38 focuses on OpenAI Responses API improvements and computer use model support:
+Version 0.1.40 focuses on OpenAI Responses API improvements and TUI production upgrade:
 
 #### Planned Features
 - **OpenAI Responses /compact Endpoint** (@ncrispino): Use OpenAI's native `/compact` endpoint for context compression instead of custom summarization
-- **Fara-7B for Computer Use** (@ncrispino): Support for Fara-7B model for GUI automation and computer use tasks
+- **TUI Production Upgrade** (@ncrispino): Migrate to Textual as primary terminal interface for improved stability and UX
 
 Key technical approach:
 - **Native Context Compression**: Leverage OpenAI's API-level compression for better token efficiency
-- **Alternative Computer Use Model**: Fara-7B integration with existing computer use infrastructure
+- **Textual TUI**: Professional-grade terminal interface with improved layout and streaming display
 
-For detailed milestones and technical specifications, see the [full v0.1.38 roadmap](ROADMAP_v0.1.38.md).
+For detailed milestones and technical specifications, see the [full v0.1.40 roadmap](ROADMAP_v0.1.40.md).
 
 ---
 

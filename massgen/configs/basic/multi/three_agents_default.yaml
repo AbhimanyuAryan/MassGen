@@ -12,9 +12,9 @@ agents:
   - id: "agent_b"
     backend:
       type: "openai"
-      model: "gpt-5-nano"
+      model: "gpt-5"
       text:
-        verbosity: "medium"
+        verbosity: "low"
       reasoning:
         effort: "low"
         summary: "auto"
@@ -31,6 +31,18 @@ agents:
 ui:
   display_type: "rich_terminal"
   logging_enabled: true
+
+# Orchestrator settings
+orchestrator:
+  snapshot_storage: snapshots
+  agent_temporary_workspace: temp_workspaces
+  max_new_answers_per_agent: 5
+  coordination:
+    use_two_tier_workspace: true  # Enable scratch/deliverable workspace structure with git versioning
+    max_orchestration_restarts: 2
+    enable_agent_task_planning: true
+    task_planning_filesystem_mode: true
+    enable_memory_filesystem_mode: true
 
 # Timeout settings to prevent agents from getting stuck
 timeout_settings:

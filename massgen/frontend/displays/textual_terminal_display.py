@@ -5630,12 +5630,7 @@ Type your question and press Enter to ask the agents.
                 timeout_state: Timeout state from orchestrator.get_agent_timeout_state()
             """
             self._timeout_state = timeout_state
-            # Refresh header to show new timeout state
-            try:
-                header = self.query_one(f"#{self._header_dom_id}")
-                header.update(self._header_text())
-            except Exception:
-                pass
+            # Header refresh happens via the timer (_update_header_timer runs every second)
 
         def jump_to_latest(self):
             """Scroll to latest entry if supported."""
@@ -5701,32 +5696,43 @@ Type your question and press Enter to ask the agents.
             if not active_timeout:
                 return None
 
-            remaining_soft = self._timeout_state.get("remaining_soft")
-            remaining_hard = self._timeout_state.get("remaining_hard")
+            round_start_time = self._timeout_state.get("round_start_time")
+            grace_seconds = self._timeout_state.get("grace_seconds", 0)
             soft_timeout_fired = self._timeout_state.get("soft_timeout_fired", False)
-            is_hard_blocked = self._timeout_state.get("is_hard_blocked", False)
 
-            if remaining_soft is None:
+            if round_start_time is None:
                 return None
 
-            # Format remaining time
+            # Calculate remaining time locally for smooth 1-second updates
+            elapsed = time.time() - round_start_time
+            remaining_soft = max(0, active_timeout - elapsed)
+            remaining_hard = max(0, active_timeout + grace_seconds - elapsed)
+            is_hard_blocked = remaining_hard == 0
+
+            # Get round number (0 = initial answer, 1+ = voting rounds)
+            round_num = self._timeout_state.get("round_number", 0)
+
+            # Format time as M:SS
             def fmt_time(secs: float) -> str:
                 mins = int(secs // 60)
                 s = int(secs % 60)
                 return f"{mins}:{s:02d}"
 
+            # Format the limit time
+            limit_str = fmt_time(active_timeout)
+
             if is_hard_blocked:
                 # Hard timeout active - tools are blocked
-                return "| [bold red]🚫 BLOCKED[/bold red]"
+                return f"| [bold red]🚫 BLOCKED - round {round_num} limit was {limit_str}[/bold red]"
             elif soft_timeout_fired:
                 # In grace period - show remaining time until hard block
-                return f"| [bold yellow]⚠️ Grace: {fmt_time(remaining_hard or 0)}[/bold yellow]"
+                return f"| [bold yellow]⚠️ Round {round_num} grace: {fmt_time(remaining_hard)} left[/bold yellow]"
             elif remaining_soft <= 60:
                 # Less than 1 minute - show warning in yellow
-                return f"| [yellow]⏰ {fmt_time(remaining_soft)}[/yellow]"
+                return f"| [yellow]⏰ Round {round_num}: {fmt_time(remaining_soft)} / {limit_str}[/yellow]"
             else:
-                # Normal countdown - show in dim
-                return f"| [dim]⏰ {fmt_time(remaining_soft)}[/dim]"
+                # Normal countdown - show remaining / limit
+                return f"| [dim]Round {round_num}: {fmt_time(remaining_soft)} / {limit_str}[/dim]"
 
         def _format_elapsed(self, seconds: float) -> str:
             """Format elapsed seconds into human-readable string."""

@@ -7,11 +7,14 @@ parameters, results, and status. Clicking opens a detail modal.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from rich.text import Text
 from textual.message import Message
 from textual.widgets import Static
+
+if TYPE_CHECKING:
+    pass
 
 # Tool category detection - maps tool names to semantic categories
 TOOL_CATEGORIES = {
@@ -296,9 +299,11 @@ class ToolCallCard(Static):
         self._elapsed_timer = None
 
     def on_mount(self) -> None:
-        """Start the elapsed time timer when mounted."""
+        """Start the elapsed time timer when mounted and create injection subcards."""
         if self._status == "running":
             self._start_elapsed_timer()
+        # Create injection subcards for any hooks that were added before mounting
+        self._update_injection_subcards()
 
     def on_unmount(self) -> None:
         """Stop the timer when unmounted."""
@@ -626,6 +631,7 @@ class ToolCallCard(Static):
         decision: str,
         reason: Optional[str] = None,
         execution_time_ms: Optional[float] = None,
+        injection_content: Optional[str] = None,
     ) -> None:
         """Add a pre-tool hook execution to display.
 
@@ -634,6 +640,7 @@ class ToolCallCard(Static):
             decision: "allow", "deny", or "error"
             reason: Reason for the decision (if any)
             execution_time_ms: How long the hook took
+            injection_content: Full injection content (if any)
         """
         self._pre_hooks.append(
             {
@@ -641,9 +648,11 @@ class ToolCallCard(Static):
                 "decision": decision,
                 "reason": reason,
                 "execution_time_ms": execution_time_ms,
+                "injection_content": injection_content,
                 "timestamp": datetime.now(),
             },
         )
+        self._update_injection_subcards()
         self.refresh()
 
     def add_post_hook(
@@ -651,6 +660,7 @@ class ToolCallCard(Static):
         hook_name: str,
         injection_preview: Optional[str] = None,
         execution_time_ms: Optional[float] = None,
+        injection_content: Optional[str] = None,
     ) -> None:
         """Add a post-tool hook execution to display.
 
@@ -658,16 +668,69 @@ class ToolCallCard(Static):
             hook_name: Name of the hook
             injection_preview: Preview of injected content (if any)
             execution_time_ms: How long the hook took
+            injection_content: Full injection content (if any)
         """
         self._post_hooks.append(
             {
                 "hook_name": hook_name,
                 "injection_preview": injection_preview,
+                "injection_content": injection_content,
                 "execution_time_ms": execution_time_ms,
                 "timestamp": datetime.now(),
             },
         )
+        self._update_injection_subcards()
         self.refresh()
+
+    def _update_injection_subcards(self) -> None:
+        """Create or update InjectionSubCard widgets for hooks with content.
+
+        This method removes any existing injection sub-cards and creates new ones
+        based on the current _post_hooks list. Only hooks with injection_content
+        will get sub-cards.
+
+        Note: This only runs when the widget is mounted. If hooks are added before
+        mounting, subcards will be created when on_mount is called.
+        """
+        # Can't mount children if we're not mounted yet
+        if not self.is_mounted:
+            return
+
+        # Import here to avoid circular imports
+        from .injection_card import InjectionSubCard
+
+        # Remove existing injection sub-cards
+        for child in list(self.query("InjectionSubCard")):
+            child.remove()
+
+        # Add sub-cards for post-hooks with injection content
+        for hook in self._post_hooks:
+            content = hook.get("injection_content")
+            if content:
+                subcard = InjectionSubCard(
+                    hook_name=hook["hook_name"],
+                    hook_type="post",
+                    content=content,
+                    preview=hook.get("injection_preview"),
+                    execution_time_ms=hook.get("execution_time_ms"),
+                    classes="injection-subcard",
+                )
+                self.mount(subcard)
+
+        # Add sub-cards for pre-hooks with injection content (if any)
+        for hook in self._pre_hooks:
+            content = hook.get("injection_content")
+            if content:
+                subcard = InjectionSubCard(
+                    hook_name=hook["hook_name"],
+                    hook_type="pre",
+                    content=content,
+                    preview=hook.get("injection_preview"),
+                    execution_time_ms=hook.get("execution_time_ms"),
+                    classes="injection-subcard",
+                )
+                # Mount at beginning for pre-hooks
+                self.mount(subcard, before=0)
 
     # === Subagent-specific methods ===
 

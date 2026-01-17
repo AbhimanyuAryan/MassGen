@@ -227,7 +227,50 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.37 - Latest
+### v0.1.39 - Latest
+**New Features:** Plan and Execute Workflow, Task Verification System, Plan Storage, Response API Fix
+
+**Key Features:**
+- **Plan and Execute Workflow**: `--plan-and-execute` creates a plan then immediately executes it, `--execute-plan` runs existing plans
+- **Task Verification System**: New `verified` status with verification groups for batch validation at checkpoints
+- **Plan Storage**: Persistent plans in `.massgen/plans/` with frozen snapshots and execution tracking
+- **Response API Fix**: Function call message sanitization for OpenAI compatibility
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Plan and execute in one command - creates a plan then runs it
+uv run massgen --plan-and-execute --plan-depth medium \
+  "Build a REST API for a todo application"
+
+# Execute an existing plan (prompt auto-fills from plan)
+uv run massgen --execute-plan latest
+```
+
+### v0.1.38
+**New Features:** Task Planning Mode, Two-Tier Workspace, Project Instructions Auto-Discovery, Batch Image Analysis, Reliability Improvements
+
+**Key Features:**
+- **Task Planning Mode**: Create structured plans with `--plan` flag and `--plan-depth` (shallow/medium/deep) for future workflows (plan-only, no auto-execution)
+- **Two-Tier Workspace**: Git-backed scratch/deliverable separation keeping exploratory work separate from final outputs
+- **Project Instructions Auto-Discovery**: Automatic loading of `CLAUDE.md` and `AGENTS.md` for project context
+- **Batch Image Analysis**: Process multiple images simultaneously with `read_media` tool for comparison and batch analysis
+- **Reliability Fixes**: Circuit breaker prevents infinite loops, fixed soft-to-hard timeout race conditions, MCP tools properly restored after hard timeout restarts
+
+**Try It:**
+```bash
+# Task planning mode - creates a plan (no auto-execution)
+uv run massgen --plan --plan-depth medium \
+  "Build a REST API for a todo application"
+
+# Will read from CLAUDE.md/AGENTS.md in cwd, if it exists
+uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "Explain the current functionality of this repo @./"
+```
+
+### v0.1.37
 **New Features:** Execution Traces, Thinking Mode Improvements, Standardized Agent Labeling
 
 **Key Features:**
@@ -237,16 +280,9 @@ Most configurations use environment variables for API keys:so
 
 **Try It:**
 ```bash
-# Install or upgrade
-pip install --upgrade massgen
-
-# Run a multi-agent task - execution traces are saved automatically
+# Will read from CLAUDE.md/AGENTS.md in cwd, if it exists
 uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "Explain the benefits of functional programming"
-
-# Test round timeout behavior
-uv run massgen --config massgen/configs/debug/round_timeout_test.yaml \
-  "Write a short story"
+  "Explain the current functionality of this repo @./"
 ```
 
 ### v0.1.36

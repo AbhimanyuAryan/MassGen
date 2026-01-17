@@ -863,6 +863,7 @@ class TimelineSection(Vertical):
                 - reason: Optional reason string
                 - execution_time_ms: Optional execution time
                 - injection_preview: Optional preview of injected content
+                - injection_content: Optional full injection content
         """
         # Find the tool card to attach the hook to
         tool_card = None
@@ -880,17 +881,23 @@ class TimelineSection(Vertical):
             decision = hook_info.get("decision", "allow")
             reason = hook_info.get("reason")
             injection_preview = hook_info.get("injection_preview")
+            injection_content = hook_info.get("injection_content")
+            execution_time_ms = hook_info.get("execution_time_ms")
 
             if hook_type == "pre":
                 tool_card.add_pre_hook(
                     hook_name=hook_name,
                     decision=decision,
                     reason=reason,
+                    execution_time_ms=execution_time_ms,
+                    injection_content=injection_content,
                 )
             else:
                 tool_card.add_post_hook(
                     hook_name=hook_name,
                     injection_preview=injection_preview,
+                    execution_time_ms=execution_time_ms,
+                    injection_content=injection_content,
                 )
 
     def add_text(self, content: str, style: str = "", text_class: str = "") -> None:
