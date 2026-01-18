@@ -366,9 +366,26 @@ class CoordinationUI:
                         if self.display and hasattr(self.display, "show_post_evaluation_content"):
                             self.display.show_post_evaluation_content(content, source)
 
+                # Track selected agent for post-evaluation
+                if content and "🏆 Selected Agent:" in content:
+                    import re
+
+                    match = re.search(r"🏆 Selected Agent: (\S+)", content)
+                    if match:
+                        self._post_eval_winner = match.group(1)
+
                 # Detect post-evaluation start
                 if chunk_type == "status" and "Post-evaluation" in content:
                     self._in_post_evaluation = True
+
+                # Detect post-evaluation completion and show footer
+                if chunk_type == "status" and hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
+                    if "Evaluation complete" in content or "Restart requested" in content:
+                        self._in_post_evaluation = False
+                        if self.display and hasattr(self.display, "end_post_evaluation_content"):
+                            # Use tracked winner, fall back to source
+                            winner = getattr(self, "_post_eval_winner", None) or source
+                            self.display.end_post_evaluation_content(winner)
 
                 if content:
                     full_response += content
@@ -942,9 +959,26 @@ class CoordinationUI:
                         if self.display and hasattr(self.display, "show_post_evaluation_content"):
                             self.display.show_post_evaluation_content(content, source)
 
+                # Track selected agent for post-evaluation
+                if content and "🏆 Selected Agent:" in content:
+                    import re
+
+                    match = re.search(r"🏆 Selected Agent: (\S+)", content)
+                    if match:
+                        self._post_eval_winner = match.group(1)
+
                 # Detect post-evaluation start
                 if chunk_type == "status" and "Post-evaluation" in content:
                     self._in_post_evaluation = True
+
+                # Detect post-evaluation completion and show footer
+                if chunk_type == "status" and hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
+                    if "Evaluation complete" in content or "Restart requested" in content:
+                        self._in_post_evaluation = False
+                        if self.display and hasattr(self.display, "end_post_evaluation_content"):
+                            # Use tracked winner, fall back to source
+                            winner = getattr(self, "_post_eval_winner", None) or source
+                            self.display.end_post_evaluation_content(winner)
 
                 if content:
                     full_response += content
@@ -1395,9 +1429,26 @@ class CoordinationUI:
                         if self.display and hasattr(self.display, "show_post_evaluation_content"):
                             self.display.show_post_evaluation_content(content, source)
 
+                # Track selected agent for post-evaluation
+                if content and "🏆 Selected Agent:" in content:
+                    import re
+
+                    match = re.search(r"🏆 Selected Agent: (\S+)", content)
+                    if match:
+                        self._post_eval_winner = match.group(1)
+
                 # Detect post-evaluation start
                 if chunk_type == "status" and "Post-evaluation" in content:
                     self._in_post_evaluation = True
+
+                # Detect post-evaluation completion and show footer
+                if chunk_type == "status" and hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
+                    if "Evaluation complete" in content or "Restart requested" in content:
+                        self._in_post_evaluation = False
+                        if self.display and hasattr(self.display, "end_post_evaluation_content"):
+                            # Use tracked winner, fall back to source
+                            winner = getattr(self, "_post_eval_winner", None) or source
+                            self.display.end_post_evaluation_content(winner)
 
                 if content:
                     full_response += content
@@ -1942,9 +1993,10 @@ class CoordinationUI:
                 # Parse vote events for status bar notification
                 # Format: "🗳️ Voting for [agent_id] (options: ...) : reason"
                 if "🗳️" in content and "Voting for" in content:
-                    vote_match = re.search(r"Voting for \[([^\]]+)\]", content)
+                    vote_match = re.search(r"Voting for \[([^\]]+)\].*?:\s*(.*)$", content)
                     if vote_match and hasattr(self.display, "notify_vote"):
                         voted_for = vote_match.group(1)
+                        reason = vote_match.group(2).strip() if vote_match.group(2) else ""
                         # Get voter from orchestrator status if available
                         voter = "Agent"  # Default fallback
                         if self.orchestrator:
@@ -1953,7 +2005,7 @@ class CoordinationUI:
                             # Use current agent context if available
                             if hasattr(self.orchestrator, "_current_streaming_agent"):
                                 voter = self.orchestrator._current_streaming_agent
-                        self.display.notify_vote(voter, voted_for)
+                        self.display.notify_vote(voter, voted_for, reason)
 
         # Handle final answer content - buffer it to prevent duplicate calls
         elif "Final Coordinated Answer" not in content and not any(

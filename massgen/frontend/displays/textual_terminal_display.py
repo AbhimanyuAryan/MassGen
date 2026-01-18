@@ -52,8 +52,13 @@ try:
         AgentTabChanged,
         BackgroundTasksModal,
         CompletionFooter,
+        FinalPresentationBanner,
+        FinalPresentationCard,
+        FinalPresentationFooter,
         MultiLineInput,
         PathSuggestionDropdown,
+        PostEvaluationBanner,
+        SessionCompleteBanner,
         TaskPlanCard,
         TaskPlanModal,
         TimelineSection,
@@ -1266,10 +1271,10 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     # === Status Bar Notification Bridge Methods ===
 
-    def notify_vote(self, voter: str, voted_for: str):
-        """Notify the TUI of a vote cast - updates status bar and shows toast."""
+    def notify_vote(self, voter: str, voted_for: str, reason: str = ""):
+        """Notify the TUI of a vote cast - updates status bar, shows toast, and adds tool card."""
         if self._app:
-            self._call_app_method("notify_vote", voter, voted_for)
+            self._call_app_method("notify_vote", voter, voted_for, reason)
 
     def send_new_answer(
         self,
@@ -1414,6 +1419,21 @@ class TextualTerminalDisplay(TerminalDisplay):
                 agent_id,
             )
 
+    def end_post_evaluation_content(self, agent_id: str):
+        """Called when post-evaluation is complete to show footer with buttons."""
+        if self._app:
+            self._call_app_method("end_post_evaluation", agent_id)
+
+    def show_post_evaluation_tool_content(self, tool_name: str, args: dict, agent_id: str):
+        """Called when a post-evaluation tool call (submit/restart) is detected."""
+        if self._app:
+            self._app.call_from_thread(
+                self._app.show_post_evaluation_tool,
+                tool_name,
+                args,
+                agent_id,
+            )
+
     def show_restart_banner(self, reason: str, instructions: str, attempt: int, max_attempts: int):
         """Display restart decision banner."""
         import sys
@@ -1514,7 +1534,9 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._final_stream_buffer = ""
         self._final_presentation_agent = None
 
+        # Reset winner/dimming state from previous turn
         if self._app:
+            self._call_app_method("clear_winner_state")
             self._call_app_method("update_turn_header", turn, question)
 
         for agent_id in self.agent_ids:
@@ -2525,6 +2547,9 @@ if TEXTUAL_AVAILABLE:
             self.safe_indicator = None
             self._tab_bar: Optional[AgentTabBar] = None
             self._active_agent_id: Optional[str] = None
+            # Final presentation state (streams into winner's AgentPanel)
+            self._final_presentation_agent: Optional[str] = None
+            self._final_presentation_card: Optional[FinalPresentationCard] = None
             self._welcome_screen: Optional["WelcomeScreen"] = None
             self._status_bar: Optional["StatusBar"] = None
             # Show welcome if no real question (detect placeholder strings)
@@ -2666,8 +2691,10 @@ if TEXTUAL_AVAILABLE:
             self.post_eval_panel = PostEvaluationPanel()
             yield self.post_eval_panel
 
+            # FinalStreamPanel is deprecated - final answer now streams into winner's AgentPanel
+            # Keep the instance but don't yield it (hidden)
             self.final_stream_panel = FinalStreamPanel(coordination_display=self.coordination_display)
-            yield self.final_stream_panel
+            # yield self.final_stream_panel  # Hidden - using FinalPresentationCard in AgentPanel instead
 
             self.safe_indicator = Label("", id="safe_indicator")
             yield self.safe_indicator
@@ -3494,41 +3521,326 @@ Type your question and press Enter to ask the agents.
             # Celebrate the winner
             self._celebrate_winner(selected_agent, answer)
 
-            if self.final_stream_panel:
-                # Get model name for the winning agent
-                model_name = self.coordination_display.agent_models.get(selected_agent, "")
-                self.final_stream_panel.begin(selected_agent, model_name, vote_results or {})
-                if answer:
-                    self.final_stream_panel.append_chunk(answer)
-                self.final_stream_panel.end()
+            # Show final answer in winner's AgentPanel via FinalPresentationCard
+            self.begin_final_stream(selected_agent, vote_results or {})
+            if answer:
+                self.update_final_stream(answer)
+            self.end_final_stream()
 
         def show_post_evaluation(self, content: str, agent_id: str):
-            """Show post-evaluation content."""
-            if self.post_eval_panel:
-                lines = list(self.coordination_display._post_evaluation_lines)
-                self.post_eval_panel.update_lines(agent_id, lines)
+            """Show post-evaluation content in the winner's timeline.
+
+            Adds a Post-Evaluation banner (once, same style as RestartBanner)
+            and the content as normal text. Parses tool calls and shows them as cards.
+            """
+            import re
+
+            # Get the winner's timeline
+            if agent_id in self.agent_widgets:
+                panel = self.agent_widgets[agent_id]
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                    # Add Post-Evaluation banner only once (same style as RestartBanner)
+                    if not getattr(self, "_post_eval_header_added", False):
+                        banner = PostEvaluationBanner(id="post_evaluation_banner")
+                        timeline.add_widget(banner)
+                        self._post_eval_header_added = True
+
+                    # Check for tool call JSON in content
+                    if content:
+                        # Skip content that looks like JSON tool calls
+                        # Check if this chunk is part of a JSON object
+                        stripped = content.strip()
+
+                        # Skip JSON fragments and tool call content
+                        json_indicators = [
+                            '"action_type"',
+                            '"submit_data"',
+                            '"restart_data"',
+                            '"action": "submit"',
+                            '"confirmed": true',
+                            '"confirmed":true',
+                            '": "submit"',
+                            '": "restart_orchestration"',
+                        ]
+
+                        is_json_fragment = any(ind in content for ind in json_indicators)
+
+                        # Also skip lines that are just JSON syntax
+                        is_json_syntax = stripped in ["{", "}", "```json", "```", '",', '",']
+                        is_json_syntax = is_json_syntax or stripped.startswith('"action')
+                        is_json_syntax = is_json_syntax or stripped.startswith('"confirmed')
+                        is_json_syntax = is_json_syntax or stripped.startswith('"submit')
+                        is_json_syntax = is_json_syntax or stripped.startswith('"restart')
+
+                        if is_json_fragment or is_json_syntax:
+                            # Don't display JSON tool call content
+                            pass
+                        else:
+                            # Filter out any remaining JSON blocks
+                            clean_content = content
+
+                            # Remove JSON code blocks
+                            clean_content = re.sub(r"```json\s*\{[\s\S]*?\}\s*```", "", clean_content)
+
+                            # Remove inline JSON objects with action_type
+                            clean_content = re.sub(
+                                r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"action_type"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',
+                                "",
+                                clean_content,
+                                flags=re.DOTALL,
+                            )
+
+                            # Clean up any leftover JSON fragments
+                            clean_content = re.sub(r"^\s*[\{\}]\s*$", "", clean_content, flags=re.MULTILINE)
+
+                            clean_content = clean_content.strip()
+                            if clean_content:
+                                timeline.add_text(clean_content, text_class="post-eval")
+
+                except Exception as e:
+                    logger.debug(f"Failed to add post-evaluation content: {e}")
+
             self.add_orchestrator_event(f"[POST-EVALUATION] {agent_id}: {content}")
-            if self.final_stream_panel:
-                self.final_stream_panel.end()
+
+        def show_post_evaluation_tool(self, tool_name: str, args: dict, agent_id: str):
+            """Display post-evaluation tool call using ToolCallCard.
+
+            Args:
+                tool_name: "submit" or "restart_orchestration"
+                args: Tool arguments dict
+                agent_id: The winner agent ID
+            """
+            import uuid
+            from datetime import datetime
+
+            from .content_handlers import ToolDisplayData
+
+            if agent_id not in self.agent_widgets:
+                return
+
+            panel = self.agent_widgets[agent_id]
+            try:
+                timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                # Create ToolDisplayData for the post-eval tool
+                if tool_name == "submit":
+                    display_name = "Submit Answer"
+                    args_summary = "confirmed: true"
+                    result_summary = "Answer confirmed and submitted"
+                    icon = "✓"
+                    color = "#3fb950"  # green
+                elif tool_name == "restart_orchestration":
+                    display_name = "Restart Orchestration"
+                    reason = args.get("reason", "No reason provided")
+                    args.get("instructions", "")
+                    args_summary = f"reason: {reason[:60]}..." if len(reason) > 60 else f"reason: {reason}"
+                    result_summary = f"Restart requested: {reason[:40]}..." if len(reason) > 40 else f"Restart requested: {reason}"
+                    icon = "🔄"
+                    color = "#d29922"  # amber
+                else:
+                    return  # Unknown tool
+
+                tool_data = ToolDisplayData(
+                    tool_id=f"post_eval_{uuid.uuid4().hex[:8]}",
+                    tool_name=tool_name,
+                    display_name=display_name,
+                    tool_type="workspace",  # Post-eval tools are workspace category
+                    category="workspace",
+                    icon=icon,
+                    color=color,
+                    status="success",  # Post-eval tools complete immediately
+                    start_time=datetime.now(),
+                    end_time=datetime.now(),
+                    args_summary=args_summary,
+                    args_full=str(args),
+                    result_summary=result_summary,
+                    result_full=result_summary,
+                    elapsed_seconds=0.0,
+                )
+
+                card = timeline.add_tool(tool_data)
+                card.set_status("success")
+                if tool_name == "submit":
+                    card.set_result("Answer confirmed and submitted", "Answer confirmed")
+                else:
+                    card.set_result(
+                        f"Restart requested.\nReason: {args.get('reason', 'N/A')}\n" f"Instructions: {args.get('instructions', 'N/A')}",
+                        "Restart requested",
+                    )
+
+            except Exception as e:
+                logger.debug(f"Failed to display post-eval tool: {e}")
+
+        def end_post_evaluation(self, agent_id: str):
+            """Mark post-evaluation as complete and show turn complete banner with final answer."""
+            if agent_id in self.agent_widgets:
+                panel = self.agent_widgets[agent_id]
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                    # Add turn complete banner and footer
+                    if not getattr(self, "_post_eval_footer_added", False):
+                        # Add the turn complete banner
+                        turn_banner = SessionCompleteBanner(
+                            label="✅ Turn Complete",
+                            id="session_complete_banner",
+                        )
+                        timeline.add_widget(turn_banner)
+
+                        # Display the final answer summary if available
+                        if hasattr(self, "_final_stream_content") and self._final_stream_content:
+                            # Create a nice final answer display
+                            answer_text = self._final_stream_content.strip()
+                            if answer_text:
+                                from rich.markdown import Markdown
+                                from rich.panel import Panel
+                                from textual.widgets import Static
+
+                                # Create a panel with the final answer using Rich
+                                try:
+                                    # Render markdown content
+                                    md_content = Markdown(answer_text)
+                                    answer_panel = Panel(
+                                        md_content,
+                                        title="📝 Final Answer",
+                                        title_align="left",
+                                        border_style="green",
+                                        padding=(1, 2),
+                                        expand=True,
+                                    )
+                                except Exception:
+                                    # Fallback to plain text
+                                    answer_panel = Panel(
+                                        answer_text,
+                                        title="📝 Final Answer",
+                                        title_align="left",
+                                        border_style="green",
+                                        padding=(1, 2),
+                                        expand=True,
+                                    )
+
+                                # Use Static with expand=True to allow full height
+                                answer_widget = Static(answer_panel, id="final_answer_display", expand=True)
+                                timeline.add_widget(answer_widget)
+
+                        # Add footer with buttons
+                        footer = FinalPresentationFooter(
+                            agent_id=agent_id,
+                            id="final_presentation_footer",
+                        )
+                        timeline.add_widget(footer)
+                        self._post_eval_footer_added = True
+
+                        # Scroll to the bottom to show the turn complete banner
+                        timeline._auto_scroll()
+
+                except Exception as e:
+                    logger.debug(f"Failed to add post-evaluation footer: {e}")
 
         def begin_final_stream(self, agent_id: str, vote_results: Dict[str, Any]):
-            """Show streaming panel when the final agent starts presenting."""
-            if self.final_stream_panel:
-                # Get model name for the winning agent
-                model_name = self.coordination_display.agent_models.get(agent_id, "")
-                self.final_stream_panel.begin(agent_id, model_name, vote_results)
+            """Start final presentation streaming into the winner's AgentPanel.
+
+            Uses simple timeline items (separator header + text) instead of
+            a complex card widget - keeps everything in the normal flow.
+
+            This method:
+            1. Auto-switches to the winner's tab
+            2. Marks the winner tab with trophy styling
+            3. Adds a "🏆 FINAL PRESENTATION" header separator to the timeline (once)
+            """
+            # Prevent duplicate headers - check if we've already started
+            if hasattr(self, "_final_header_added") and self._final_header_added:
+                return
+
+            # Store the winner agent for routing chunks
+            self._final_presentation_agent = agent_id
+            self._final_presentation_card = None  # Not using card anymore
+            self._final_stream_timeline = None  # Track timeline for streaming
+            self._final_header_added = True  # Track that header was added
+            self._post_eval_header_added = False  # Reset post-eval tracking
+            self._final_stream_content = ""  # Accumulate final answer content
+
+            # 1. Auto-switch to winner's tab
+            if self._tab_bar:
+                self._tab_bar.set_active(agent_id)
+                self._tab_bar.set_winner(agent_id)
+
+            # 2. Show the agent panel for the winner (remove hidden class)
+            if agent_id in self.agent_widgets:
+                if self._active_agent_id and self._active_agent_id in self.agent_widgets:
+                    self.agent_widgets[self._active_agent_id].add_class("hidden")
+                self.agent_widgets[agent_id].remove_class("hidden")
+                self._active_agent_id = agent_id
+
+            # 3. Add Final Presentation banner to timeline (same style as RestartBanner)
+            if agent_id in self.agent_widgets:
+                panel = self.agent_widgets[agent_id]
+
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+                    self._final_stream_timeline = timeline
+
+                    # Build vote summary
+                    vote_counts = vote_results.get("vote_counts", {})
+                    winner = vote_results.get("winner", agent_id)
+                    is_tie = vote_results.get("is_tie", False)
+
+                    vote_str = ""
+                    if vote_counts:
+                        counts = ", ".join(f"{aid}:{cnt}" for aid, cnt in vote_counts.items())
+                        tie_note = " (tie-breaker)" if is_tie else ""
+                        vote_str = f" | Votes: {counts} | Winner: {winner}{tie_note}"
+
+                    # Add banner (same style as RestartBanner but different color)
+                    banner_text = f"🏆 FINAL PRESENTATION{vote_str}"
+                    banner = FinalPresentationBanner(label=banner_text, id="final_presentation_banner")
+                    timeline.add_widget(banner)
+                except Exception as e:
+                    logger.debug(f"Failed to add final presentation banner: {e}")
 
         def update_final_stream(self, chunk: str):
-            """Append streaming chunks to the panel."""
-            if self.final_stream_panel:
-                self.final_stream_panel.append_chunk(chunk)
+            """Append streaming chunks as normal text to the winner's timeline."""
+            if self._final_stream_timeline and chunk:
+                # Add as plain text - no green highlighting
+                self._final_stream_timeline.add_text(chunk, text_class="final-answer")
+                # Accumulate content for final answer display
+                if not hasattr(self, "_final_stream_content"):
+                    self._final_stream_content = ""
+                self._final_stream_content += chunk
 
         def end_final_stream(self):
-            """Hide streaming panel after presentation ends."""
-            if self.final_stream_panel:
-                self.final_stream_panel.end()
+            """Mark the final presentation streaming as complete.
+
+            Note: The footer with buttons is added after post-evaluation completes,
+            not here.
+            """
+            # Only end if we actually started
+            if not getattr(self, "_final_header_added", False):
+                return
+
+            # Don't add footer here - it will be added after post-evaluation
+            # Just clear the streaming timeline reference (keep agent for post-eval)
+            self._final_stream_timeline = None
+
             if self.post_eval_panel and not self.coordination_display._post_evaluation_lines:
                 self.post_eval_panel.hide()
+
+        def clear_winner_state(self):
+            """Reset winner highlighting and panel dimming for a new turn."""
+            # Clear winner status from tab bar
+            if self._tab_bar:
+                self._tab_bar.clear_winner()
+
+            # Undim all panels
+            for panel in self.agent_widgets.values():
+                panel.undim()
+
+            # Reset final presentation tracking flags for the new turn
+            self._final_header_added = False
+            self._post_eval_header_added = False
+            self._post_eval_footer_added = False
 
         # =====================================================================
         # Multi-turn Lifecycle Methods
@@ -3939,6 +4251,78 @@ Type your question and press Enter to ask the agents.
                 ),
             )
 
+        def _show_workspace_browser_for_agent(self, agent_id: str):
+            """Open workspace browser focused on the winning agent's final workspace.
+
+            Args:
+                agent_id: The agent ID to show workspace for (typically the winner)
+            """
+            from pathlib import Path
+
+            # Get current workspace paths for ALL agents
+            agent_workspace_paths: Dict[str, str] = {}
+            final_workspace_paths: Dict[str, str] = {}
+            orchestrator = getattr(self.coordination_display, "orchestrator", None)
+
+            if orchestrator:
+                # Get current workspaces
+                for aid, agent in getattr(orchestrator, "agents", {}).items():
+                    fm = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
+                    if fm:
+                        workspace = getattr(fm, "get_current_workspace", lambda: None)()
+                        if workspace:
+                            agent_workspace_paths[aid] = str(workspace)
+
+                # Scan for final workspaces in log directory
+                log_dir = getattr(orchestrator, "log_session_dir", None)
+                if log_dir:
+                    log_path = Path(log_dir)
+
+                    def scan_for_final(base_dir: Path) -> Dict[str, str]:
+                        found = {}
+                        final_dir = base_dir / "final"
+                        if final_dir.exists() and final_dir.is_dir():
+                            for agent_dir in final_dir.iterdir():
+                                if agent_dir.is_dir() and agent_dir.name.startswith("agent_"):
+                                    ws_path = agent_dir / "workspace"
+                                    if ws_path.exists():
+                                        found[agent_dir.name] = str(ws_path)
+                        return found
+
+                    # Try direct final/ directory
+                    final_workspace_paths = scan_for_final(log_path)
+
+                    # If not found, try turn_*/attempt_* subdirectories
+                    if not final_workspace_paths:
+                        for turn_dir in sorted(log_path.glob("turn_*"), reverse=True):
+                            for attempt_dir in sorted(turn_dir.glob("attempt_*"), reverse=True):
+                                final_workspace_paths = scan_for_final(attempt_dir)
+                                if final_workspace_paths:
+                                    break
+                            if final_workspace_paths:
+                                break
+
+            # Merge final workspaces into agent_workspace_paths with special key
+            # The modal will detect keys ending with "-final" as final workspaces
+            agent_final_paths: Dict[str, str] = {}
+            for aid, path in final_workspace_paths.items():
+                agent_final_paths[aid] = path
+
+            if not self._answers and not agent_workspace_paths and not agent_final_paths:
+                self.notify("No workspace available yet", severity="warning", timeout=3)
+                return
+
+            self._show_modal_async(
+                WorkspaceBrowserModal(
+                    answers=self._answers,
+                    agent_ids=self.coordination_display.agent_ids,
+                    agent_workspace_paths=agent_workspace_paths,
+                    agent_final_paths=agent_final_paths,
+                    default_agent=agent_id,
+                    default_to_final=True,
+                ),
+            )
+
         @keyboard_action
         def action_open_unified_browser(self):
             """Open unified browser modal with tabs for Answers, Votes, Workspace, Timeline."""
@@ -4076,21 +4460,26 @@ Type your question and press Enter to ask the agents.
 
         # === Status Bar Notification Methods ===
 
-        def notify_vote(self, voter: str, voted_for: str) -> None:
-            """Called when a vote is cast. Updates status bar and shows toast with standings."""
+        def notify_vote(self, voter: str, voted_for: str, reason: str = "") -> None:
+            """Called when a vote is cast. Updates status bar, shows toast, and adds tool card."""
             import time
+            from datetime import datetime
+
+            from .content_handlers import ToolDisplayData
 
             # Get model names for richer display
             voter_model = self.coordination_display.agent_models.get(voter, "")
             voted_for_model = self.coordination_display.agent_models.get(voted_for, "")
 
             # Track the vote for browser
+            vote_count = len(self._votes) + 1
             self._votes.append(
                 {
                     "voter": voter,
                     "voter_model": voter_model,
                     "voted_for": voted_for,
                     "voted_for_model": voted_for_model,
+                    "reason": reason,
                     "timestamp": time.time(),
                 },
             )
@@ -4102,7 +4491,6 @@ Type your question and press Enter to ask the agents.
                 # Update progress summary
                 agent_count = len(self.coordination_display.agent_ids)
                 answer_count = len(self._answers)
-                vote_count = len(self._votes)
                 # Expected votes = agents * (agents - 1) in typical voting round
                 expected_votes = agent_count * (agent_count - 1) if agent_count > 1 else 0
                 self._status_bar.update_progress(agent_count, answer_count, vote_count, expected_votes)
@@ -4123,6 +4511,40 @@ Type your question and press Enter to ask the agents.
                     )
             else:
                 self.notify(f"🗳️ {voter} → {voted_for}", timeout=3)
+
+            # Add vote tool card to the voter's timeline
+            if voter in self.agent_widgets:
+                panel = self.agent_widgets[voter]
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                    # Truncate reason for card display
+                    reason_preview = reason[:80] + "..." if len(reason) > 80 else reason
+                    reason_preview = reason_preview.replace("\n", " ")
+
+                    now = datetime.now()
+                    tool_data = ToolDisplayData(
+                        tool_id=f"vote_{voter}_{vote_count}",
+                        tool_name="coordination/vote",
+                        display_name="Coordination/Vote",
+                        tool_type="workspace",
+                        category="workspace",
+                        icon="🗳️",
+                        color="#a371f7",  # Purple for voting
+                        status="success",
+                        start_time=now,
+                        end_time=now,
+                        args_summary=f'voted_for="{voted_for}"',
+                        args_full=f'voted_for="{voted_for}", reason="{reason}"',
+                        result_summary=f"Voted for {voted_for}",
+                        result_full=f"Voted for {voted_for}\nReason: {reason}" if reason else f"Voted for {voted_for}",
+                        elapsed_seconds=0.0,
+                    )
+
+                    # Add tool card to timeline
+                    timeline.add_tool(tool_data)
+                except Exception:
+                    pass  # Silently ignore if panel not found
 
         def notify_new_answer(
             self,
@@ -5870,6 +6292,14 @@ Type your question and press Enter to ask the agents.
             # Update header labels
             self._refresh_header()
 
+        def dim(self) -> None:
+            """Dim this panel to indicate it's not the active/winner panel."""
+            self.add_class("dimmed-panel")
+
+        def undim(self) -> None:
+            """Remove dimming from this panel."""
+            self.remove_class("dimmed-panel")
+
         def _start_header_timer(self) -> None:
             """Start the header timer to update elapsed time."""
             if self._header_timer is None:
@@ -7027,22 +7457,33 @@ Type your question and press Enter to ask the agents.
             answers: List[Dict[str, Any]],
             agent_ids: List[str],
             agent_workspace_paths: Optional[Dict[str, str]] = None,
+            agent_final_paths: Optional[Dict[str, str]] = None,
+            default_agent: Optional[str] = None,
+            default_to_final: bool = False,
         ):
             super().__init__()
             self.answers = answers
             self.agent_ids = agent_ids
             self.agent_workspace_paths = agent_workspace_paths or {}
-            # Default to current workspace if available, else most recent answer
-            default_agent = agent_ids[0] if agent_ids else None
-            if default_agent and default_agent in self.agent_workspace_paths:
+            self.agent_final_paths = agent_final_paths or {}
+            self._default_to_final = default_to_final
+
+            # Default to specified agent or first agent
+            selected_agent = default_agent if default_agent and default_agent in agent_ids else (agent_ids[0] if agent_ids else None)
+
+            # Determine default selection based on preferences
+            if default_to_final and selected_agent and selected_agent in self.agent_final_paths:
+                self._selected_answer_idx: int = self.FINAL_WORKSPACE_IDX
+            elif selected_agent and selected_agent in self.agent_workspace_paths:
                 self._selected_answer_idx: int = self.CURRENT_WORKSPACE_IDX
             else:
                 self._selected_answer_idx: int = len(answers) - 1 if answers else 0
+
             self._current_files: List[Dict[str, Any]] = []
             self._selected_file_idx: int = 0
             self._load_counter: int = 0  # Counter to ensure unique widget IDs
-            # Default to first agent (no "All Agents" option)
-            self._current_agent_filter: Optional[str] = default_agent  # None = all agents  # Counter to ensure unique widget IDs
+            # Default to specified agent or first agent
+            self._current_agent_filter: Optional[str] = selected_agent  # None = all agents  # Counter to ensure unique widget IDs
 
         def compose(self) -> ComposeResult:
             with Container(id="workspace_browser_container"):
@@ -8428,7 +8869,13 @@ Type your question and press Enter to ask the agents.
             self.styles.display = "none"
 
     class FinalStreamPanel(Static):
-        """Live view of the winning agent's presentation stream with action buttons."""
+        """Live view of the winning agent's presentation stream with action buttons.
+
+        Layout principle: User sees everything they need at a glance without scrolling.
+        - Fixed header with winner info and status
+        - Scrollable content area for the full answer
+        - Fixed footer with action buttons and follow-up input
+        """
 
         def __init__(self, coordination_display: "TextualTerminalDisplay" = None):
             super().__init__(id="final_stream_container")
@@ -8446,15 +8893,18 @@ Type your question and press Enter to ask the agents.
             self.styles.display = "none"
 
         def compose(self) -> ComposeResult:
-            yield self.agent_label
-            yield self.log_view
-            yield self.current_line_label
-            with Horizontal(id="final_stream_buttons", classes="hidden"):
-                yield Button("Copy", id="final_copy_button", classes="action-primary")
-                yield Button("Save", id="final_save_button")
-                yield Button("Workspace", id="final_workspace_button")
-            # Follow-up input container (parity with webui)
-            with Vertical(id="followup_container", classes="hidden"):
+            # Fixed header section
+            with Vertical(id="final_stream_header"):
+                yield self.agent_label
+            # Scrollable content area - takes remaining space
+            with VerticalScroll(id="final_stream_content"):
+                yield self.log_view
+                yield self.current_line_label
+            # Fixed footer section with buttons and follow-up input
+            with Vertical(id="final_stream_footer", classes="hidden"):
+                with Horizontal(id="final_stream_buttons"):
+                    yield Button("Copy", id="final_copy_button", classes="action-primary")
+                    yield Button("Workspace", id="final_workspace_button")
                 yield Label("Ask a follow-up question:", id="followup_label")
                 yield Input(placeholder="Continue the conversation...", id="followup_input")
 
@@ -8484,13 +8934,9 @@ Type your question and press Enter to ask the agents.
             self._line_buffer = ""
             self.current_line_label.update("")
 
-            # Hide buttons and followup during streaming
+            # Hide footer during streaming (will show when complete)
             try:
-                self.query_one("#final_stream_buttons").add_class("hidden")
-            except Exception:
-                pass
-            try:
-                self.query_one("#followup_container").add_class("hidden")
+                self.query_one("#final_stream_footer").add_class("hidden")
             except Exception:
                 pass
 
@@ -8533,15 +8979,9 @@ Type your question and press Enter to ask the agents.
                 header = f"{header} | {self._vote_summary}"
             self.agent_label.update(f"{header} | ✅ Completed")
 
-            # Show action buttons
+            # Show footer with buttons and follow-up input
             try:
-                self.query_one("#final_stream_buttons").remove_class("hidden")
-            except Exception:
-                pass
-
-            # Show follow-up input container
-            try:
-                self.query_one("#followup_container").remove_class("hidden")
+                self.query_one("#final_stream_footer").remove_class("hidden")
                 # Focus the follow-up input
                 followup_input = self.query_one("#followup_input", Input)
                 followup_input.focus()
@@ -8552,8 +8992,6 @@ Type your question and press Enter to ask the agents.
             """Handle action button presses."""
             if event.button.id == "final_copy_button":
                 self._copy_to_clipboard()
-            elif event.button.id == "final_save_button":
-                self._save_to_file()
             elif event.button.id == "final_workspace_button":
                 self._open_workspace()
 
@@ -8610,27 +9048,6 @@ Type your question and press Enter to ask the agents.
                 self.app.notify(f"Copied {len(self._final_content)} lines to clipboard", severity="information")
             except Exception as e:
                 self.app.notify(f"Failed to copy: {e}", severity="error")
-
-        def _save_to_file(self) -> None:
-            """Save final answer to a file in the log directory."""
-            from datetime import datetime
-
-            from massgen.logging.log_directory import get_log_session_dir
-
-            try:
-                output_dir = get_log_session_dir() / "final_answers"
-                output_dir.mkdir(parents=True, exist_ok=True)
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"final_answer_{self._winner_agent_id}_{timestamp}.txt"
-                output_path = output_dir / filename
-
-                full_content = "\n".join(self._final_content)
-                output_path.write_text(full_content, encoding="utf-8")
-
-                self.app.notify(f"Saved to: {output_path.name}", severity="information")
-            except Exception as e:
-                self.app.notify(f"Failed to save: {e}", severity="error")
 
         def _open_workspace(self) -> None:
             """Open workspace browser for the winning agent."""

@@ -7513,6 +7513,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         # Stream evaluation with tools (with timeout protection)
         evaluation_complete = False
         tool_call_detected = False
+        accumulated_content = ""  # Buffer to detect inline JSON across chunks
 
         try:
             timeout_seconds = self.config.timeout_config.orchestrator_timeout_seconds
@@ -7539,6 +7540,61 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                             content=chunk.content,
                             source=selected_agent_id,
                         )
+
+                        # Accumulate content for JSON parsing across chunks
+                        accumulated_content += chunk.content
+
+                        # Fallback: parse inline JSON tool calls from accumulated content
+                        # Some backends output submit/restart as JSON text instead of tool_calls
+                        if not evaluation_complete and not tool_call_detected:
+                            # Try to extract and parse JSON from accumulated content
+                            import json
+                            import re
+
+                            # Find JSON objects in the content (handle nested braces)
+                            # Look for { ... "action_type" ... } allowing nested braces
+                            json_matches = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"action_type"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', accumulated_content, re.DOTALL)
+                            for json_str in json_matches:
+                                try:
+                                    data = json.loads(json_str)
+                                    action_type = data.get("action_type")
+
+                                    if action_type == "submit":
+                                        tool_call_detected = True
+                                        log_stream_chunk(
+                                            "orchestrator",
+                                            "status",
+                                            "✅ Evaluation complete - answer approved\n",
+                                        )
+                                        yield StreamChunk(
+                                            type="status",
+                                            content="✅ Evaluation complete - answer approved\n",
+                                            source="orchestrator",
+                                        )
+                                        evaluation_complete = True
+                                        break
+                                    elif action_type == "restart_orchestration":
+                                        tool_call_detected = True
+                                        restart_data = data.get("restart_data", {})
+                                        self.restart_reason = restart_data.get("reason", data.get("reason", "Answer needs improvement"))
+                                        self.restart_instructions = restart_data.get("instructions", data.get("instructions", ""))
+                                        self.restart_pending = True
+
+                                        log_stream_chunk(
+                                            "orchestrator",
+                                            "status",
+                                            "🔄 Restart requested\n",
+                                        )
+                                        yield StreamChunk(
+                                            type="status",
+                                            content="🔄 Restart requested\n",
+                                            source="orchestrator",
+                                        )
+                                        evaluation_complete = True
+                                        break
+                                except json.JSONDecodeError:
+                                    # Not valid JSON yet, keep accumulating
+                                    pass
                     elif chunk_type in [
                         "reasoning",
                         "reasoning_done",
@@ -7573,8 +7629,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                         )
                         yield reasoning_chunk
                     elif chunk_type == "tool_calls":
-                        # Post-evaluation tool call detected
-                        tool_call_detected = True
+                        # Post-evaluation tool call detected - only set flag if valid tool found
                         if hasattr(chunk, "tool_calls") and chunk.tool_calls:
                             for tool_call in chunk.tool_calls:
                                 # Use backend's tool extraction (same as regular coordination)
@@ -7582,6 +7637,10 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                                 tool_args = agent.backend.extract_tool_arguments(
                                     tool_call,
                                 )
+
+                                # Only set tool_call_detected if we got a valid tool name
+                                if tool_name:
+                                    tool_call_detected = True
 
                                 if tool_name == "submit":
                                     log_stream_chunk(

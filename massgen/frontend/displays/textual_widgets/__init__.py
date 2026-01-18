@@ -8,9 +8,14 @@ This module provides reusable Textual widgets for the production TUI interface.
 from .background_tasks_modal import BackgroundTasksModal
 from .content_sections import (
     CompletionFooter,
+    FinalPresentationBanner,
+    FinalPresentationCard,
+    FinalPresentationFooter,
+    PostEvaluationBanner,
     ReasoningSection,
     ResponseSection,
     RestartBanner,
+    SessionCompleteBanner,
     StatusBadge,
     ThinkingSection,
     TimelineSection,
@@ -51,6 +56,11 @@ __all__ = [
     "StatusBadge",
     "CompletionFooter",
     "RestartBanner",
+    "FinalPresentationBanner",
+    "FinalPresentationCard",
+    "FinalPresentationFooter",
+    "PostEvaluationBanner",
+    "SessionCompleteBanner",
     # Input widgets
     "MultiLineInput",
     # Path autocomplete

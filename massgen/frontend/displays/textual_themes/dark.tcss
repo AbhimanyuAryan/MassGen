@@ -246,17 +246,23 @@ AgentTab.active.status-error {
 }
 
 /* Winner tab styling */
-AgentTab.winner {
+AgentTab.status-winner {
     background: #3d3510;
     border: solid #dcdcaa;
     color: #dcdcaa;
     text-style: bold;
+    border-bottom: tall #dcdcaa;
 }
 
-AgentTab.winner.active {
+AgentTab.status-winner.active {
     background: #4d4520;
     border: solid #dcdcaa;
     border-bottom: tall #dcdcaa;
+}
+
+/* Dimmed tabs (non-winner during final presentation) */
+AgentTab.dimmed {
+    opacity: 0.6;
 }
 
 /* Consensus reached animation on StatusBar */
@@ -369,6 +375,11 @@ AgentPanel.status-error {
     border-left: thick #f85149;
     border-right: none;
     background: #1a0f0f;
+}
+
+/* Dimmed panel (non-winner during final presentation) */
+AgentPanel.dimmed-panel {
+    opacity: 0.6;
 }
 
 /* === Agent Panel Color Palette - Match tab colors === */
@@ -844,33 +855,67 @@ RichLog {
     margin-bottom: 1;
 }
 
-/* Final stream panel */
+/* Final stream panel - layout: fixed header, scrollable content, fixed footer */
 #final_stream_container {
     background: #2d2d25;
     border: solid #dcdcaa;
     margin: 0 1 1 1;
-    padding: 1;
+    padding: 0;
     width: 100%;
+    height: 100%;
+    layout: vertical;
 }
 
 #final_stream_container.streaming-active {
     border: double #dcdcaa;
 }
 
+/* Fixed header section */
+#final_stream_header {
+    height: auto;
+    padding: 1;
+    background: #2d2d25;
+    border-bottom: solid #dcdcaa 50%;
+}
+
 #final_stream_label {
     color: #dcdcaa;
     text-style: bold;
-    margin-bottom: 1;
+}
+
+/* Scrollable content area - takes remaining space */
+#final_stream_content {
+    height: 1fr;
+    padding: 1;
+    background: #1e1e1e;
 }
 
 #final_stream_log {
     background: #1e1e1e;
     color: #d4d4d4;
+    height: auto;
 }
 
 #final_stream_log,
 #post_eval_log {
     scrollbar-size: 2 2;
+}
+
+/* Fixed footer section */
+#final_stream_footer {
+    height: auto;
+    padding: 1;
+    background: #21262d;
+    border-top: solid #30363d;
+}
+
+#final_stream_footer.hidden {
+    display: none;
+}
+
+#final_stream_buttons {
+    height: auto;
+    margin-bottom: 1;
 }
 
 /* Modals */
@@ -2062,6 +2107,21 @@ TimelineSection .timeline-text.answer {
     background: #1f1a0d;
 }
 
+/* Final presentation content - clean, no background */
+TimelineSection .timeline-text.final-answer {
+    color: #e6e6e6;
+    padding-left: 1;
+    margin-left: 1;
+}
+
+/* Post-evaluation content - subtle blue tint */
+TimelineSection .timeline-text.post-eval {
+    color: #a8c7fa;
+    border-left: solid #58a6ff;
+    padding-left: 1;
+    margin-left: 1;
+}
+
 /* Task Plan Card - Visual todo list from Planning MCP */
 TaskPlanCard {
     width: 100%;
@@ -2150,6 +2210,53 @@ RestartBanner {
     border-top: solid #a371f7;
     border-bottom: solid #a371f7;
     color: #a371f7;
+}
+
+/* Final Presentation Banner - prominent separator with golden color */
+FinalPresentationBanner {
+    width: 100%;
+    height: auto;
+    margin: 1 0;
+    padding: 1 0;
+    text-align: center;
+    background: #1a1a10;
+    border-top: solid #d4a017;
+    border-bottom: solid #d4a017;
+    color: #ffd700;
+}
+
+/* Post-Evaluation Banner - prominent separator with blue color */
+PostEvaluationBanner {
+    width: 100%;
+    height: auto;
+    margin: 1 0;
+    padding: 1 0;
+    text-align: center;
+    background: #0d1a26;
+    border-top: solid #58a6ff;
+    border-bottom: solid #58a6ff;
+    color: #58a6ff;
+}
+
+/* Session Complete Banner - prominent separator with green color */
+SessionCompleteBanner {
+    width: 100%;
+    height: auto;
+    margin: 1 0;
+    padding: 1 0;
+    text-align: center;
+    background: #0d1f14;
+    border-top: solid #3fb950;
+    border-bottom: solid #3fb950;
+    color: #3fb950;
+}
+
+/* Final Answer Display - full height for Rich Panel content */
+#final_answer_display {
+    width: 100%;
+    height: auto;
+    margin: 1 0;
+    padding: 0;
 }
 
 /* Thinking Section - auto height, shrinks to content */
@@ -2856,11 +2963,10 @@ ProgressIndicator.hidden {
     display: none;
 }
 
-/* === Final Stream Panel Enhancements (Task 5.12) === */
+/* === Final Stream Panel Enhancements === */
 
 #final_stream_buttons {
     height: 3;
-    margin-top: 1;
     layout: horizontal;
 }
 
@@ -2872,6 +2978,9 @@ ProgressIndicator.hidden {
 /* Final stream winner styling */
 #final_stream_container.winner-complete {
     border: solid #3fb950;
+}
+
+#final_stream_container.winner-complete #final_stream_header {
     background: #0d1f14;
 }
 
@@ -2879,19 +2988,7 @@ ProgressIndicator.hidden {
     color: #3fb950;
 }
 
-/* Follow-up input container in final stream panel */
-#followup_container {
-    height: auto;
-    margin-top: 1;
-    padding: 1;
-    background: #21262d;
-    border-top: solid #30363d;
-}
-
-#followup_container.hidden {
-    display: none;
-}
-
+/* Follow-up input styling in footer */
 #followup_label {
     color: #8b949e;
     height: 1;

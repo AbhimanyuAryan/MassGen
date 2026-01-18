@@ -54,13 +54,14 @@ class AgentTab(Static):
     # Enable clicking on the widget
     can_focus = True
 
-    # Status icon mapping
+    # Status icon mapping - use actual Unicode characters for reliable rendering
     STATUS_ICONS = {
-        "waiting": "\u23f3",  # Hourglass
-        "working": "\u2699\ufe0f",  # Gear
-        "streaming": "\ud83d\udcdd",  # Memo/Writing
-        "completed": "\u2705",  # Check mark
-        "error": "\u274c",  # Cross mark
+        "waiting": "⏳",  # Hourglass
+        "working": "⚙️",  # Gear
+        "streaming": "📝",  # Memo/Writing
+        "completed": "✅",  # Check mark
+        "error": "❌",  # Cross mark
+        "winner": "🏆",  # Trophy
     }
 
     def __init__(
@@ -90,7 +91,7 @@ class AgentTab(Static):
 
     def render(self) -> str:
         """Render the tab content with agent ID and status."""
-        status_icon = self.STATUS_ICONS.get(self._status, "\ud83e\udd16")
+        status_icon = self.STATUS_ICONS.get(self._status, "🤖")
         key_hint = f"[{self.key_index}]" if self.key_index else ""
         return f" {status_icon} {self.agent_id} {key_hint} "
 
@@ -98,7 +99,7 @@ class AgentTab(Static):
         """Update the agent's status.
 
         Args:
-            status: One of "waiting", "working", "streaming", "completed", "error".
+            status: One of "waiting", "working", "streaming", "completed", "error", "winner".
         """
         # Remove old status class
         self.remove_class(
@@ -107,6 +108,7 @@ class AgentTab(Static):
             "status-streaming",
             "status-completed",
             "status-error",
+            "status-winner",
         )
         self._status = status
         self.add_class(f"status-{status}")
@@ -212,10 +214,34 @@ class AgentTabBar(Widget):
 
         Args:
             agent_id: The agent to update.
-            status: One of "waiting", "working", "streaming", "completed", "error".
+            status: One of "waiting", "working", "streaming", "completed", "error", "winner".
         """
         if agent_id in self._tabs:
             self._tabs[agent_id].update_status(status)
+
+    def set_winner(self, agent_id: str) -> None:
+        """Mark an agent as winner, dimming all others.
+
+        Args:
+            agent_id: The winning agent's ID.
+        """
+        if agent_id not in self._tabs:
+            return
+
+        for aid, tab in self._tabs.items():
+            if aid == agent_id:
+                tab.update_status("winner")
+                tab.remove_class("dimmed")
+            else:
+                tab.add_class("dimmed")
+
+    def clear_winner(self) -> None:
+        """Reset all tabs to normal state, removing winner/dimmed styling."""
+        for tab in self._tabs.values():
+            tab.remove_class("dimmed")
+            # If the tab was a winner, set it to completed
+            if tab._status == "winner":
+                tab.update_status("completed")
 
     def get_next_agent(self) -> Optional[str]:
         """Get the next agent ID after the currently active one.
