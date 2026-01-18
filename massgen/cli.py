@@ -1280,6 +1280,8 @@ def create_agents_from_config(
 ) -> Dict[str, ConfigurableAgent]:
     """Create agents from configuration.
 
+    TIMING: This function is instrumented for performance analysis.
+
     Args:
         config: Configuration dictionary
         orchestrator_config: Optional orchestrator configuration
@@ -5052,6 +5054,20 @@ async def run_textual_interactive_mode(
     display_kwargs["agent_models"] = agent_models
     display = TextualTerminalDisplay(agent_ids, **display_kwargs)
 
+    # Start background MCP registry cache warmup (non-blocking)
+    # This pre-fetches MCP server descriptions while user types their first question
+    if original_config:
+        from massgen.mcp_tools.registry_client import warmup_mcp_registry_cache
+
+        warmup_thread = threading.Thread(
+            target=warmup_mcp_registry_cache,
+            args=(original_config,),
+            daemon=True,
+            name="mcp-cache-warmup",
+        )
+        warmup_thread.start()
+        logger.info("[Textual] Started background MCP registry cache warmup")
+
     # Create question source (thread-safe queue)
     question_source = TextualThreadQueueQuestionSource()
 
@@ -5265,6 +5281,14 @@ async def run_textual_interactive_mode(
 
             # Build orchestrator config (matching Rich terminal path setup)
             orchestrator_config = AgentConfig()
+            # Get context sharing parameters (must be extracted before orchestrator creation)
+            snapshot_storage = orchestrator_cfg.get("snapshot_storage") if orchestrator_cfg else None
+            agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace") if orchestrator_cfg else None
+            # Get NLIP config (matching Rich terminal path)
+            orchestrator_enable_nlip = orchestrator_cfg.get("enable_nlip", False) if orchestrator_cfg else False
+            orchestrator_nlip_config = orchestrator_cfg.get("nlip_config", {}) if orchestrator_cfg else {}
+            if orchestrator_enable_nlip:
+                logger.info("[Textual] NLIP enabled for orchestrator")
             if orchestrator_cfg:
                 if "voting_sensitivity" in orchestrator_cfg:
                     orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
@@ -5334,13 +5358,65 @@ async def run_textual_interactive_mode(
             if timeout_config:
                 orchestrator_config.timeout_config = timeout_config
 
+            # Apply TUI mode state overrides (single-agent mode, refinement mode, etc.)
+            mode_state = display.get_mode_state()
+            if mode_state:
+                mode_overrides = mode_state.get_orchestrator_overrides()
+                if mode_overrides:
+                    logger.info(f"[Textual] Applying TUI mode overrides: {mode_overrides}")
+                    for key, value in mode_overrides.items():
+                        if hasattr(orchestrator_config, key):
+                            setattr(orchestrator_config, key, value)
+
+                # Apply plan mode coordination overrides
+                coord_overrides = mode_state.get_coordination_overrides()
+                if coord_overrides:
+                    logger.info(f"[Textual] Plan mode active - applying coordination overrides: {coord_overrides}")
+                    # Ensure coordination_config exists
+                    if orchestrator_config.coordination_config is None:
+                        from .agent_config import CoordinationConfig
+
+                        orchestrator_config.coordination_config = CoordinationConfig()
+
+                    # Apply coordination overrides
+                    for key, value in coord_overrides.items():
+                        if hasattr(orchestrator_config.coordination_config, key):
+                            setattr(orchestrator_config.coordination_config, key, value)
+
+                # In single-agent mode, filter agents to selected agent only
+                if mode_state.is_single_agent_mode() and mode_state.selected_single_agent:
+                    effective_agents = mode_state.get_effective_agents(agents)
+                    if effective_agents:
+                        logger.info(f"[Textual] Single-agent mode: using {list(effective_agents.keys())}")
+                        agents = effective_agents
+
+            # Get generated personas from session info if persist_across_turns is enabled
+            # (matching Rich terminal path setup)
+            generated_personas = None
+            if (
+                hasattr(orchestrator_config, "coordination_config")
+                and orchestrator_config.coordination_config
+                and orchestrator_config.coordination_config.persona_generator
+                and orchestrator_config.coordination_config.persona_generator.persist_across_turns
+            ):
+                generated_personas = session_info.get("generated_personas")
+                if generated_personas:
+                    logger.info("[Textual] Reusing persisted personas from previous turn")
+
             # Create orchestrator with multi-turn state
             orchestrator = Orchestrator(
                 agents=agents,
                 config=orchestrator_config,
                 session_id=sess_id,
+                snapshot_storage=snapshot_storage,
+                agent_temporary_workspace=agent_temporary_workspace,
                 previous_turns=previous_turns,
                 winning_agents_history=winning_agents_history,
+                dspy_paraphraser=kwargs.get("dspy_paraphraser"),
+                enable_rate_limit=kwargs.get("enable_rate_limit", False),
+                enable_nlip=orchestrator_enable_nlip,
+                nlip_config=orchestrator_nlip_config,
+                generated_personas=generated_personas,
             )
 
             # Create coordination UI with preserve_display and interactive_mode

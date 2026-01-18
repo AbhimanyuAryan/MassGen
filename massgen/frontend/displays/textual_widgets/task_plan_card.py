@@ -96,6 +96,13 @@ class TaskPlanCard(Static):
         color: #6e7681;
         text-style: italic;
     }
+
+    TaskPlanCard .task-reminder {
+        background: #4a3d2d;
+        color: #ffa657;
+        padding: 0 1;
+        margin-top: 1;
+    }
     """
 
     # Status indicators
@@ -133,6 +140,7 @@ class TaskPlanCard(Static):
         self._tasks = tasks or []
         self._focused_task_id = focused_task_id
         self._operation = operation
+        self._reminder: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         yield Static(self._build_content())
@@ -148,6 +156,15 @@ class TaskPlanCard(Static):
             content_widget.update(self._build_content())
         except Exception:
             pass
+
+    def set_reminder(self, content: str) -> None:
+        """Set a high priority task reminder to display at the bottom of the card.
+
+        Args:
+            content: The reminder text to display
+        """
+        self._reminder = content
+        self._refresh_content()
 
     def _get_max_visible(self) -> int:
         """Get maximum visible tasks based on terminal size."""
@@ -259,6 +276,16 @@ class TaskPlanCard(Static):
             text.append(f"  ↓ {remaining} more below (click to expand)", style="dim italic")
         elif self.expanded and total > max_visible:
             text.append("  (click to collapse)", style="dim italic")
+
+        # Render reminder at bottom if set
+        if self._reminder:
+            text.append("\n")
+            # Truncate reminder if too long
+            reminder_text = self._reminder.replace("\n", " ").strip()
+            max_len = self._get_max_description_length() + 10  # Allow slightly more for reminder
+            if len(reminder_text) > max_len:
+                reminder_text = reminder_text[: max_len - 3] + "..."
+            text.append(f"💡 {reminder_text}", style="bold #ffa657 on #4a3d2d")
 
         return text
 

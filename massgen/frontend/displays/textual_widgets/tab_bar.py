@@ -84,6 +84,7 @@ class AgentTab(Static):
         self.agent_id = agent_id
         self.key_index = key_index
         self._status = "waiting"
+        self._disabled = False  # For single-agent mode
 
     def compose(self) -> ComposeResult:
         """No child widgets needed - we use renderable."""
@@ -127,9 +128,30 @@ class AgentTab(Static):
             self.remove_class("active")
             self.add_class("inactive")
 
+    def set_disabled(self, disabled: bool) -> None:
+        """Set whether this tab is disabled (greyed out in single-agent mode).
+
+        Args:
+            disabled: True to disable (grey out), False to enable.
+        """
+        self._disabled = disabled
+        if disabled:
+            self.add_class("disabled")
+        else:
+            self.remove_class("disabled")
+        self.refresh()
+
+    def is_disabled(self) -> bool:
+        """Check if this tab is disabled."""
+        return self._disabled
+
     async def on_click(self) -> None:
-        """Handle click to select this tab."""
-        _tab_log(f"AgentTab.on_click: {self.agent_id}")
+        """Handle click to select this tab.
+
+        In single-agent mode, clicking a disabled tab selects it as the new active agent.
+        """
+        _tab_log(f"AgentTab.on_click: {self.agent_id} (disabled={self._disabled})")
+        # Always post the message - let parent handle single-agent selection logic
         self.post_message(AgentTabChanged(self.agent_id))
 
 
@@ -286,6 +308,48 @@ class AgentTabBar(Widget):
         if 0 <= zero_index < len(self._agent_ids):
             return self._agent_ids[zero_index]
         return None
+
+    def set_single_agent_mode(self, enabled: bool, selected_agent: Optional[str] = None) -> None:
+        """Enable or disable single-agent mode with visual feedback.
+
+        In single-agent mode, only the selected agent tab is enabled (not greyed out).
+        All other tabs are disabled (greyed out) but can still be clicked to
+        switch the selected agent.
+
+        Args:
+            enabled: True to enable single-agent mode, False for multi-agent mode.
+            selected_agent: The agent ID to keep enabled (required when enabled=True).
+        """
+        _tab_log(f"AgentTabBar.set_single_agent_mode: enabled={enabled}, selected={selected_agent}")
+
+        if enabled:
+            if not selected_agent or selected_agent not in self._tabs:
+                # Default to first agent if none specified
+                selected_agent = self._agent_ids[0] if self._agent_ids else None
+
+            for agent_id, tab in self._tabs.items():
+                if agent_id == selected_agent:
+                    tab.set_disabled(False)
+                    tab.set_active(True)
+                else:
+                    tab.set_disabled(True)
+                    tab.set_active(False)
+        else:
+            # Multi-agent mode: enable all tabs, keep current selection
+            for tab in self._tabs.values():
+                tab.set_disabled(False)
+
+    def is_single_agent_mode(self) -> bool:
+        """Check if any tabs are disabled (single-agent mode indicator)."""
+        return any(tab.is_disabled() for tab in self._tabs.values())
+
+    def get_enabled_agents(self) -> List[str]:
+        """Get list of enabled (non-disabled) agent IDs.
+
+        Returns:
+            List of agent IDs that are not disabled.
+        """
+        return [agent_id for agent_id, tab in self._tabs.items() if not tab.is_disabled()]
 
     def on_agent_tab_changed(self, event: AgentTabChanged) -> None:
         """Handle tab click - let it bubble to parent.

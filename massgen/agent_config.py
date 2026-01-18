@@ -242,6 +242,14 @@ class AgentConfig:
     # Debug/test mode - skip coordination rounds and go straight to final presentation
     skip_coordination_rounds: bool = False
 
+    # Skip voting enforcement (used by TUI single-agent mode with refinement OFF)
+    # When True, agent doesn't need to vote and can go straight to new_answer → final answer
+    skip_voting: bool = False
+
+    # Skip final presentation phase (used by TUI when refinement is OFF)
+    # When True, uses the existing answer directly without an additional LLM call
+    skip_final_presentation: bool = False
+
     # Debug mode for restart feature - override final answer on attempt 1 only
     debug_final_answer: Optional[str] = None
 

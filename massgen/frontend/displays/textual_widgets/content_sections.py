@@ -729,6 +729,22 @@ class TimelineSection(Vertical):
             pass
         self._update_scroll_indicator()
 
+    def scroll_to_widget(self, widget_id: str) -> None:
+        """Scroll to bring a specific widget to the top of the view.
+
+        Args:
+            widget_id: The ID of the widget to scroll to (without #)
+        """
+        try:
+            container = self.query_one("#timeline_container", TimelineScrollContainer)
+            # Find the widget by ID
+            target = container.query_one(f"#{widget_id}")
+            if target:
+                # Scroll so the widget is at the top
+                target.scroll_visible(top=True, animate=False)
+        except Exception:
+            pass
+
     @property
     def in_scroll_mode(self) -> bool:
         """Whether scroll mode is active."""
@@ -1557,12 +1573,26 @@ class FinalPresentationFooter(Vertical):
         """Open workspace browser for the winning agent."""
         try:
             app = self.app
+            # Debug: check what methods are available
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.info(f"[FinalPresentationFooter] app type: {type(app)}")
+            logger.info(f"[FinalPresentationFooter] has method: {hasattr(app, '_show_workspace_browser_for_agent')}")
+
             if hasattr(app, "_show_workspace_browser_for_agent"):
                 app._show_workspace_browser_for_agent(self.agent_id)
             else:
-                self.app.notify("Workspace browser not available", severity="warning")
+                # Fallback: try using action_open_workspace_browser
+                if hasattr(app, "action_open_workspace_browser"):
+                    app.action_open_workspace_browser()
+                else:
+                    self.app.notify("Workspace browser not available", severity="warning")
         except Exception as e:
+            import traceback
+
             self.app.notify(f"Failed to open workspace: {e}", severity="error")
+            logging.getLogger(__name__).error(f"Workspace error: {traceback.format_exc()}")
 
 
 class RestartBanner(Static):

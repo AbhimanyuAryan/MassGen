@@ -55,7 +55,10 @@ try:
         FinalPresentationBanner,
         FinalPresentationCard,
         FinalPresentationFooter,
+        ModeBar,
+        ModeChanged,
         MultiLineInput,
+        OverrideRequested,
         PathSuggestionDropdown,
         PostEvaluationBanner,
         SessionCompleteBanner,
@@ -66,6 +69,7 @@ try:
         ToolDetailModal,
         ToolSection,
     )
+    from .tui_modes import TuiModeState
 
     TEXTUAL_AVAILABLE = True
 except ImportError:
@@ -1276,6 +1280,23 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app:
             self._call_app_method("notify_vote", voter, voted_for, reason)
 
+    def highlight_winner_quick(
+        self,
+        winner_id: str,
+        vote_results: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Highlight the winning agent in no-refinement mode (skip_final_presentation).
+
+        This marks the winner's tab with a trophy and adds a banner indicating
+        the existing answer was used, without streaming a new final presentation.
+
+        Args:
+            winner_id: The winning agent's ID
+            vote_results: Vote results dict with vote_counts, winner, is_tie, etc.
+        """
+        if self._app:
+            self._call_app_method("highlight_winner_quick", winner_id, vote_results or {})
+
     def send_new_answer(
         self,
         agent_id: str,
@@ -1513,15 +1534,16 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app is None:
             self.initialize(initial_question, log_filename)
 
-    def begin_turn(self, turn: int, question: str) -> None:
+    def begin_turn(self, turn: int, question: str, previous_answer: Optional[str] = None) -> None:
         """Begin a new turn within an existing session.
 
-        Updates the header and optionally resets buffers/panels.
+        Updates the header and resets the UI for the new turn.
         Does NOT recreate the app.
 
         Args:
             turn: The turn number (1-indexed).
             question: The user's question for this turn.
+            previous_answer: Optional summary of the previous turn's answer.
         """
         self.current_turn = turn
         self.question = question
@@ -1534,9 +1556,9 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._final_stream_buffer = ""
         self._final_presentation_agent = None
 
-        # Reset winner/dimming state from previous turn
+        # Fully reset UI for new turn (clears timelines, adds turn separator)
         if self._app:
-            self._call_app_method("clear_winner_state")
+            self._call_app_method("prepare_for_new_turn", turn, previous_answer)
             self._call_app_method("update_turn_header", turn, question)
 
         for agent_id in self.agent_ids:
@@ -1942,6 +1964,29 @@ class TextualTerminalDisplay(TerminalDisplay):
                 self.final_presentation_latest.symlink_to(targets[-1].name)
             except (OSError, NotImplementedError) as exc:
                 logger.warning(f"Failed to create final presentation symlink at {self.final_presentation_latest}: {exc}")
+
+    def get_mode_state(self) -> Optional["TuiModeState"]:
+        """Get the current TUI mode state for orchestrator configuration.
+
+        Returns:
+            TuiModeState instance if the TextualApp is running, None otherwise.
+        """
+        if self._app and hasattr(self._app, "_mode_state"):
+            return self._app._mode_state
+        return None
+
+    def set_override_available(self, available: bool) -> None:
+        """Set whether human override is available.
+
+        Called by orchestrator after voting completes, before final presentation.
+
+        Args:
+            available: True if override is available, False otherwise.
+        """
+        if self._app and hasattr(self._app, "_mode_state"):
+            self._app._mode_state.override_available = available
+            if hasattr(self._app, "_mode_bar") and self._app._mode_bar:
+                self._app._mode_bar.override_available = available
 
 
 # Textual App Implementation
@@ -2511,7 +2556,8 @@ if TEXTUAL_AVAILABLE:
         BINDINGS = [
             # Agent navigation
             Binding("tab", "next_agent", "Next Agent"),
-            Binding("shift+tab", "prev_agent", "Prev Agent"),
+            Binding("left", "prev_agent", "Prev Agent", show=False),
+            Binding("right", "next_agent", "Next Agent", show=False),
             # Quit - Ctrl+D quits directly
             Binding("ctrl+d", "quit", "Quit", show=False),
             # Ctrl+C - context-aware: clear input / cancel turn, double to quit
@@ -2520,6 +2566,9 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+p", "toggle_cwd", "Toggle CWD", priority=True, show=False),
             # Help - Ctrl+G for guide/help
             Binding("ctrl+g", "show_help", "Help", priority=True, show=False),
+            # Mode toggles
+            Binding("shift+tab", "toggle_plan_mode", "Plan Mode", priority=True),
+            Binding("ctrl+o", "trigger_override", "Override", priority=True, show=False),
         ]
 
         def __init__(
@@ -2582,6 +2631,10 @@ if TEXTUAL_AVAILABLE:
             # Timer for updating execution status bar with spinner animation
             self._execution_status_timer = None
 
+            # TUI Mode State (plan mode, agent mode, refinement mode, override)
+            self._mode_state = TuiModeState()
+            self._mode_bar: Optional[ModeBar] = None
+
             if not self._keyboard_interactive_mode:
                 self.BINDINGS = []
 
@@ -2622,6 +2675,10 @@ if TEXTUAL_AVAILABLE:
             # === BOTTOM DOCKED WIDGETS (yield order: last yielded = very bottom) ===
             # Input area container - dock: bottom
             with Container(id="input_area"):
+                # Mode bar - toggles for plan/agent/refinement modes (above input header)
+                self._mode_bar = ModeBar(id="mode_bar")
+                yield self._mode_bar
+
                 # Input header with hint and vim mode indicator (above input)
                 with Horizontal(id="input_header"):
                     # Hint for submission (updated dynamically for vim mode)
@@ -3498,11 +3555,15 @@ Type your question and press Enter to ask the agents.
             # Track the winner
             self._winner_agent_id = selected_agent
 
-            # Mark the winning answer(s) in tracked answers
+            # Mark the winning answer(s) in tracked answers and extract workspace_path
+            winner_workspace_path = None
             for ans in self._answers:
                 if ans.get("agent_id") == selected_agent:
                     ans["is_winner"] = True
                     ans["is_final"] = True
+                    # Get workspace_path from the most recent winning answer
+                    if ans.get("workspace_path"):
+                        winner_workspace_path = ans.get("workspace_path")
 
             # Add to conversation history
             if self._current_question and answer:
@@ -3515,6 +3576,7 @@ Type your question and press Enter to ask the agents.
                         "model": model_name,
                         "turn": len(self._conversation_history) + 1,
                         "timestamp": time.time(),
+                        "workspace_path": winner_workspace_path,
                     },
                 )
 
@@ -3750,8 +3812,21 @@ Type your question and press Enter to ask the agents.
             2. Marks the winner tab with trophy styling
             3. Adds a "🏆 FINAL PRESENTATION" header separator to the timeline (once)
             """
-            # Prevent duplicate headers - check if we've already started
+            # Prevent duplicate headers - check if we've already started or if winner was quick-highlighted
             if hasattr(self, "_final_header_added") and self._final_header_added:
+                return
+            if hasattr(self, "_winner_quick_highlighted") and self._winner_quick_highlighted:
+                # Winner already shown via highlight_winner_quick, skip adding another banner
+                # But still set up for streaming
+                self._final_presentation_agent = agent_id
+                self._final_header_added = True  # Prevent future duplicates
+                if agent_id in self.agent_widgets:
+                    panel = self.agent_widgets[agent_id]
+                    try:
+                        timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+                        self._final_stream_timeline = timeline
+                    except Exception:
+                        pass
                 return
 
             # Store the winner agent for routing chunks
@@ -3782,21 +3857,42 @@ Type your question and press Enter to ask the agents.
                     timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                     self._final_stream_timeline = timeline
 
-                    # Build vote summary
+                    # Get coordination_tracker for answer label lookup
+                    tracker = None
+                    if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                        tracker = getattr(self.coordination_display.orchestrator, "coordination_tracker", None)
+
+                    # Build vote summary with answer labels (A1.1 format)
                     vote_counts = vote_results.get("vote_counts", {})
                     winner = vote_results.get("winner", agent_id)
                     is_tie = vote_results.get("is_tie", False)
 
+                    def get_answer_label(aid):
+                        """Convert agent ID to answer label (e.g., 'A1.1')."""
+                        if tracker:
+                            label = tracker.get_latest_answer_label(aid)
+                            if label:
+                                return label.replace("agent", "A")
+                            # Fallback to agent number
+                            num = tracker._get_agent_number(aid)
+                            return f"A{num}" if num else aid
+                        return aid
+
                     vote_str = ""
                     if vote_counts:
-                        counts = ", ".join(f"{aid}:{cnt}" for aid, cnt in vote_counts.items())
+                        # Format: "A1.1 (1), A2.1 (2)" - parentheses make vote counts clearer
+                        counts = ", ".join(f"{get_answer_label(aid)} ({cnt})" for aid, cnt in vote_counts.items())
                         tie_note = " (tie-breaker)" if is_tie else ""
-                        vote_str = f" | Votes: {counts} | Winner: {winner}{tie_note}"
+                        winner_label = get_answer_label(winner)
+                        vote_str = f" | {counts} | Winner: {winner_label}{tie_note}"
 
                     # Add banner (same style as RestartBanner but different color)
                     banner_text = f"🏆 FINAL PRESENTATION{vote_str}"
                     banner = FinalPresentationBanner(label=banner_text, id="final_presentation_banner")
                     timeline.add_widget(banner)
+
+                    # Scroll banner to top to emphasize it
+                    timeline.scroll_to_widget("final_presentation_banner")
                 except Exception as e:
                     logger.debug(f"Failed to add final presentation banner: {e}")
 
@@ -3827,6 +3923,84 @@ Type your question and press Enter to ask the agents.
             if self.post_eval_panel and not self.coordination_display._post_evaluation_lines:
                 self.post_eval_panel.hide()
 
+        def highlight_winner_quick(self, winner_id: str, vote_results: Dict[str, Any]) -> None:
+            """Highlight the winner in no-refinement mode (skip_final_presentation).
+
+            This is called when refinement is OFF, so we just mark the winner
+            without streaming a new final presentation. The existing answer
+            was already shown via new_answer tool cards.
+
+            Args:
+                winner_id: The winning agent's ID
+                vote_results: Vote results dict with vote_counts, winner, is_tie, etc.
+            """
+            # Prevent duplicate highlighting or if final presentation already started
+            if hasattr(self, "_winner_quick_highlighted") and self._winner_quick_highlighted:
+                return
+            if hasattr(self, "_final_header_added") and self._final_header_added:
+                return  # Final presentation banner already added
+            self._winner_quick_highlighted = True
+
+            # 1. Auto-switch to winner's tab and mark with trophy
+            if self._tab_bar:
+                self._tab_bar.set_active(winner_id)
+                self._tab_bar.set_winner(winner_id)
+
+            # 2. Show the winner's panel (hide others)
+            if winner_id in self.agent_widgets:
+                if self._active_agent_id and self._active_agent_id in self.agent_widgets:
+                    self.agent_widgets[self._active_agent_id].add_class("hidden")
+                self.agent_widgets[winner_id].remove_class("hidden")
+                self._active_agent_id = winner_id
+
+            # 3. Add a "WINNER SELECTED" banner to the winner's timeline
+            if winner_id in self.agent_widgets:
+                panel = self.agent_widgets[winner_id]
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                    # Get coordination_tracker for answer label lookup
+                    tracker = None
+                    if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                        tracker = getattr(self.coordination_display.orchestrator, "coordination_tracker", None)
+
+                    # Build vote summary with answer labels (A1.1 format)
+                    vote_counts = vote_results.get("vote_counts", {})
+                    winner = vote_results.get("winner", winner_id)
+                    is_tie = vote_results.get("is_tie", False)
+
+                    def get_answer_label(aid):
+                        """Convert agent ID to answer label (e.g., 'A1.1')."""
+                        if tracker:
+                            label = tracker.get_latest_answer_label(aid)
+                            if label:
+                                return label.replace("agent", "A")
+                            # Fallback to agent number
+                            num = tracker._get_agent_number(aid)
+                            return f"A{num}" if num else aid
+                        return aid
+
+                    vote_str = ""
+                    if vote_counts:
+                        # Format: "A1.1 (1), A2.1 (2)" - parentheses make vote counts clearer
+                        counts = ", ".join(f"{get_answer_label(aid)} ({cnt})" for aid, cnt in vote_counts.items())
+                        tie_note = " (tie-breaker)" if is_tie else ""
+                        winner_label = get_answer_label(winner)
+                        vote_str = f" | {counts} | Winner: {winner_label}{tie_note}"
+
+                    # Add banner indicating winner was selected using existing answer
+                    banner_text = f"🏆 WINNER SELECTED{vote_str}"
+                    banner = FinalPresentationBanner(label=banner_text, id="winner_selected_banner")
+                    timeline.add_widget(banner)
+
+                    # Scroll banner to top to emphasize it
+                    timeline.scroll_to_widget("winner_selected_banner")
+                except Exception as e:
+                    logger.debug(f"Failed to add winner selected banner: {e}")
+
+            # 4. Show toast notification
+            self.notify(f"🏆 [bold]{winner_id}[/] selected as winner!", timeout=4)
+
         def clear_winner_state(self):
             """Reset winner highlighting and panel dimming for a new turn."""
             # Clear winner status from tab bar
@@ -3841,6 +4015,67 @@ Type your question and press Enter to ask the agents.
             self._final_header_added = False
             self._post_eval_header_added = False
             self._post_eval_footer_added = False
+            self._final_stream_content = ""
+            self._final_stream_timeline = None
+            self._final_presentation_agent = None
+            self._winner_quick_highlighted = False
+
+        def prepare_for_new_turn(self, turn: int, previous_answer: Optional[str] = None):
+            """Fully reset the UI for a new turn while preserving conversation context.
+
+            Args:
+                turn: The new turn number (1-indexed)
+                previous_answer: Optional summary of the previous turn's answer
+            """
+            # Clear winner state and flags
+            self.clear_winner_state()
+
+            # Clear timeline content from all agent panels
+            for agent_id, panel in self.agent_widgets.items():
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+                    # Clear the timeline content
+                    timeline.clear()
+
+                    # Add a turn separator banner if this is turn 2+
+                    if turn > 1:
+                        from massgen.frontend.displays.textual_widgets.content_sections import (
+                            RestartBanner,
+                        )
+
+                        # Create a turn separator that shows context from previous turn
+                        separator_label = f"══════ Turn {turn} ══════"
+                        turn_banner = RestartBanner(
+                            label=separator_label,
+                            id=f"turn_{turn}_separator",
+                        )
+                        timeline.add_widget(turn_banner)
+
+                        # If we have a previous answer summary, show it collapsed
+                        if previous_answer:
+                            from textual.widgets import Static
+
+                            summary = previous_answer[:200] + "..." if len(previous_answer) > 200 else previous_answer
+                            context_widget = Static(
+                                f"[dim]Previous: {summary}[/]",
+                                id=f"turn_{turn}_context",
+                                markup=True,
+                            )
+                            timeline.add_widget(context_widget)
+
+                except Exception as e:
+                    logger.debug(f"Failed to clear timeline for {agent_id}: {e}")
+
+            # Reset any modal state
+            # (modals should auto-dismiss but just in case)
+
+            # Scroll to top of timelines
+            for panel in self.agent_widgets.values():
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+                    timeline.scroll_home()
+                except Exception:
+                    pass
 
         # =====================================================================
         # Multi-turn Lifecycle Methods
@@ -3868,7 +4103,7 @@ Type your question and press Enter to ask the agents.
                         widget.content_log.write(separator)
 
         def set_input_enabled(self, enabled: bool):
-            """Enable or disable the input widget.
+            """Enable or disable the input widget and mode controls.
 
             Args:
                 enabled: True to enable input, False to disable.
@@ -3877,6 +4112,16 @@ Type your question and press Enter to ask the agents.
                 self.question_input.disabled = not enabled
                 if enabled:
                     self.question_input.focus()
+
+            # Lock/unlock mode controls during execution
+            if enabled:
+                self._mode_state.unlock()
+            else:
+                self._mode_state.lock()
+
+            # Update mode bar enabled state
+            if self._mode_bar:
+                self._mode_bar.set_enabled(enabled)
 
         def show_restart_banner(
             self,
@@ -4029,8 +4274,161 @@ Type your question and press Enter to ask the agents.
         def on_agent_tab_changed(self, event: AgentTabChanged) -> None:
             """Handle tab click from AgentTabBar."""
             tui_log(f"on_agent_tab_changed: {event.agent_id}")
+
+            # In single-agent mode, clicking a different tab changes the selected agent
+            if self._mode_state.is_single_agent_mode():
+                # Block agent switching during execution
+                if self._mode_state.is_locked():
+                    tui_log("  Agent switch blocked - execution in progress")
+                    self.notify("Cannot switch agents during execution", severity="warning", timeout=2)
+                    event.stop()
+                    return
+
+                tui_log(f"  Single-agent mode: selecting {event.agent_id}")
+                self._mode_state.selected_single_agent = event.agent_id
+                if self._tab_bar:
+                    self._tab_bar.set_single_agent_mode(True, event.agent_id)
+                # Update agent panels with "in use" state
+                self._update_agent_panels_in_use_state(event.agent_id)
+                self.notify(f"Single agent: {event.agent_id}", severity="information", timeout=2)
+
             self._switch_to_agent(event.agent_id)
             event.stop()
+
+        # ============================================================
+        # Mode Change Handlers
+        # ============================================================
+
+        def on_mode_changed(self, event: ModeChanged) -> None:
+            """Handle mode toggle changes from ModeBar."""
+            tui_log(f"on_mode_changed: {event.mode_type}={event.value}")
+
+            if event.mode_type == "plan":
+                self._handle_plan_mode_change(event.value)
+            elif event.mode_type == "agent":
+                self._handle_agent_mode_change(event.value)
+            elif event.mode_type == "refinement":
+                self._handle_refinement_mode_change(event.value == "on")
+
+            event.stop()
+
+        def on_override_requested(self, event: OverrideRequested) -> None:
+            """Handle override button press from ModeBar."""
+            tui_log("on_override_requested")
+            self.action_trigger_override()
+            event.stop()
+
+        def _handle_plan_mode_change(self, mode: str) -> None:
+            """Handle plan mode toggle.
+
+            Args:
+                mode: "normal", "plan", or "execute".
+            """
+            tui_log(f"_handle_plan_mode_change: {mode}")
+            self._mode_state.plan_mode = mode
+
+            if mode == "plan":
+                self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
+            elif mode == "normal":
+                self._mode_state.reset_plan_state()
+                self.notify("Plan Mode: OFF", severity="information", timeout=2)
+            # "execute" mode is set programmatically, not via toggle
+
+        def _handle_agent_mode_change(self, mode: str) -> None:
+            """Handle agent mode toggle.
+
+            Args:
+                mode: "multi" or "single".
+            """
+            tui_log(f"_handle_agent_mode_change: {mode}")
+            self._mode_state.agent_mode = mode
+
+            if mode == "single":
+                # Select the currently active agent as the single agent
+                selected = self._active_agent_id or (self.coordination_display.agent_ids[0] if self.coordination_display.agent_ids else None)
+                self._mode_state.selected_single_agent = selected
+                if self._tab_bar and selected:
+                    self._tab_bar.set_single_agent_mode(True, selected)
+                # Update agent panels with "in use" state
+                self._update_agent_panels_in_use_state(selected)
+                self.notify(f"Single-Agent Mode: {selected}", severity="information", timeout=3)
+            else:
+                # Multi-agent mode
+                self._mode_state.selected_single_agent = None
+                if self._tab_bar:
+                    self._tab_bar.set_single_agent_mode(False)
+                # All panels are in use in multi-agent mode
+                self._update_agent_panels_in_use_state(None)
+                self.notify("Multi-Agent Mode", severity="information", timeout=2)
+
+        def _update_agent_panels_in_use_state(self, selected_agent: Optional[str]) -> None:
+            """Update the 'in use' state for all agent panels.
+
+            Args:
+                selected_agent: The selected agent ID in single-agent mode, or None for multi-agent mode.
+            """
+            if not hasattr(self, "agent_widgets"):
+                return
+
+            for agent_id, panel in self.agent_widgets.items():
+                if hasattr(panel, "set_in_use"):
+                    if selected_agent is None:
+                        # Multi-agent mode: all panels in use
+                        panel.set_in_use(True)
+                    else:
+                        # Single-agent mode: only selected panel in use
+                        panel.set_in_use(agent_id == selected_agent)
+
+        def _handle_refinement_mode_change(self, enabled: bool) -> None:
+            """Handle refinement mode toggle.
+
+            Args:
+                enabled: True for refinement on, False for off.
+            """
+            tui_log(f"_handle_refinement_mode_change: {enabled}")
+            self._mode_state.refinement_enabled = enabled
+
+            if enabled:
+                self.notify("Refinement: ON (normal voting)", severity="information", timeout=2)
+            else:
+                if self._mode_state.agent_mode == "single":
+                    self.notify("Refinement: OFF (direct answer, no voting)", severity="warning", timeout=3)
+                else:
+                    self.notify("Refinement: OFF (vote after first answer)", severity="warning", timeout=3)
+
+        @keyboard_action
+        def action_toggle_plan_mode(self) -> None:
+            """Toggle plan mode on/off (F5 shortcut)."""
+            tui_log("action_toggle_plan_mode")
+
+            if self._mode_state.plan_mode == "normal":
+                self._mode_state.plan_mode = "plan"
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode("plan")
+                self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
+            elif self._mode_state.plan_mode == "plan":
+                self._mode_state.plan_mode = "normal"
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode("normal")
+                self.notify("Plan Mode: OFF", severity="information", timeout=2)
+            # In execute mode, F5 does nothing
+
+        @keyboard_action
+        def action_trigger_override(self) -> None:
+            """Trigger human override of final answer selection (Ctrl+O shortcut)."""
+            tui_log("action_trigger_override")
+
+            if not self._mode_state.override_available:
+                self.notify("Override not available (voting not complete)", severity="warning", timeout=2)
+                return
+
+            if not self._answers:
+                self.notify("No answers to override", severity="warning", timeout=2)
+                return
+
+            # Show the answer browser modal for override selection
+            # TODO: Create dedicated OverrideModal or enhance AnswerBrowserModal
+            self.action_open_answer_browser()
 
         def on_tool_call_card_tool_card_clicked(self, event: ToolCallCard.ToolCardClicked) -> None:
             """Handle tool card click - show detail modal."""
@@ -4228,10 +4626,17 @@ Type your question and press Enter to ask the agents.
         @keyboard_action
         def action_open_workspace_browser(self):
             """Open workspace browser modal to view answer snapshots."""
+            from pathlib import Path
+
             # Get current workspace paths for ALL agents
             agent_workspace_paths: Dict[str, str] = {}
+            agent_final_paths: Dict[str, str] = {}
             orchestrator = getattr(self.coordination_display, "orchestrator", None)
+
+            logger.info(f"[WorkspaceBrowser] orchestrator: {orchestrator is not None}")
+
             if orchestrator:
+                # Get current workspaces
                 for agent_id, agent in getattr(orchestrator, "agents", {}).items():
                     fm = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
                     if fm:
@@ -4239,15 +4644,56 @@ Type your question and press Enter to ask the agents.
                         if workspace:
                             agent_workspace_paths[agent_id] = str(workspace)
 
-            # Allow opening even without answers if we have current workspace
-            if not self._answers and not agent_workspace_paths:
+                # Scan for final workspaces in log directory
+                log_dir = getattr(orchestrator, "log_session_dir", None)
+                logger.info(f"[WorkspaceBrowser] log_dir: {log_dir}")
+
+                if log_dir:
+                    log_path = Path(log_dir)
+
+                    def scan_for_final(base_dir: Path) -> Dict[str, str]:
+                        found = {}
+                        final_dir = base_dir / "final"
+                        logger.info(f"[WorkspaceBrowser] Checking final_dir: {final_dir}, exists: {final_dir.exists()}")
+                        if final_dir.exists() and final_dir.is_dir():
+                            for agent_dir in final_dir.iterdir():
+                                logger.info(f"[WorkspaceBrowser] Found agent_dir: {agent_dir.name}")
+                                if agent_dir.is_dir() and agent_dir.name.startswith("agent_"):
+                                    ws_path = agent_dir / "workspace"
+                                    logger.info(f"[WorkspaceBrowser] ws_path: {ws_path}, exists: {ws_path.exists()}")
+                                    if ws_path.exists():
+                                        found[agent_dir.name] = str(ws_path)
+                        return found
+
+                    # Try direct final/ directory
+                    agent_final_paths = scan_for_final(log_path)
+                    logger.info(f"[WorkspaceBrowser] Direct scan result: {agent_final_paths}")
+
+                    # If not found, try turn_*/attempt_* subdirectories
+                    if not agent_final_paths:
+                        for turn_dir in sorted(log_path.glob("turn_*"), reverse=True):
+                            for attempt_dir in sorted(turn_dir.glob("attempt_*"), reverse=True):
+                                logger.info(f"[WorkspaceBrowser] Checking attempt_dir: {attempt_dir}")
+                                agent_final_paths = scan_for_final(attempt_dir)
+                                if agent_final_paths:
+                                    break
+                            if agent_final_paths:
+                                break
+
+            logger.info(f"[WorkspaceBrowser] Final agent_final_paths: {agent_final_paths}")
+            logger.info(f"[WorkspaceBrowser] agent_workspace_paths: {agent_workspace_paths}")
+
+            # Allow opening even without answers if we have current or final workspace
+            if not self._answers and not agent_workspace_paths and not agent_final_paths:
                 self.notify("No answers yet - workspaces available after agents submit", severity="warning", timeout=3)
                 return
+
             self._show_modal_async(
                 WorkspaceBrowserModal(
                     answers=self._answers,
                     agent_ids=self.coordination_display.agent_ids,
                     agent_workspace_paths=agent_workspace_paths,
+                    agent_final_paths=agent_final_paths,
                 ),
             )
 
@@ -4471,6 +4917,14 @@ Type your question and press Enter to ask the agents.
             voter_model = self.coordination_display.agent_models.get(voter, "")
             voted_for_model = self.coordination_display.agent_models.get(voted_for, "")
 
+            # Get voted-for answer label from coordination tracker (for swimlane display)
+            voted_for_label = None
+            tracker = None
+            if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                tracker = getattr(self.coordination_display.orchestrator, "coordination_tracker", None)
+            if tracker:
+                voted_for_label = tracker.get_voted_for_label(voter, voted_for)
+
             # Track the vote for browser
             vote_count = len(self._votes) + 1
             self._votes.append(
@@ -4479,6 +4933,7 @@ Type your question and press Enter to ask the agents.
                     "voter_model": voter_model,
                     "voted_for": voted_for,
                     "voted_for_model": voted_for_model,
+                    "voted_for_label": voted_for_label,  # Answer label like "1.2" for swimlane display
                     "reason": reason,
                     "timestamp": time.time(),
                 },
@@ -4495,22 +4950,22 @@ Type your question and press Enter to ask the agents.
                 expected_votes = agent_count * (agent_count - 1) if agent_count > 1 else 0
                 self._status_bar.update_progress(agent_count, answer_count, vote_count, expected_votes)
 
-                # Enhanced toast with model info
+                # Enhanced toast with model info - explicitly say "voted for"
                 voter_display = f"{voter}" + (f" ({voter_model})" if voter_model else "")
                 target_display = f"{voted_for}" + (f" ({voted_for_model})" if voted_for_model else "")
 
                 if standings:
                     self.notify(
-                        f"🗳️ [bold]{voter_display}[/] → [bold cyan]{target_display}[/]\n📊 {standings}",
+                        f"🗳️ [bold]{voter_display}[/] voted for [bold cyan]{target_display}[/]\n📊 {standings}",
                         timeout=4,
                     )
                 else:
                     self.notify(
-                        f"🗳️ [bold]{voter_display}[/] → [bold cyan]{target_display}[/]",
+                        f"🗳️ [bold]{voter_display}[/] voted for [bold cyan]{target_display}[/]",
                         timeout=3,
                     )
             else:
-                self.notify(f"🗳️ {voter} → {voted_for}", timeout=3)
+                self.notify(f"🗳️ {voter} voted for {voted_for}", timeout=3)
 
             # Add vote tool card to the voter's timeline
             if voter in self.agent_widgets:
@@ -4523,10 +4978,11 @@ Type your question and press Enter to ask the agents.
                     reason_preview = reason_preview.replace("\n", " ")
 
                     now = datetime.now()
+                    tool_id = f"vote_{voter}_{vote_count}"
                     tool_data = ToolDisplayData(
-                        tool_id=f"vote_{voter}_{vote_count}",
-                        tool_name="coordination/vote",
-                        display_name="Coordination/Vote",
+                        tool_id=tool_id,
+                        tool_name="workspace/vote",
+                        display_name="Workspace/Vote",
                         tool_type="workspace",
                         category="workspace",
                         icon="🗳️",
@@ -4541,8 +4997,32 @@ Type your question and press Enter to ask the agents.
                         elapsed_seconds=0.0,
                     )
 
-                    # Add tool card to timeline
+                    # Add tool card to timeline and mark as success immediately
                     timeline.add_tool(tool_data)
+                    tool_data.status = "success"
+                    timeline.update_tool(tool_id, tool_data)
+
+                    # Add "VOTED" separator banner with answer labels
+                    # Get coordination_tracker to resolve answer labels
+                    tracker = None
+                    if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                        tracker = getattr(self.coordination_display.orchestrator, "coordination_tracker", None)
+
+                    if tracker:
+                        # Get voted-for answer label from voter's context
+                        target_label = tracker.get_voted_for_label(voter, voted_for)
+
+                        if target_label:
+                            # Convert from "agent1.1" format to "A1.1" format
+                            target_short = target_label.replace("agent", "A")
+                        else:
+                            # Fallback to agent number if label not available
+                            target_num = tracker._get_agent_number(voted_for)
+                            target_short = f"A{target_num}" if target_num else voted_for
+
+                        # Simple format: just show what was voted for
+                        sep_label = f"🗳️ VOTED → {target_short}"
+                        timeline.add_separator(sep_label)
                 except Exception:
                     pass  # Silently ignore if panel not found
 
@@ -5117,6 +5597,7 @@ Type your question and press Enter to ask the agents.
                 ConversationHistoryModal(
                     self._conversation_history,
                     self._current_question,
+                    self.coordination_display.agent_ids,
                 ),
             )
 
@@ -5300,6 +5781,8 @@ Type your question and press Enter to ask the agents.
             self.current_line_label = Label("", classes="streaming_label")
             self._header_dom_id = f"header_{self._dom_safe_id}"
             self._loading_id = f"loading_{self._dom_safe_id}"
+            self._not_in_use_id = f"not_in_use_{self._dom_safe_id}"
+            self._is_in_use = True  # Track if panel is active in single-agent mode
 
             # New section-based content handlers
             self._tool_handler = ToolContentHandler()
@@ -5374,6 +5857,11 @@ Type your question and press Enter to ask the agents.
                         id=f"progress_{self._dom_safe_id}",
                     )
 
+                # "Not in use" overlay - shown for inactive agents in single-agent mode
+                with Container(id=self._not_in_use_id, classes="not-in-use-overlay hidden"):
+                    yield Label("👤 Not in use", classes="not-in-use-label")
+                    yield Label("Single-agent mode active", classes="not-in-use-sublabel")
+
                 # Chronological timeline layout - tools and text interleaved
                 yield TimelineSection(id=self._timeline_section_id)
                 yield CompletionFooter(id=self._completion_footer_id)
@@ -5434,6 +5922,26 @@ Type your question and press Enter to ask the agents.
         def on_mount(self) -> None:
             """Start the loading spinner when the panel is mounted."""
             self._start_loading_spinner("Waiting for agent...")
+
+        def set_in_use(self, in_use: bool) -> None:
+            """Set whether this panel is in use (for single-agent mode).
+
+            Args:
+                in_use: True if this agent is active, False to show "Not in use" overlay.
+            """
+            self._is_in_use = in_use
+            try:
+                overlay = self.query_one(f"#{self._not_in_use_id}")
+                if in_use:
+                    overlay.add_class("hidden")
+                else:
+                    overlay.remove_class("hidden")
+            except Exception:
+                pass
+
+        def is_in_use(self) -> bool:
+            """Check if this panel is currently in use."""
+            return self._is_in_use
 
         def update_context_display(self, context_sources: List[str]) -> None:
             """Update the context sources display in the panel header.
@@ -6064,21 +6572,56 @@ Type your question and press Enter to ask the agents.
                 self.content_log.write(Text(f"📥 Context Update: {preview}", style="bold magenta"))
 
         def _add_reminder_content(self, normalized):
-            """Add reminder content (high priority task reminders) to timeline.
+            """Add reminder content (high priority task reminders) to TaskPlanCard.
 
-            Displays as a styled orange bar in the timeline.
+            Attaches the reminder to the most recent TaskPlanCard if one exists,
+            otherwise displays as a standalone styled bar in the timeline.
             """
             if not normalized.should_display:
                 return
 
             content = normalized.cleaned_content
-            # Truncate preview if very long
-            preview = content[:100] + "..." if len(content) > 100 else content
-            preview = preview.replace("\n", " ")
 
+            # Try to attach reminder to the most recent TaskPlanCard
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                # Add as styled text with reminder class
+
+                # Look for the most recent TaskPlanCard by active task plan ID
+                task_plan_card = None
+                if self._active_task_plan_id:
+                    try:
+                        from massgen.frontend.displays.textual_widgets import (
+                            TaskPlanCard,
+                        )
+
+                        task_plan_card = timeline.query_one(
+                            f"#task_plan_{self._active_task_plan_id}",
+                            TaskPlanCard,
+                        )
+                    except Exception:
+                        pass
+
+                # If no card found by ID, try to find any TaskPlanCard in timeline
+                if not task_plan_card:
+                    try:
+                        from massgen.frontend.displays.textual_widgets import (
+                            TaskPlanCard,
+                        )
+
+                        cards = list(timeline.query(TaskPlanCard))
+                        if cards:
+                            task_plan_card = cards[-1]  # Most recent card
+                    except Exception:
+                        pass
+
+                if task_plan_card:
+                    # Attach reminder to the TaskPlanCard
+                    task_plan_card.set_reminder(content)
+                    return
+
+                # Fallback: display as standalone text in timeline
+                preview = content[:100] + "..." if len(content) > 100 else content
+                preview = preview.replace("\n", " ")
                 timeline.add_text(
                     f"💡 Reminder: {preview}",
                     style="bold",
@@ -6086,6 +6629,8 @@ Type your question and press Enter to ask the agents.
                 )
             except Exception:
                 # Fallback to legacy RichLog
+                preview = content[:100] + "..." if len(content) > 100 else content
+                preview = preview.replace("\n", " ")
                 self.content_log.write(Text(f"💡 Reminder: {preview}", style="bold yellow"))
 
         def _is_planning_mcp_tool(self, tool_name: str) -> bool:
@@ -7024,11 +7569,24 @@ Type your question and press Enter to ask the agents.
                 )
 
             for vote in self.votes:
+                # Use voted_for_label (e.g., "1.2") if available, otherwise fall back to agent number
+                target_label = vote.get("voted_for_label")
+                if target_label:
+                    # Convert "agent1.2" format to shorter "1.2" format
+                    target_display = target_label.replace("agent", "")
+                else:
+                    # Fallback: try to get agent number from voted_for
+                    voted_for = vote["voted_for"]
+                    if voted_for in all_agents:
+                        agent_num = all_agents.index(voted_for) + 1
+                        target_display = str(agent_num)
+                    else:
+                        target_display = voted_for[:6]
                 events.append(
                     {
                         "type": "vote",
                         "agent_id": vote["voter"],
-                        "target": vote["voted_for"],
+                        "target": target_display,
                         "timestamp": vote.get("timestamp", 0),
                     },
                 )
@@ -7324,11 +7882,24 @@ Type your question and press Enter to ask the agents.
                 )
 
             for vote in self.votes:
+                # Use voted_for_label (e.g., "1.2") if available, otherwise fall back to agent number
+                target_label = vote.get("voted_for_label")
+                if target_label:
+                    # Convert "agent1.2" format to shorter "1.2" format
+                    target_display = target_label.replace("agent", "")
+                else:
+                    # Fallback: try to get agent number from voted_for
+                    voted_for = vote["voted_for"]
+                    if voted_for in all_agents:
+                        agent_num = all_agents.index(voted_for) + 1
+                        target_display = str(agent_num)
+                    else:
+                        target_display = voted_for[:6]
                 events.append(
                     {
                         "type": "vote",
                         "agent_id": vote["voter"],
-                        "target": vote["voted_for"],
+                        "target": target_display,
                         "timestamp": vote.get("timestamp", 0),
                     },
                 )
@@ -7449,8 +8020,9 @@ Type your question and press Enter to ask the agents.
     class WorkspaceBrowserModal(BaseModal):
         """Modal for browsing workspace files from answer snapshots."""
 
-        # Special index for current workspace
+        # Special indices for workspace types
         CURRENT_WORKSPACE_IDX = -100
+        FINAL_WORKSPACE_IDX = -200  # Final workspace (after consensus)
 
         def __init__(
             self,
@@ -7466,13 +8038,17 @@ Type your question and press Enter to ask the agents.
             self.agent_ids = agent_ids
             self.agent_workspace_paths = agent_workspace_paths or {}
             self.agent_final_paths = agent_final_paths or {}
-            self._default_to_final = default_to_final
+
+            # Auto-default to final if final workspaces exist (unless explicitly disabled)
+            # Final workspace is the most useful view after a turn completes
+            self._default_to_final = default_to_final or bool(self.agent_final_paths)
 
             # Default to specified agent or first agent
             selected_agent = default_agent if default_agent and default_agent in agent_ids else (agent_ids[0] if agent_ids else None)
 
             # Determine default selection based on preferences
-            if default_to_final and selected_agent and selected_agent in self.agent_final_paths:
+            # Priority: Final workspace > Current workspace > Most recent answer
+            if self._default_to_final and selected_agent and selected_agent in self.agent_final_paths:
                 self._selected_answer_idx: int = self.FINAL_WORKSPACE_IDX
             elif selected_agent and selected_agent in self.agent_workspace_paths:
                 self._selected_answer_idx: int = self.CURRENT_WORKSPACE_IDX
@@ -7482,8 +8058,9 @@ Type your question and press Enter to ask the agents.
             self._current_files: List[Dict[str, Any]] = []
             self._selected_file_idx: int = 0
             self._load_counter: int = 0  # Counter to ensure unique widget IDs
+            self._current_workspace_path: Optional[str] = None  # Track currently displayed workspace
             # Default to specified agent or first agent
-            self._current_agent_filter: Optional[str] = selected_agent  # None = all agents  # Counter to ensure unique widget IDs
+            self._current_agent_filter: Optional[str] = selected_agent  # None = all agents
 
         def compose(self) -> ComposeResult:
             with Container(id="workspace_browser_container"):
@@ -7518,13 +8095,18 @@ Type your question and press Enter to ask the agents.
                         yield Label("[bold]Preview[/]", id="preview_header", markup=True)
                         yield VerticalScroll(id="workspace_preview")
 
-                yield Button("Close (ESC)", id="close_workspace_browser_button")
+                # Footer buttons
+                with Horizontal(id="workspace_browser_footer"):
+                    yield Button("📂 Open in Finder", id="open_workspace_finder_button")
+                    yield Button("Close (ESC)", id="close_workspace_browser_button")
 
         def on_mount(self) -> None:
             """Called when modal is mounted - populate the answer selector and files."""
             self._update_answer_selector()
-            # Load files for the default selection (current workspace or most recent answer)
-            if self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
+            # Load files for the default selection (final, current, or most recent answer)
+            if self._default_to_final and self._current_agent_filter and self._current_agent_filter in self.agent_final_paths:
+                self._load_workspace_files(self.FINAL_WORKSPACE_IDX)
+            elif self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
                 self._load_workspace_files(self.CURRENT_WORKSPACE_IDX)
             elif self.answers:
                 self._load_workspace_files(len(self.answers) - 1)
@@ -7536,7 +8118,11 @@ Type your question and press Enter to ask the agents.
             # Build answer options
             options = []
 
-            # Add "Current Workspace" option if the selected agent has a workspace
+            # Add "🏆 Final Workspace" option FIRST if the selected agent has a final workspace
+            if self._current_agent_filter and self._current_agent_filter in self.agent_final_paths:
+                options.append(("🏆 Final Workspace", self.FINAL_WORKSPACE_IDX))
+
+            # Add "Current Workspace" option if the selected agent has a current workspace
             if self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
                 options.append(("📂 Current Workspace", self.CURRENT_WORKSPACE_IDX))
 
@@ -7550,8 +8136,10 @@ Type your question and press Enter to ask the agents.
             if not options:
                 options = [("No workspace available", -1)]
 
-            # Determine default value - prefer current workspace if available
-            if self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
+            # Determine default value - prefer final workspace if requested, else current
+            if self._default_to_final and self._current_agent_filter and self._current_agent_filter in self.agent_final_paths:
+                default_value = self.FINAL_WORKSPACE_IDX
+            elif self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
                 default_value = self.CURRENT_WORKSPACE_IDX
             elif options and options[0][1] != -1:
                 # Pick the most recent answer for this agent
@@ -7567,7 +8155,7 @@ Type your question and press Enter to ask the agents.
                 answer_selector.value = options[0][1]
 
         def _load_workspace_files(self, answer_idx: int) -> None:
-            """Load files from the workspace path of the selected answer or current workspace."""
+            """Load files from the workspace path of the selected answer, current, or final workspace."""
             import os
 
             from textual.widgets import Static
@@ -7577,15 +8165,25 @@ Type your question and press Enter to ask the agents.
             self._current_files = []
             self._load_counter += 1  # Increment to ensure unique IDs
 
-            # Handle current workspace selection - use selected agent's workspace
-            if answer_idx == self.CURRENT_WORKSPACE_IDX:
+            # Determine workspace path based on selection
+            workspace_path = None
+            if answer_idx == self.FINAL_WORKSPACE_IDX:
+                # Final workspace (after consensus)
+                workspace_path = self.agent_final_paths.get(self._current_agent_filter)
+            elif answer_idx == self.CURRENT_WORKSPACE_IDX:
+                # Current workspace (live)
                 workspace_path = self.agent_workspace_paths.get(self._current_agent_filter)
-            elif answer_idx < 0 or answer_idx >= len(self.answers):
-                file_list.mount(Static("[dim]No workspace selected[/]", markup=True))
-                return
-            else:
+            elif answer_idx >= 0 and answer_idx < len(self.answers):
+                # Answer snapshot
                 answer = self.answers[answer_idx]
                 workspace_path = answer.get("workspace_path")
+            else:
+                self._current_workspace_path = None
+                file_list.mount(Static("[dim]No workspace selected[/]", markup=True))
+                return
+
+            # Store current workspace path for "Open in Finder" functionality
+            self._current_workspace_path = workspace_path
 
             if not workspace_path or not os.path.isdir(workspace_path):
                 file_list.mount(Static(f"[dim]No workspace available[/]\n[dim]{workspace_path or 'N/A'}[/]", markup=True))
@@ -7714,6 +8312,28 @@ Type your question and press Enter to ask the agents.
         def on_button_pressed(self, event: Button.Pressed) -> None:
             if event.button.id == "close_workspace_browser_button":
                 self.dismiss()
+            elif event.button.id == "open_workspace_finder_button":
+                self._open_workspace_in_explorer()
+
+        def _open_workspace_in_explorer(self) -> None:
+            """Open the current workspace directory in the system file explorer."""
+            import platform
+            import subprocess
+
+            if not self._current_workspace_path:
+                self.notify("No workspace selected", severity="warning", timeout=2)
+                return
+
+            try:
+                system = platform.system()
+                if system == "Darwin":  # macOS
+                    subprocess.run(["open", str(self._current_workspace_path)])
+                elif system == "Windows":
+                    subprocess.run(["explorer", str(self._current_workspace_path)])
+                else:  # Linux
+                    subprocess.run(["xdg-open", str(self._current_workspace_path)])
+            except Exception as e:
+                self.notify(f"Error opening workspace: {e}", severity="error", timeout=3)
 
         def key_escape(self) -> None:
             self.dismiss()
@@ -8163,10 +8783,12 @@ Type your question and press Enter to ask the agents.
             self,
             conversation_history: List[Dict[str, Any]],
             current_question: str,
+            agent_ids: List[str],
         ):
             super().__init__()
             self._history = conversation_history
             self._current_question = current_question
+            self._agent_ids = agent_ids
 
         def compose(self) -> ComposeResult:
             with Container(id="history_container"):
@@ -8179,15 +8801,22 @@ Type your question and press Enter to ask the agents.
                 # Scrollable history container
                 with ScrollableContainer(id="history_scroll"):
                     if self._history:
-                        for entry in reversed(self._history):  # Most recent first
-                            yield self._create_turn_widget(entry)
+                        for idx, entry in enumerate(reversed(self._history)):  # Most recent first
+                            yield self._create_turn_widget(entry, idx)
                     else:
                         yield Label("[dim]No conversation history yet.[/]", id="no_history")
 
                 yield Button("Close (ESC)", id="close_history_button")
 
-        def _create_turn_widget(self, entry: Dict[str, Any]) -> Widget:
-            """Create a widget for a conversation turn."""
+        def _get_agent_color_class(self, agent_id: str) -> str:
+            """Get the agent color class for an agent ID."""
+            if agent_id in self._agent_ids:
+                agent_idx = self._agent_ids.index(agent_id) + 1
+                return f"agent-color-{((agent_idx - 1) % 8) + 1}"
+            return "agent-color-1"
+
+        def _create_turn_widget(self, entry: Dict[str, Any], idx: int) -> Widget:
+            """Create a clickable widget for a conversation turn with agent color."""
             from datetime import datetime
 
             turn = entry.get("turn", "?")
@@ -8196,6 +8825,7 @@ Type your question and press Enter to ask the agents.
             agent_id = entry.get("agent_id", "")
             model = entry.get("model", "")
             timestamp = entry.get("timestamp", 0)
+            workspace_path = entry.get("workspace_path")
 
             # Format timestamp
             time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S") if timestamp else ""
@@ -8204,18 +8834,131 @@ Type your question and press Enter to ask the agents.
             answer_preview = answer[:200] + "..." if len(answer) > 200 else answer
 
             agent_info = f"{agent_id} ({model})" if model else agent_id
+            agent_color_class = self._get_agent_color_class(agent_id)
 
-            content = f"""[bold cyan]Turn {turn}[/] - {time_str}
+            # Build content - workspace indicator if available
+            workspace_indicator = " 📂" if workspace_path else ""
+
+            content = f"""[bold cyan]Turn {turn}[/] - {time_str}{workspace_indicator}
 [bold]Q:[/] {question}
 [dim]Winner: {agent_info}[/]
 [bold]A:[/] {answer_preview}
 """
-            return Static(content, classes="history-turn")
+            # Return a container with turn index in ID for click handling
+            # The actual_idx is the original index in _history (before reversal)
+            actual_idx = len(self._history) - 1 - idx
+            return Static(
+                content,
+                id=f"history_turn_{actual_idx}",
+                classes=f"history-turn turn-entry {agent_color_class}",
+                markup=True,
+            )
+
+        def on_click(self, event) -> None:
+            """Handle clicks on turn entries to show full details."""
+            # Walk up to find the turn widget
+            target = event.widget
+            while target and not (hasattr(target, "id") and target.id and target.id.startswith("history_turn_")):
+                target = getattr(target, "parent", None)
+
+            if target and target.id:
+                try:
+                    idx = int(target.id.split("_")[-1])
+                    if 0 <= idx < len(self._history):
+                        entry = self._history[idx]
+                        agent_id = entry.get("agent_id", "")
+                        agent_color_class = self._get_agent_color_class(agent_id)
+                        self.app.push_screen(TurnDetailModal(entry, agent_color_class))
+                except (ValueError, IndexError):
+                    pass
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             """Handle button presses."""
             if event.button.id == "close_history_button":
                 self.dismiss()
+
+        def key_escape(self) -> None:
+            """Close on escape."""
+            self.dismiss()
+
+    class TurnDetailModal(BaseModal):
+        """Modal showing full details of a conversation turn."""
+
+        def __init__(
+            self,
+            turn_data: Dict[str, Any],
+            agent_color_class: str,
+        ):
+            super().__init__()
+            self._turn_data = turn_data
+            self._agent_color_class = agent_color_class
+
+        def compose(self) -> ComposeResult:
+            from datetime import datetime
+
+            turn = self._turn_data.get("turn", "?")
+            question = self._turn_data.get("question", "")
+            answer = self._turn_data.get("answer", "")
+            agent_id = self._turn_data.get("agent_id", "")
+            model = self._turn_data.get("model", "")
+            timestamp = self._turn_data.get("timestamp", 0)
+            workspace_path = self._turn_data.get("workspace_path")
+
+            # Format timestamp
+            time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S") if timestamp else ""
+            agent_info = f"{agent_id} ({model})" if model else agent_id
+
+            with Container(id="turn_detail_container", classes=self._agent_color_class):
+                # Header with turn info
+                yield Label(
+                    f"[bold cyan]Turn {turn}[/] - {time_str}",
+                    id="turn_detail_header",
+                    markup=True,
+                )
+                yield Label(f"[dim]Winner: {agent_info}[/]", id="turn_detail_agent", markup=True)
+
+                # Question
+                yield Label("[bold]Question:[/]", markup=True)
+                yield Static(question, id="turn_detail_question")
+
+                # Full answer in scrollable container
+                yield Label("[bold]Answer:[/]", markup=True)
+                with ScrollableContainer(id="turn_detail_answer_scroll"):
+                    yield Static(answer, id="turn_detail_answer")
+
+                # Footer buttons
+                with Horizontal(id="turn_detail_footer"):
+                    if workspace_path:
+                        yield Button("📂 Open Workspace", id="turn_detail_workspace_button")
+                    yield Button("Close (ESC)", id="turn_detail_close_button")
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            """Handle button presses."""
+            if event.button.id == "turn_detail_close_button":
+                self.dismiss()
+            elif event.button.id == "turn_detail_workspace_button":
+                self._open_workspace_in_explorer()
+
+        def _open_workspace_in_explorer(self) -> None:
+            """Open the turn's workspace directory in the system file explorer."""
+            import platform
+            import subprocess
+
+            workspace_path = self._turn_data.get("workspace_path")
+            if not workspace_path:
+                self.notify("No workspace available for this turn", severity="warning", timeout=2)
+                return
+
+            try:
+                system = platform.system()
+                if system == "Darwin":  # macOS
+                    subprocess.run(["open", str(workspace_path)])
+                elif system == "Windows":
+                    subprocess.run(["explorer", str(workspace_path)])
+                else:  # Linux
+                    subprocess.run(["xdg-open", str(workspace_path)])
+            except Exception as e:
+                self.notify(f"Error opening workspace: {e}", severity="error", timeout=3)
 
         def key_escape(self) -> None:
             """Close on escape."""

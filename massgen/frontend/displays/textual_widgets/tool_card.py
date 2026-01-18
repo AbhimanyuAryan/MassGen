@@ -7,14 +7,80 @@ parameters, results, and status. Clicking opens a detail modal.
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from rich.text import Text
+from textual.app import ComposeResult
+from textual.containers import Vertical
+from textual.events import Click
 from textual.message import Message
 from textual.widgets import Static
 
 if TYPE_CHECKING:
     pass
+
+
+class InjectionToggle(Static):
+    """Clickable widget for toggling injection content expansion.
+
+    This widget handles its own click event to toggle expansion,
+    preventing the click from bubbling up to the parent ToolCallCard.
+    """
+
+    DEFAULT_CSS = """
+    InjectionToggle {
+        width: 100%;
+        height: auto;
+        min-height: 1;
+        padding: 0;
+        margin: 0;
+    }
+
+    InjectionToggle:hover {
+        background: #21262d;
+    }
+
+    InjectionToggle.expanded {
+        min-height: 5;
+    }
+    """
+
+    def __init__(
+        self,
+        content: Text,
+        toggle_callback: Callable[[], None],
+        *,
+        id: Optional[str] = None,
+    ) -> None:
+        """Initialize the injection toggle.
+
+        Args:
+            content: The Rich Text content to display.
+            toggle_callback: Callback to invoke when clicked.
+            id: Optional DOM ID.
+        """
+        super().__init__(id=id)
+        self._content = content
+        self._toggle_callback = toggle_callback
+
+    def render(self) -> Text:
+        """Render the injection toggle content."""
+        return self._content
+
+    def update_content(self, content: Text) -> None:
+        """Update the displayed content."""
+        self._content = content
+        self.refresh()
+
+    def on_click(self, event: Click) -> None:
+        """Handle click - toggle injection and stop propagation."""
+        from massgen.logger_config import logger
+
+        logger.info("[InjectionToggle] on_click triggered!")
+        event.stop()  # Prevent bubbling to parent ToolCallCard
+        self._toggle_callback()
+        logger.info("[InjectionToggle] callback completed")
+
 
 # Tool category detection - maps tool names to semantic categories
 TOOL_CATEGORIES = {
@@ -297,6 +363,9 @@ class ToolCallCard(Static):
         self._subagent_tasks: list[dict] = []  # Parsed subagent task list
         self._workspace_content: Optional[str] = None  # Subagent workspace output
 
+        # Injection toggle widget (managed separately for click handling)
+        self._injection_toggle: Optional[InjectionToggle] = None
+
         # Timer for updating elapsed time while running
         self._elapsed_timer = None
 
@@ -328,19 +397,94 @@ class ToolCallCard(Static):
     def _refresh_elapsed(self) -> None:
         """Refresh the display to update elapsed time."""
         if self._status == "running":
-            self.refresh()
+            self._refresh_main_content()
         else:
             # Tool completed, stop the timer
             self._stop_elapsed_timer()
 
-    def render(self) -> Text:
-        """Render the card as a single-line summary."""
+    def _refresh_main_content(self) -> None:
+        """Refresh the main content widget."""
+        try:
+            main_content = self.query_one("#tool-main-content", Static)
+            main_content.update(self._render_main_content())
+        except Exception:
+            # Fallback if widget not found (e.g., not yet mounted)
+            self.refresh()
+
+    def _refresh_injection_toggle(self) -> None:
+        """Refresh the injection toggle widget if it exists."""
+        if self._injection_toggle:
+            self._injection_toggle.update_content(self._render_injection_content())
+
+    def _ensure_injection_toggle(self) -> None:
+        """Ensure injection toggle exists if we have injection content."""
+        if self._has_injection_content() and not self._injection_toggle:
+            # Need to mount the injection toggle into the container
+            try:
+                container = self.query_one("#tool-card-content", Vertical)
+                injection_content = self._render_injection_content()
+                self._injection_toggle = InjectionToggle(
+                    content=injection_content,
+                    toggle_callback=self._toggle_injection,
+                    id="injection-toggle",
+                )
+                container.mount(self._injection_toggle)
+            except Exception as e:
+                from massgen.logger_config import logger
+
+                logger.warning(f"[ToolCallCard] _ensure_injection_toggle failed: {e}")
+
+    def compose(self) -> ComposeResult:
+        """Compose the card with optional injection toggle child."""
+        # Use a Vertical container to stack main content and injection toggle
+        with Vertical(id="tool-card-content"):
+            # Main content widget
+            yield Static(self._render_main_content(), id="tool-main-content")
+
+            # Injection toggle (if we have injection content)
+            if self._has_injection_content():
+                injection_content = self._render_injection_content()
+                self._injection_toggle = InjectionToggle(
+                    content=injection_content,
+                    toggle_callback=self._toggle_injection,
+                    id="injection-toggle",
+                )
+                yield self._injection_toggle
+
+    def _render_main_content(self) -> Text:
+        """Render the main card content (without injection)."""
         if self._is_subagent:
             return self._render_subagent()
-        return self._render_collapsed()
+        return self._render_collapsed_without_injection()
 
-    def _render_collapsed(self) -> Text:
-        """Render card view: with pre-hooks, tool info, and post-hooks.
+    def _toggle_injection(self) -> None:
+        """Toggle injection expansion (called by InjectionToggle)."""
+        from massgen.logger_config import logger
+
+        self._injection_expanded = not self._injection_expanded
+        logger.info(f"[ToolCallCard] _toggle_injection: expanded={self._injection_expanded}")
+
+        # Update CSS class for height adjustment
+        if self._injection_expanded:
+            self.add_class("has-injection")
+        else:
+            self.remove_class("has-injection")
+
+        # Update injection toggle content and CSS class
+        if self._injection_toggle:
+            new_content = self._render_injection_content()
+            logger.info(f"[ToolCallCard] updating toggle content, length={len(str(new_content))}")
+            self._injection_toggle.update_content(new_content)
+            # Add/remove expanded class for CSS height adjustment
+            if self._injection_expanded:
+                self._injection_toggle.add_class("expanded")
+            else:
+                self._injection_toggle.remove_class("expanded")
+        else:
+            logger.warning("[ToolCallCard] _injection_toggle is None!")
+
+    def _render_collapsed_without_injection(self) -> Text:
+        """Render card view without injection content (injection is in separate widget).
 
         Design with hooks:
         ```
@@ -348,13 +492,13 @@ class ToolCallCard(Static):
         ▶ 📁 filesystem/write_file                              ⏳ running...
           {"content": "In circuits humming...", "path": "/tmp/poem.txt"}
         ```
-        or completed with post-hooks:
+        or completed:
         ```
           📁 filesystem/read_file                               ✓ (0.3s)
           {"path": "/tmp/example.txt"}
           → File contents: Hello world...
-        🪝 mid_stream: +context from agent_b
         ```
+        Note: Injection content is rendered separately in InjectionToggle widget.
         """
         text = Text()
 
@@ -453,18 +597,37 @@ class ToolCallCard(Static):
                 error_preview = error_preview[:107] + "..."
             text.append(error_preview, style="dim red")
 
-        # Post-hooks with injection content - render inline
+        # Note: Injection content is now rendered in a separate InjectionToggle widget
+        return text
+
+    def _render_injection_content(self) -> Text:
+        """Render the injection content for the InjectionToggle widget.
+
+        Returns:
+            Rich Text with injection preview (collapsed) or full content (expanded).
+        """
+        from massgen.logger_config import logger
+
+        text = Text()
+        logger.info(
+            f"[ToolCallCard] _render_injection_content: expanded={self._injection_expanded}, " f"num_hooks={len(self._post_hooks)}",
+        )
+
         for hook in self._post_hooks:
             injection_content = hook.get("injection_content")
             if injection_content:
+                logger.info(
+                    f"[ToolCallCard] rendering injection: hook={hook.get('hook_name')}, " f"content_len={len(injection_content)}",
+                )
                 # Generate clean preview without decorative lines
                 preview = self._generate_injection_preview(injection_content)
 
                 if self._injection_expanded:
                     # Expanded view - show full content
-                    text.append("\n  ▼ ", style="dim")
+                    text.append("  ▼ ", style="dim")
                     text.append("📥 ", style="bold #d2a8ff")
                     text.append(hook.get("hook_name", "injection"), style="bold #d2a8ff")
+                    text.append(" (click to collapse)", style="dim italic")
                     execution_time = hook.get("execution_time_ms")
                     if execution_time:
                         text.append(f" ({execution_time:.1f}ms)", style="dim")
@@ -483,12 +646,13 @@ class ToolCallCard(Static):
                         text.append("\n")
                         text.append(f"    ... ({len(content_lines) - max_lines} more lines)", style="dim italic")
                 else:
-                    # Collapsed view - show arrow and preview
-                    text.append("\n  ▶ ", style="dim")
+                    # Collapsed view - show arrow and preview with hint
+                    text.append("  ▶ ", style="dim")
                     text.append("📥 ", style="bold #d2a8ff")
                     text.append(hook.get("hook_name", "injection"), style="bold #d2a8ff")
                     text.append(": ", style="dim")
                     text.append(preview, style="#c9b8e0")
+                    text.append(" (click to expand)", style="dim italic")
 
         return text
 
@@ -648,19 +812,17 @@ class ToolCallCard(Static):
             return f"({mins}m{secs}s)"
 
     def on_click(self) -> None:
-        """Handle click - toggle expansion for subagents/injections, or show modal for others."""
+        """Handle click - toggle expansion for subagents, or show modal for others.
+
+        Note: Injection content expansion is handled by the InjectionToggle widget,
+        which intercepts clicks on the injection area. Clicks elsewhere on the card
+        will open the detail modal.
+        """
         if self._is_subagent:
             self.toggle_expanded()
-        elif self._has_injection_content():
-            # Toggle injection expansion for cards with injection content
-            self._injection_expanded = not self._injection_expanded
-            # Update CSS class for height adjustment
-            if self._injection_expanded:
-                self.add_class("has-injection")
-            else:
-                self.remove_class("has-injection")
-            self.refresh()
         else:
+            # Always open modal for non-subagent cards
+            # (injection area has its own click handler via InjectionToggle)
             self.post_message(self.ToolCardClicked(self))
 
     def _has_injection_content(self) -> bool:
@@ -679,7 +841,7 @@ class ToolCallCard(Static):
         """
         self._params = params
         self._params_full = params_full if params_full else params
-        self.refresh()
+        self._refresh_main_content()
 
     def set_result(self, result: str, result_full: Optional[str] = None) -> None:
         """Set successful result.
@@ -695,7 +857,7 @@ class ToolCallCard(Static):
         self._stop_elapsed_timer()  # Stop the timer now that tool is complete
         self.remove_class("status-running")
         self.add_class("status-success")
-        self.refresh()
+        self._refresh_main_content()
 
     def set_error(self, error: str) -> None:
         """Set error result.
@@ -709,7 +871,7 @@ class ToolCallCard(Static):
         self._stop_elapsed_timer()  # Stop the timer now that tool is complete
         self.remove_class("status-running")
         self.add_class("status-error")
-        self.refresh()
+        self._refresh_main_content()
 
     def set_background_result(
         self,
@@ -737,7 +899,7 @@ class ToolCallCard(Static):
         # NOTE: We do NOT set _end_time - operation is ongoing
         self.remove_class("status-running")
         self.add_class("status-background")
-        self.refresh()
+        self._refresh_main_content()
 
     def add_pre_hook(
         self,
@@ -766,7 +928,7 @@ class ToolCallCard(Static):
                 "timestamp": datetime.now(),
             },
         )
-        self.refresh()
+        self._refresh_main_content()
 
     def add_post_hook(
         self,
@@ -797,7 +959,12 @@ class ToolCallCard(Static):
                 "timestamp": datetime.now(),
             },
         )
-        self.refresh()
+        self._refresh_main_content()
+
+        # If this hook has injection content, ensure the toggle widget exists
+        if injection_content:
+            self._ensure_injection_toggle()
+            self._refresh_injection_toggle()
 
     # === Subagent-specific methods ===
 
@@ -811,7 +978,7 @@ class ToolCallCard(Static):
                 - agent_id: Optional agent identifier
         """
         self._subagent_tasks = tasks
-        self.refresh()
+        self._refresh_main_content()
 
     def update_subagent_task_status(self, task_index: int, status: str) -> None:
         """Update the status of a specific subagent task.
@@ -822,7 +989,7 @@ class ToolCallCard(Static):
         """
         if 0 <= task_index < len(self._subagent_tasks):
             self._subagent_tasks[task_index]["status"] = status
-            self.refresh()
+            self._refresh_main_content()
 
     def _get_formatted_result(self) -> Optional[str]:
         """Get a formatted version of the result, parsing JSON if applicable.
@@ -927,7 +1094,7 @@ class ToolCallCard(Static):
             content: The workspace/output content to display when expanded.
         """
         self._workspace_content = content
-        self.refresh()
+        self._refresh_main_content()
 
     def toggle_expanded(self) -> None:
         """Toggle the expanded state of the subagent card."""
@@ -936,7 +1103,7 @@ class ToolCallCard(Static):
             self.add_class("expanded")
         else:
             self.remove_class("expanded")
-        self.refresh()
+        self._refresh_main_content()
 
     @property
     def is_expanded(self) -> bool:

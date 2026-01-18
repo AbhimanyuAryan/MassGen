@@ -265,6 +265,109 @@ AgentTab.dimmed {
     opacity: 0.6;
 }
 
+/* Disabled tabs (single-agent mode - unselected agents) */
+AgentTab.disabled {
+    background: #0d1117;
+    border: dashed #21262d;
+    color: #484f58;
+    text-style: italic;
+    opacity: 0.7;
+}
+
+AgentTab.disabled:hover {
+    background: #161b22;
+    border: dashed #30363d;
+    color: #8b949e;
+    /* Clicking disabled tab selects it as new single agent */
+}
+
+/* === Mode Bar (above input) === */
+#mode_bar {
+    height: 2;
+    width: 100%;
+    layout: horizontal;
+    background: #161b22;
+    border-bottom: solid #30363d;
+    padding: 0 1;
+    align: left middle;
+}
+
+#mode_bar.hidden {
+    display: none;
+}
+
+/* Mode Toggle buttons */
+ModeToggle {
+    width: auto;
+    height: auto;
+    margin: 0 1;
+    padding: 0 1;
+    background: #21262d;
+    color: #8b949e;
+    border: none;
+}
+
+ModeToggle:hover {
+    background: #30363d;
+    color: #e6edf3;
+}
+
+ModeToggle.disabled {
+    background: #161b22;
+    color: #484f58;
+    text-style: italic;
+}
+
+/* Plan mode states */
+ModeToggle.state-plan {
+    background: #0d3a0d;
+    color: #3fb950;
+}
+
+ModeToggle.state-execute {
+    background: #0d3a0d;
+    color: #3fb950;
+    text-style: bold;
+}
+
+/* Agent mode states */
+ModeToggle.state-single {
+    background: #3d2a0d;
+    color: #d29922;
+}
+
+/* Refinement mode states */
+ModeToggle.state-off {
+    background: #3d0d0d;
+    color: #f85149;
+}
+
+/* Override button in mode bar */
+#override_btn {
+    background: #3d2a0d;
+    color: #d29922;
+    margin-left: 1;
+}
+
+#override_btn:hover {
+    background: #4d3a1d;
+}
+
+#override_btn.hidden {
+    display: none;
+}
+
+/* Plan info display */
+#plan_info {
+    color: #3fb950;
+    margin-left: 1;
+}
+
+/* Mode spacer (pushes override button right) */
+#mode_spacer {
+    width: 1fr;
+}
+
 /* Consensus reached animation on StatusBar */
 StatusBar.consensus-reached {
     background: #3d3510;
@@ -480,6 +583,39 @@ AgentPanel.agent-color-8 { border-left: thick #f85149; border-right: none; }
     text-align: center;
     color: #8b949e;
     text-style: italic;
+}
+
+/* "Not in use" overlay for single-agent mode */
+.not-in-use-overlay {
+    width: 100%;
+    height: 100%;
+    min-height: 5;
+    align: center middle;
+    content-align: center middle;
+    background: #0d111780;
+    layer: overlay;
+}
+
+.not-in-use-overlay.hidden {
+    display: none;
+}
+
+.not-in-use-label {
+    text-align: center;
+    color: #8b949e;
+    text-style: bold;
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+}
+
+.not-in-use-sublabel {
+    text-align: center;
+    color: #484f58;
+    text-style: italic;
+    width: 100%;
+    height: auto;
+    content-align: center middle;
 }
 
 /* Context label - shows which answers an agent has in context */
@@ -1306,6 +1442,27 @@ TaskPlanModal .close-button {
     border-left: thick #58a6ff;
 }
 
+/* Clickable turn entry styling */
+.turn-entry {
+    padding: 1;
+    margin-bottom: 1;
+    background: #2d2d2d;
+}
+
+.turn-entry:hover {
+    background: #3d3d3d;
+}
+
+/* Turn entry agent color borders */
+.turn-entry.agent-color-1 { border-left: thick #58a6ff; }
+.turn-entry.agent-color-2 { border-left: thick #3fb950; }
+.turn-entry.agent-color-3 { border-left: thick #a371f7; }
+.turn-entry.agent-color-4 { border-left: thick #f0883e; }
+.turn-entry.agent-color-5 { border-left: thick #39c5cf; }
+.turn-entry.agent-color-6 { border-left: thick #db61a2; }
+.turn-entry.agent-color-7 { border-left: thick #d29922; }
+.turn-entry.agent-color-8 { border-left: thick #f85149; }
+
 #no_history {
     color: #8b949e;
     text-align: center;
@@ -1314,6 +1471,74 @@ TaskPlanModal .close-button {
 
 #close_history_button {
     margin-top: 1;
+}
+
+/* Turn Detail Modal */
+#turn_detail_container {
+    background: #252526;
+    border: thick #9cdcfe;
+    padding: 2;
+    width: 85%;
+    height: 80%;
+}
+
+/* Turn detail with agent color borders */
+#turn_detail_container.agent-color-1 { border-left: thick #58a6ff; }
+#turn_detail_container.agent-color-2 { border-left: thick #3fb950; }
+#turn_detail_container.agent-color-3 { border-left: thick #a371f7; }
+#turn_detail_container.agent-color-4 { border-left: thick #f0883e; }
+#turn_detail_container.agent-color-5 { border-left: thick #39c5cf; }
+#turn_detail_container.agent-color-6 { border-left: thick #db61a2; }
+#turn_detail_container.agent-color-7 { border-left: thick #d29922; }
+#turn_detail_container.agent-color-8 { border-left: thick #f85149; }
+
+#turn_detail_header {
+    color: #9cdcfe;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#turn_detail_agent {
+    color: #8b949e;
+    margin-bottom: 1;
+}
+
+#turn_detail_question {
+    background: #1e1e1e;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid #3c3c3c;
+}
+
+#turn_detail_answer_scroll {
+    height: 1fr;
+    background: #1e1e1e;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid #3c3c3c;
+}
+
+#turn_detail_answer {
+    color: #d4d4d4;
+}
+
+#turn_detail_footer {
+    height: auto;
+    margin-top: 1;
+}
+
+#turn_detail_footer Button {
+    margin-right: 1;
+}
+
+/* Workspace Browser Footer */
+#workspace_browser_footer {
+    height: auto;
+    margin-top: 1;
+}
+
+#workspace_browser_footer Button {
+    margin-right: 1;
 }
 
 /* Metrics Modal */
@@ -3055,4 +3280,32 @@ ToolCallCard InjectionSubCard.expanded {
     height: auto;
     margin-top: 1;
     margin-bottom: 1;
+}
+
+/* Injection toggle widget within tool cards */
+ToolCallCard #tool-card-content {
+    height: auto;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+}
+
+ToolCallCard #tool-main-content {
+    height: auto;
+    width: 100%;
+}
+
+ToolCallCard InjectionToggle {
+    height: auto;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+}
+
+ToolCallCard InjectionToggle:hover {
+    background: #21262d;
+}
+
+ToolCallCard InjectionToggle.expanded {
+    min-height: 3;
 }

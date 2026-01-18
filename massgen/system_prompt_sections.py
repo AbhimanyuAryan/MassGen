@@ -1700,7 +1700,7 @@ You have provided your maximum number of new answers. Now you MUST vote for the 
 
 Analyze the existing answers carefully, then call the `vote` tool to select the best one.
 
-IMPORTANT: The only workflow action available to you is `vote`. You cannot submit new answers.
+Note: All your other tools are still available to help you evaluate answers. The only restriction is that `vote` is your only workflow tool - you cannot submit new answers.
 
 *Note*: The CURRENT TIME is **{time.strftime("%Y-%m-%d %H:%M:%S")}**."""
 

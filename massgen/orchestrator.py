@@ -19,6 +19,7 @@ TODOs:
 """
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import shutil
@@ -341,60 +342,79 @@ class Orchestrator(ChatAgent):
                     False,
                 )
 
-        for agent_id, agent in self.agents.items():
-            if agent.backend.filesystem_manager:
-                agent.backend.filesystem_manager.setup_orchestration_paths(
-                    agent_id=agent_id,
-                    snapshot_storage=self._snapshot_storage,
-                    agent_temporary_workspace=self._agent_temporary_workspace,
-                    skills_directory=skills_directory,
-                    massgen_skills=massgen_skills,
-                    load_previous_session_skills=load_previous_session_skills,
-                )
-                # Setup workspace directories for massgen skills
-                if hasattr(self.config, "coordination_config") and hasattr(
-                    self.config.coordination_config,
-                    "massgen_skills",
-                ):
-                    if self.config.coordination_config.massgen_skills:
-                        agent.backend.filesystem_manager.setup_massgen_skill_directories(
-                            massgen_skills=self.config.coordination_config.massgen_skills,
-                        )
-                # Setup memory directories if memory filesystem mode is enabled
-                if hasattr(self.config, "coordination_config") and hasattr(
-                    self.config.coordination_config,
-                    "enable_memory_filesystem_mode",
-                ):
-                    if self.config.coordination_config.enable_memory_filesystem_mode:
-                        agent.backend.filesystem_manager.setup_memory_directories()
+        def _setup_agent_orchestration(agent_id: str, agent) -> None:
+            """Setup orchestration paths for a single agent (can run in parallel)."""
+            if not agent.backend.filesystem_manager:
+                return
 
-                        # Restore memories from previous turn if available
-                        if self._previous_turns:
-                            previous_turn = self._previous_turns[-1]  # Get most recent turn
-                            if "log_dir" in previous_turn:
-                                from pathlib import Path as PathlibPath
+            agent.backend.filesystem_manager.setup_orchestration_paths(
+                agent_id=agent_id,
+                snapshot_storage=self._snapshot_storage,
+                agent_temporary_workspace=self._agent_temporary_workspace,
+                skills_directory=skills_directory,
+                massgen_skills=massgen_skills,
+                load_previous_session_skills=load_previous_session_skills,
+            )
+            # Setup workspace directories for massgen skills
+            if hasattr(self.config, "coordination_config") and hasattr(
+                self.config.coordination_config,
+                "massgen_skills",
+            ):
+                if self.config.coordination_config.massgen_skills:
+                    agent.backend.filesystem_manager.setup_massgen_skill_directories(
+                        massgen_skills=self.config.coordination_config.massgen_skills,
+                    )
+            # Setup memory directories if memory filesystem mode is enabled
+            if hasattr(self.config, "coordination_config") and hasattr(
+                self.config.coordination_config,
+                "enable_memory_filesystem_mode",
+            ):
+                if self.config.coordination_config.enable_memory_filesystem_mode:
+                    agent.backend.filesystem_manager.setup_memory_directories()
 
-                                prev_log_dir = PathlibPath(previous_turn["log_dir"])
-                                # Look for final workspace from previous turn
-                                prev_final_workspace = prev_log_dir / "final"
-                                if prev_final_workspace.exists():
-                                    # Find the winning agent's workspace from previous turn
-                                    for agent_dir in prev_final_workspace.iterdir():
-                                        if agent_dir.is_dir():
-                                            prev_workspace = agent_dir / "workspace"
-                                            if prev_workspace.exists():
-                                                logger.info(
-                                                    f"[Orchestrator] Restoring memories from previous turn: {prev_workspace}",
-                                                )
-                                                agent.backend.filesystem_manager.restore_memories_from_previous_turn(
-                                                    prev_workspace,
-                                                )
-                                                break  # Only restore from one agent (the winner)
+                    # Restore memories from previous turn if available
+                    if self._previous_turns:
+                        previous_turn = self._previous_turns[-1]  # Get most recent turn
+                        if "log_dir" in previous_turn:
+                            from pathlib import Path as PathlibPath
 
-                # Update MCP config with agent_id for Docker mode (must be after setup_orchestration_paths)
-                agent.backend.filesystem_manager.update_backend_mcp_config(
-                    agent.backend.config,
-                )
+                            prev_log_dir = PathlibPath(previous_turn["log_dir"])
+                            # Look for final workspace from previous turn
+                            prev_final_workspace = prev_log_dir / "final"
+                            if prev_final_workspace.exists():
+                                # Find the winning agent's workspace from previous turn
+                                for agent_dir in prev_final_workspace.iterdir():
+                                    if agent_dir.is_dir():
+                                        prev_workspace = agent_dir / "workspace"
+                                        if prev_workspace.exists():
+                                            logger.info(
+                                                f"[Orchestrator] Restoring memories from previous turn: {prev_workspace}",
+                                            )
+                                            agent.backend.filesystem_manager.restore_memories_from_previous_turn(
+                                                prev_workspace,
+                                            )
+                                            break  # Only restore from one agent (the winner)
+
+            # Update MCP config with agent_id for Docker mode (must be after setup_orchestration_paths)
+            agent.backend.filesystem_manager.update_backend_mcp_config(
+                agent.backend.config,
+            )
+
+        # Setup orchestration paths for all agents in parallel (Docker container creation is I/O bound)
+        if len(self.agents) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.agents)) as executor:
+                futures = {executor.submit(_setup_agent_orchestration, agent_id, agent): agent_id for agent_id, agent in self.agents.items()}
+                for future in concurrent.futures.as_completed(futures):
+                    agent_id = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"[Orchestrator] Failed to setup orchestration for {agent_id}: {e}")
+                        raise
+        else:
+            # Single agent - no need for threading overhead
+            for agent_id, agent in self.agents.items():
+                _setup_agent_orchestration(agent_id, agent)
 
         # Initialize broadcast channel for agent-to-agent communication
         self.broadcast_channel = BroadcastChannel(self)
@@ -2932,8 +2952,29 @@ Your answer:"""
         self._active_streams = active_streams
         self._active_tasks = active_tasks
 
-        # Stream agent outputs in real-time until all have voted
-        while not all(state.has_voted for state in self.agent_states.values()):
+        # Helper to check if coordination should end
+        def _coordination_complete() -> bool:
+            """Check if coordination is complete.
+
+            Returns True when:
+            - All agents have voted (normal case), OR
+            - skip_voting=True and all agents have submitted at least one answer
+            """
+            all_voted = all(state.has_voted for state in self.agent_states.values())
+            if all_voted:
+                return True
+
+            # Check skip_voting mode: complete when all agents have answered
+            if self.config.skip_voting:
+                all_answered = all(state.answer is not None for state in self.agent_states.values())
+                if all_answered:
+                    logger.info("[skip_voting] All agents have answered - skipping voting, proceeding to presentation")
+                    return True
+
+            return False
+
+        # Stream agent outputs in real-time until coordination is complete
+        while not _coordination_complete():
             # Start new coordination iteration
             self.coordination_tracker.start_new_iteration()
 
@@ -3330,6 +3371,13 @@ Your answer:"""
                                             available_answers=available_answers,
                                             voting_round=self.coordination_tracker.current_iteration,
                                         )
+                                    # Notify TUI to display vote tool card (TextualTerminalDisplay)
+                                    if display and hasattr(display, "notify_vote"):
+                                        display.notify_vote(
+                                            voter=agent_id,
+                                            voted_for=result_data.get("agent_id", ""),
+                                            reason=result_data.get("reason", ""),
+                                        )
                                 # Update status file for real-time monitoring
                                 # Run in executor to avoid blocking event loop
                                 log_session_dir = get_log_session_dir()
@@ -3343,17 +3391,17 @@ Your answer:"""
                                         self,
                                     )
 
-                                # Track new vote event
-                                voted_for = result_data.get("agent_id", "<unknown>")
-                                reason = result_data.get("reason", "No reason provided")
+                                # Track vote event for logging only
+                                # Note: The TUI displays votes via notify_vote tool card,
+                                # so we use agent_status type to avoid duplicate display
                                 log_stream_chunk(
                                     "orchestrator",
-                                    "content",
+                                    "agent_status",
                                     f"✅ Vote recorded for [{result_data['agent_id']}]",
                                     agent_id,
                                 )
                                 yield StreamChunk(
-                                    type="agent_status" if self.trace_classification == "strict" else "content",
+                                    type="agent_status",  # Always agent_status - TUI shows vote via tool card
                                     content=f"✅ Vote recorded for [{result_data['agent_id']}]",
                                     source=agent_id,
                                 )
@@ -6594,6 +6642,67 @@ Your answer:"""
             content=f"🏆 Selected Agent: {self._selected_agent}\n",
         )
 
+        # Check if we should skip final presentation (quick mode - refinement OFF)
+        if self.config.skip_final_presentation:
+            # Use existing answer directly without an additional LLM call
+            existing_answer = self.agent_states[self._selected_agent].answer
+            if existing_answer:
+                # Notify TUI to highlight winner (TextualTerminalDisplay)
+                if hasattr(self, "coordination_ui") and self.coordination_ui:
+                    display = getattr(self.coordination_ui, "display", None)
+                    if display and hasattr(display, "highlight_winner_quick"):
+                        display.highlight_winner_quick(
+                            winner_id=self._selected_agent,
+                            vote_results=vote_results,
+                        )
+
+                log_stream_chunk(
+                    "orchestrator",
+                    "content",
+                    f"\n{existing_answer}\n",
+                    self._selected_agent,
+                )
+                yield StreamChunk(
+                    type="content",
+                    content=f"\n{existing_answer}\n",
+                    source=self._selected_agent,
+                )
+                self._final_presentation_content = existing_answer
+
+                # Save the final snapshot (creates final/ directory with answer.txt)
+                # This copies the agent's workspace to the final directory
+                final_context = self.get_last_context(self._selected_agent)
+                await self._save_agent_snapshot(
+                    self._selected_agent,
+                    answer_content=existing_answer,
+                    is_final=True,
+                    context_data=final_context,
+                )
+
+                # Track the final answer in coordination tracker
+                self.coordination_tracker.set_final_answer(
+                    self._selected_agent,
+                    existing_answer,
+                    snapshot_timestamp="final",
+                )
+
+                # Add to conversation history
+                self.add_to_history("assistant", existing_answer)
+
+                # Save coordination logs
+                self.save_coordination_logs()
+
+                # Update workflow phase
+                self.workflow_phase = "presenting"
+                log_stream_chunk("orchestrator", "done", None, self._selected_agent)
+                yield StreamChunk(type="done", source=self._selected_agent)
+                return  # Skip post-evaluation and all remaining logic
+            else:
+                # No existing answer - fall through to normal presentation
+                logger.warning(
+                    f"[skip_final_presentation] No existing answer for {self._selected_agent}, falling back to normal presentation",
+                )
+
         # Stream the final presentation (with full tool support)
         presentation_content = ""
         async for chunk in self.get_final_presentation(
@@ -7746,16 +7855,19 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             # Note: end_round_tracking for post_evaluation is called from _present_final_answer
             # after the async for loop completes, to ensure reliable timing before save_coordination_logs
 
-            # If no tool was called and evaluation didn't complete, auto-submit
-            if not evaluation_complete and not tool_call_detected:
+            # If evaluation didn't complete (no submit/restart called), auto-submit
+            # This handles cases where:
+            # 1. No tool was called at all
+            # 2. Tools were called but not submit/restart (e.g., read_file for verification)
+            if not evaluation_complete:
                 log_stream_chunk(
                     "orchestrator",
                     "status",
-                    "✅ Auto-submitting answer (no tool call detected)\n",
+                    "✅ Evaluation complete - answer approved\n",
                 )
                 yield StreamChunk(
                     type="status",
-                    content="✅ Auto-submitting answer (no tool call detected)\n",
+                    content="✅ Evaluation complete - answer approved\n",
                     source="orchestrator",
                 )
 
@@ -8365,7 +8477,10 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
 
                     # Clear workspace contents but keep the directory
                     for item in Path(workspace_path).iterdir():
-                        if item.is_file():
+                        if item.is_symlink():
+                            # Remove symlinks directly (don't follow them)
+                            item.unlink()
+                        elif item.is_file():
                             item.unlink()
                         elif item.is_dir():
                             shutil.rmtree(item)
