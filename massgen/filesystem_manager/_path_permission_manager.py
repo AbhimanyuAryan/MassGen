@@ -243,6 +243,8 @@ class PathPermissionManager:
             List of file paths that were written (new or modified)
         """
         self._context_path_writes.clear()
+        self._context_path_new_files: List[str] = []
+        self._context_path_modified_files: List[str] = []
 
         # Find all writable context paths
         writable_context_paths = [mp for mp in self.managed_paths if mp.path_type == "context" and mp.will_be_writable]
@@ -271,13 +273,18 @@ class PathPermissionManager:
             if file_path not in self._context_path_snapshot:
                 # New file
                 self._context_path_writes.append(file_path)
+                self._context_path_new_files.append(file_path)
                 logger.debug(f"[PathPermissionManager] New file detected: {file_path}")
             elif current_mtime > self._context_path_snapshot[file_path]:
                 # Modified file
                 self._context_path_writes.append(file_path)
+                self._context_path_modified_files.append(file_path)
                 logger.debug(f"[PathPermissionManager] Modified file detected: {file_path}")
 
-        logger.info(f"[PathPermissionManager] Context path writes detected: {len(self._context_path_writes)} files")
+        logger.info(
+            f"[PathPermissionManager] Context path writes detected: {len(self._context_path_writes)} files "
+            f"({len(self._context_path_new_files)} new, {len(self._context_path_modified_files)} modified)",
+        )
         return self._context_path_writes
 
     def get_context_path_writes(self) -> List[str]:
@@ -289,6 +296,18 @@ class PathPermissionManager:
         """
         return list(self._context_path_writes)
 
+    def get_context_path_writes_categorized(self) -> Dict[str, List[str]]:
+        """
+        Get categorized lists of new and modified files in context paths.
+
+        Returns:
+            Dict with 'new' and 'modified' keys, each containing a list of file paths
+        """
+        return {
+            "new": list(getattr(self, "_context_path_new_files", [])),
+            "modified": list(getattr(self, "_context_path_modified_files", [])),
+        }
+
     def clear_context_path_writes(self) -> None:
         """Clear the write tracking (both snapshot and writes list)."""
         if self._context_path_snapshot:
@@ -297,6 +316,8 @@ class PathPermissionManager:
             logger.debug(f"[PathPermissionManager] Clearing {len(self._context_path_writes)} context path write records")
         self._context_path_snapshot.clear()
         self._context_path_writes.clear()
+        self._context_path_new_files = []
+        self._context_path_modified_files = []
 
     def add_context_paths(self, context_paths: List[Dict[str, Any]]) -> None:
         """

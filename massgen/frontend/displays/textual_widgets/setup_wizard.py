@@ -11,10 +11,11 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
+from textual.containers import Container, ScrollableContainer, Vertical
 from textual.widgets import Checkbox, Input, Label, Static
 
 from .wizard_base import StepComponent, WizardModal, WizardState, WizardStep
+from .wizard_components import StatusIndicator
 from .wizard_steps import SaveLocationStep, WelcomeStep
 
 
@@ -187,56 +188,75 @@ class DockerSetupStep(StepComponent):
     """Step for setting up Docker for code execution.
 
     Shows Docker diagnostics and allows selecting which images to pull.
+    Uses modern StatusIndicator widgets for professional appearance.
     """
 
     DEFAULT_CSS = """
     DockerSetupStep {
         width: 100%;
-        height: 100%;
+        height: auto;
+        padding: 0;
     }
 
     DockerSetupStep .docker-container {
         width: 100%;
         height: auto;
-        padding: 1 2;
+        padding: 0 1;
     }
 
-    DockerSetupStep .docker-status {
-        margin-bottom: 1;
-    }
-
-    DockerSetupStep .docker-status-ok {
-        color: $success;
-    }
-
-    DockerSetupStep .docker-status-error {
-        color: $error;
-    }
-
-    DockerSetupStep .docker-status-warning {
-        color: $warning;
-    }
-
-    DockerSetupStep .docker-section-title {
+    DockerSetupStep .section-title {
+        color: $primary;
         text-style: bold;
+        width: 100%;
         margin-top: 1;
         margin-bottom: 1;
     }
 
-    DockerSetupStep .docker-image-item {
-        margin: 0 0 1 2;
+    DockerSetupStep .status-group {
+        width: 100%;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+
+    DockerSetupStep .resolution-list {
+        width: 100%;
+        padding: 0 2;
+        color: $text-muted;
+    }
+
+    DockerSetupStep .image-select {
+        width: 100%;
+        padding: 1;
+        margin-top: 1;
+    }
+
+    DockerSetupStep .image-checkbox {
+        margin: 0 0 1 1;
+    }
+
+    DockerSetupStep .success-message {
+        color: $success;
+        text-align: center;
+        padding: 1;
+    }
+
+    DockerSetupStep .error-message {
+        color: $error;
+        padding: 1;
     }
     """
 
     AVAILABLE_IMAGES = [
         {
             "name": "ghcr.io/massgen/mcp-runtime-sudo:latest",
-            "description": "Sudo image (recommended - allows package installation)",
+            "short_name": "Sudo Runtime",
+            "description": "Recommended - allows package installation",
             "default": True,
         },
         {
             "name": "ghcr.io/massgen/mcp-runtime:latest",
-            "description": "Standard image (no sudo access)",
+            "short_name": "Standard Runtime",
+            "description": "Basic runtime without sudo access",
             "default": False,
         },
     ]
@@ -267,81 +287,78 @@ class DockerSetupStep(StepComponent):
         self._load_diagnostics()
 
         with ScrollableContainer(classes="docker-container"):
-            # Status section
-            yield Label("Docker Status:", classes="docker-section-title")
+            # Status section with StatusIndicator widgets
+            yield Label("System Status", classes="section-title")
 
             if self._diagnostics is None:
-                yield Label("  ✗ Could not check Docker status", classes="docker-status docker-status-error")
+                yield StatusIndicator("Could not check Docker status", "error")
                 return
 
-            # Show diagnostics
-            version_info = f" ({self._diagnostics.docker_version})" if self._diagnostics.docker_version else ""
-            if self._diagnostics.binary_installed:
-                yield Label(f"  ✓ Docker binary installed{version_info}", classes="docker-status docker-status-ok")
-            else:
-                yield Label("  ✗ Docker binary not installed", classes="docker-status docker-status-error")
+            with Vertical(classes="status-group"):
+                # Docker binary
+                version_info = f" ({self._diagnostics.docker_version})" if self._diagnostics.docker_version else ""
+                binary_status = "success" if self._diagnostics.binary_installed else "error"
+                yield StatusIndicator(f"Docker binary{version_info}", binary_status)
 
-            if self._diagnostics.pip_library_installed:
-                yield Label("  ✓ Docker Python library", classes="docker-status docker-status-ok")
-            else:
-                yield Label("  ✗ Docker Python library not installed", classes="docker-status docker-status-error")
+                # Python library
+                lib_status = "success" if self._diagnostics.pip_library_installed else "error"
+                yield StatusIndicator("Docker Python library", lib_status)
 
-            if self._diagnostics.daemon_running:
-                yield Label("  ✓ Docker daemon running", classes="docker-status docker-status-ok")
-            else:
-                yield Label("  ✗ Docker daemon not running", classes="docker-status docker-status-error")
+                # Daemon
+                daemon_status = "success" if self._diagnostics.daemon_running else "error"
+                yield StatusIndicator("Docker daemon", daemon_status)
 
-            if self._diagnostics.has_permissions:
-                yield Label("  ✓ Permissions OK", classes="docker-status docker-status-ok")
-            else:
-                yield Label("  ✗ Permission denied", classes="docker-status docker-status-error")
+                # Permissions
+                perm_status = "success" if self._diagnostics.has_permissions else "error"
+                yield StatusIndicator("Permissions", perm_status)
 
-            # If Docker not available, show error
+            # If Docker not available, show resolution steps
             if not self._diagnostics.is_available:
                 yield Static("")
-                yield Label(f"Error: {self._diagnostics.error_message}", classes="docker-status docker-status-error")
+                yield Label(self._diagnostics.error_message, classes="error-message")
                 yield Static("")
-                yield Label("To fix this:", classes="docker-section-title")
-                for step in self._diagnostics.resolution_steps:
-                    yield Label(f"  • {step}", classes="docker-status")
+                yield Label("Resolution Steps:", classes="section-title")
+                with Vertical(classes="resolution-list"):
+                    for step in self._diagnostics.resolution_steps:
+                        yield Label(f"  {step}")
                 return
 
             # Images section
             yield Static("")
-            yield Label("Docker Images:", classes="docker-section-title")
+            yield Label("Docker Images", classes="section-title")
 
             missing_images = []
-            for img in self.AVAILABLE_IMAGES:
-                img_name = img["name"]
-                is_installed = self._diagnostics.images_available.get(img_name, False)
+            with Vertical(classes="status-group"):
+                for img in self.AVAILABLE_IMAGES:
+                    img_name = img["name"]
+                    is_installed = self._diagnostics.images_available.get(img_name, False)
+                    status = "success" if is_installed else "error"
+                    yield StatusIndicator(img.get("short_name", img_name), status)
+                    if not is_installed:
+                        missing_images.append(img)
 
-                if is_installed:
-                    yield Label(f"  ✓ {img_name}", classes="docker-status docker-status-ok")
-                else:
-                    yield Label(f"  ✗ {img_name}", classes="docker-status docker-status-error")
-                    missing_images.append(img)
-
-            # If all images installed, we're done
+            # If all images installed, show success
             if not missing_images:
                 yield Static("")
-                yield Label("All Docker images are already installed!", classes="docker-status docker-status-ok")
+                yield Label("All Docker images are ready!", classes="success-message")
                 return
 
             # Offer to pull missing images
             yield Static("")
-            yield Label("Select images to pull:", classes="docker-section-title")
+            yield Label("Select images to pull:", classes="section-title")
 
-            for img in missing_images:
-                img_name = img["name"]
-                cb = Checkbox(
-                    f"{img['description']}",
-                    value=img.get("default", False),
-                    id=f"docker_img_{img_name.replace('/', '_').replace(':', '_').replace('.', '_')}",
-                )
-                self._checkboxes[img_name] = cb
-                if img.get("default", False):
-                    self._selected_images.append(img_name)
-                with Horizontal(classes="docker-image-item"):
+            with Vertical(classes="image-select"):
+                for img in missing_images:
+                    img_name = img["name"]
+                    cb = Checkbox(
+                        f"{img.get('short_name', img_name)} - {img['description']}",
+                        value=img.get("default", False),
+                        id=f"docker_img_{img_name.replace('/', '_').replace(':', '_').replace('.', '_')}",
+                        classes="image-checkbox",
+                    )
+                    self._checkboxes[img_name] = cb
+                    if img.get("default", False):
+                        self._selected_images.append(img_name)
                     yield cb
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -371,42 +388,70 @@ class SkillsSetupStep(StepComponent):
     """Step for installing additional skills.
 
     Shows current skills status and allows selecting packages to install.
+    Uses modern StatusIndicator widgets for professional appearance.
     """
 
     DEFAULT_CSS = """
     SkillsSetupStep {
         width: 100%;
-        height: 100%;
+        height: auto;
+        padding: 0;
     }
 
     SkillsSetupStep .skills-container {
         width: 100%;
         height: auto;
-        padding: 1 2;
+        padding: 0 1;
     }
 
-    SkillsSetupStep .skills-status-ok {
-        color: $success;
-    }
-
-    SkillsSetupStep .skills-status-error {
-        color: $error;
-    }
-
-    SkillsSetupStep .skills-section-title {
+    SkillsSetupStep .section-title {
+        color: $primary;
         text-style: bold;
+        width: 100%;
         margin-top: 1;
         margin-bottom: 1;
     }
 
-    SkillsSetupStep .skills-item {
-        margin: 0 0 1 2;
+    SkillsSetupStep .summary-box {
+        width: 100%;
+        padding: 1 2;
+        margin-bottom: 1;
+        background: $surface-darken-1;
     }
 
-    SkillsSetupStep .skills-description {
+    SkillsSetupStep .summary-stat {
+        color: $text;
+    }
+
+    SkillsSetupStep .summary-detail {
         color: $text-muted;
-        margin-left: 4;
+        padding-left: 2;
+    }
+
+    SkillsSetupStep .package-list {
+        width: 100%;
+        padding: 0 1;
+    }
+
+    SkillsSetupStep .package-item {
         margin-bottom: 1;
+    }
+
+    SkillsSetupStep .package-desc {
+        color: $text-muted;
+        padding-left: 3;
+    }
+
+    SkillsSetupStep .package-select {
+        width: 100%;
+        padding: 1;
+        margin-top: 1;
+    }
+
+    SkillsSetupStep .success-message {
+        color: $success;
+        text-align: center;
+        padding: 1;
     }
     """
 
@@ -442,11 +487,11 @@ class SkillsSetupStep(StepComponent):
         self._load_skills_status()
 
         with ScrollableContainer(classes="skills-container"):
-            # Summary
-            yield Label("Skills Status:", classes="skills-section-title")
+            # Summary section
+            yield Label("Skills Overview", classes="section-title")
 
             if self._skills_info is None:
-                yield Label("  ✗ Could not check skills status", classes="skills-status-error")
+                yield StatusIndicator("Could not check skills status", "error")
                 return
 
             builtin = self._skills_info.get("builtin", [])
@@ -455,45 +500,52 @@ class SkillsSetupStep(StepComponent):
             installed_count = len(user) + len(project)
             total = len(builtin) + installed_count
 
-            yield Label(f"  {total} skill(s) available ({len(builtin)} built-in, {installed_count} installed)", classes="skills-item")
+            with Vertical(classes="summary-box"):
+                yield Label(f"{total} Skills Available", classes="summary-stat")
+                yield Label(f"{len(builtin)} built-in, {installed_count} user-installed", classes="summary-detail")
 
             # Packages section
             yield Static("")
-            yield Label("Skill Packages:", classes="skills-section-title")
+            yield Label("Skill Packages", classes="section-title")
 
             if self._packages_status is None:
-                yield Label("  Could not check package status", classes="skills-status-error")
+                yield StatusIndicator("Could not check package status", "error")
                 return
 
             packages_to_install = []
-            for pkg_id, pkg in self._packages_status.items():
-                if pkg["installed"]:
-                    count_info = f" ({pkg.get('skill_count', 0)} skills)" if pkg.get("skill_count") else ""
-                    yield Label(f"  ✓ {pkg['name']} [installed{count_info}]", classes="skills-status-ok")
-                else:
-                    yield Label(f"  ✗ {pkg['name']} [not installed]", classes="skills-status-error")
-                    packages_to_install.append((pkg_id, pkg))
-                yield Label(f"      {pkg['description']}", classes="skills-description")
+            with Vertical(classes="package-list"):
+                for pkg_id, pkg in self._packages_status.items():
+                    status = "success" if pkg["installed"] else "error"
+                    status_text = "installed" if pkg["installed"] else "not installed"
+                    skill_count = pkg.get("skill_count", 0)
+                    count_info = f" ({skill_count} skills)" if skill_count and pkg["installed"] else ""
 
-            # If all packages installed, we're done
+                    with Vertical(classes="package-item"):
+                        yield StatusIndicator(f"{pkg['name']} [{status_text}{count_info}]", status)
+                        yield Label(pkg["description"], classes="package-desc")
+
+                    if not pkg["installed"]:
+                        packages_to_install.append((pkg_id, pkg))
+
+            # If all packages installed, show success
             if not packages_to_install:
                 yield Static("")
-                yield Label("All skill packages are already installed!", classes="skills-status-ok")
+                yield Label("All skill packages are ready!", classes="success-message")
                 return
 
             # Offer to install missing packages
             yield Static("")
-            yield Label("Select packages to install:", classes="skills-section-title")
+            yield Label("Select packages to install:", classes="section-title")
 
-            for pkg_id, pkg in packages_to_install:
-                cb = Checkbox(
-                    f"Install {pkg['name']}",
-                    value=True,  # Default to install
-                    id=f"skills_pkg_{pkg_id}",
-                )
-                self._checkboxes[pkg_id] = cb
-                self._selected_packages.append(pkg_id)
-                with Horizontal(classes="skills-item"):
+            with Vertical(classes="package-select"):
+                for pkg_id, pkg in packages_to_install:
+                    cb = Checkbox(
+                        f"{pkg['name']} - {pkg['description']}",
+                        value=True,  # Default to install
+                        id=f"skills_pkg_{pkg_id}",
+                    )
+                    self._checkboxes[pkg_id] = cb
+                    self._selected_packages.append(pkg_id)
                     yield cb
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -540,7 +592,7 @@ class SetupCompleteStep(StepComponent):
         width: 100%;
         color: $success;
         text-style: bold;
-        margin-bottom: 1;
+        content-align: center middle;
     }
 
     SetupCompleteStep .complete-title {
@@ -551,19 +603,34 @@ class SetupCompleteStep(StepComponent):
         margin-bottom: 2;
     }
 
-    SetupCompleteStep .complete-message {
+    SetupCompleteStep .summary-list {
+        width: 100%;
+        padding: 1 2;
+    }
+
+    SetupCompleteStep .next-steps-title {
         text-align: center;
         width: 100%;
-        color: $text;
+        color: $text-muted;
+        margin-top: 2;
         margin-bottom: 1;
     }
 
-    SetupCompleteStep .complete-next-steps {
+    SetupCompleteStep .next-step-item {
         width: 100%;
         color: $text-muted;
-        margin-top: 1;
+        text-align: center;
     }
     """
+
+    # Large checkmark ASCII art
+    SUCCESS_ICON = """
+       ██╗
+      ██╔╝
+     ██╔╝
+    ██╔╝
+    ╚═╝
+    """.strip()
 
     def __init__(
         self,
@@ -576,31 +643,31 @@ class SetupCompleteStep(StepComponent):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="complete-container"):
-            yield Label("✓", classes="complete-icon")
+            yield Static(self.SUCCESS_ICON, classes="complete-icon")
             yield Label("Setup Complete!", classes="complete-title")
 
-            # Show what was configured
+            # Show what was configured using StatusIndicator
             configured = self.wizard_state.get("configured_providers", [])
             save_location = self.wizard_state.get("save_location", ".env")
             docker_images = self.wizard_state.get("docker_images_pulled", [])
             skills_installed = self.wizard_state.get("skills_installed", [])
 
-            if configured:
-                yield Label(f"✓ Configured {len(configured)} provider(s)", classes="complete-message")
+            with Vertical(classes="summary-list"):
+                if configured:
+                    yield StatusIndicator(f"Configured {len(configured)} provider(s)", "success")
 
-            if save_location:
-                yield Label(f"✓ API keys saved to: {save_location}", classes="complete-message")
+                if save_location:
+                    yield StatusIndicator(f"API keys saved to: {save_location}", "success")
 
-            if docker_images:
-                yield Label(f"✓ Pulled {len(docker_images)} Docker image(s)", classes="complete-message")
+                if docker_images:
+                    yield StatusIndicator(f"Pulled {len(docker_images)} Docker image(s)", "success")
 
-            if skills_installed:
-                yield Label(f"✓ Installed {len(skills_installed)} skill package(s)", classes="complete-message")
+                if skills_installed:
+                    yield StatusIndicator(f"Installed {len(skills_installed)} skill package(s)", "success")
 
-            yield Static("")
-            yield Label("Next steps:", classes="complete-next-steps")
-            yield Label("  • Run 'massgen --quickstart' to create a config", classes="complete-next-steps")
-            yield Label("  • Or run 'massgen --config your_config.yaml' to start", classes="complete-next-steps")
+            yield Label("What's Next?", classes="next-steps-title")
+            yield Label("Run 'massgen --quickstart' to create a config", classes="next-step-item")
+            yield Label("Or 'massgen --config your_config.yaml' to start", classes="next-step-item")
 
     def get_value(self) -> bool:
         return True
@@ -619,6 +686,9 @@ class SetupWizard(WizardModal):
     7. Complete
     """
 
+    # Short labels for breadcrumb stepper
+    STEP_LABELS = ["Welcome", "Providers", "Save", "Docker", "Skills", "Done"]
+
     def __init__(
         self,
         *,
@@ -628,6 +698,14 @@ class SetupWizard(WizardModal):
         super().__init__(id=id, classes=classes)
         self._dynamic_steps_added = False
         self._providers_info: Dict[str, tuple] = {}  # provider_id -> (name, env_var)
+
+    def get_step_labels(self) -> List[str]:
+        """Return short labels for the breadcrumb stepper."""
+        return self.STEP_LABELS
+
+    def get_wizard_subtitle(self) -> str:
+        """Return subtitle for the banner."""
+        return "Configure your multi-agent AI environment"
 
     def _load_providers_info(self) -> None:
         """Load provider information for dynamic step creation."""

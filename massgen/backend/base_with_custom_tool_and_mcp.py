@@ -506,6 +506,17 @@ class CustomToolAndMCPBackend(LLMBackend):
         """Set the GeneralHookManager (used by orchestrator for global hooks)."""
         self._general_hook_manager = manager
 
+    def set_subagent_spawn_callback(self, callback: Callable[[str, Dict[str, Any], str], None]) -> None:
+        """Set callback for subagent spawn notifications.
+
+        This callback is invoked (in a background thread) when spawn_subagents is called,
+        BEFORE the blocking execution begins. This allows the TUI to show progress immediately.
+
+        Args:
+            callback: Function(tool_name, args_dict, call_id) to invoke on spawn
+        """
+        self._subagent_spawn_callback = callback
+
     def _build_multimodal_config_from_params(self) -> Dict[str, Any]:
         """Build multimodal_config from individual generation config variables.
 
@@ -1557,6 +1568,23 @@ class CustomToolAndMCPBackend(LLMBackend):
                 source=f"{config.source_prefix}{tool_name}",
                 tool_call_id=call_id,
             )
+
+            # Special handling for subagent spawn - notify TUI immediately via callback
+            # This runs in a thread to bypass async generator buffering
+            if "spawn_subagent" in tool_name.lower() and hasattr(self, "_subagent_spawn_callback"):
+                import threading
+
+                try:
+                    args_for_callback = json.loads(arguments_str) if arguments_str else {}
+                    # Run callback in thread to avoid blocking
+                    thread = threading.Thread(
+                        target=self._subagent_spawn_callback,
+                        args=(tool_name, args_for_callback, call_id),
+                        daemon=True,
+                    )
+                    thread.start()
+                except Exception as e:
+                    logger.debug(f"Subagent spawn callback failed: {e}")
 
             # Record tool call to execution trace (if available via mixin)
             if hasattr(self, "_execution_trace") and self._execution_trace:

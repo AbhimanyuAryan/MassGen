@@ -5395,6 +5395,27 @@ async def run_textual_interactive_mode(
                         logger.info(f"[Textual] Single-agent mode: using {list(effective_agents.keys())}")
                         agents = effective_agents
 
+                # Prepend task planning prompt prefix when TUI plan mode is active
+                if mode_state.is_plan_active():
+                    # Get subagents setting from coordination config
+                    coord_cfg = orchestrator_cfg.get("coordination", {}) if orchestrator_cfg else {}
+                    enable_subagents = coord_cfg.get("enable_subagents", False)
+                    # Also check if it was set via coordination overrides
+                    if orchestrator_config.coordination_config and orchestrator_config.coordination_config.enable_subagents:
+                        enable_subagents = True
+
+                    planning_prefix = get_task_planning_prompt_prefix(
+                        plan_depth=mode_state.plan_config.depth,
+                        enable_subagents=enable_subagents,
+                        broadcast_mode=mode_state.plan_config.broadcast,
+                    )
+                    question = planning_prefix + question
+                    logger.info(
+                        f"[Textual] Plan mode: Prepended task planning instructions "
+                        f"(depth={mode_state.plan_config.depth}, subagents={enable_subagents}, "
+                        f"broadcast={mode_state.plan_config.broadcast})",
+                    )
+
             # Get generated personas from session info if persist_across_turns is enabled
             # (matching Rich terminal path setup)
             generated_personas = None

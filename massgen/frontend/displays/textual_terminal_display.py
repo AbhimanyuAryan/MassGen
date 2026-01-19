@@ -62,6 +62,8 @@ try:
         PathSuggestionDropdown,
         PostEvaluationBanner,
         SessionCompleteBanner,
+        SubagentCard,
+        SubagentModal,
         TaskPlanCard,
         TaskPlanModal,
         TimelineSection,
@@ -1246,6 +1248,28 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app:
             self._call_app_method("update_agent_timeout", agent_id, timeout_state)
 
+    def notify_subagent_spawn_started(
+        self,
+        agent_id: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        call_id: str,
+    ) -> None:
+        """Notify the TUI that subagent spawning has started.
+
+        This is called from a background thread when spawn_subagents is invoked,
+        BEFORE the blocking execution begins. This allows showing the SubagentCard
+        immediately rather than waiting for the tool to complete.
+
+        Args:
+            agent_id: ID of the agent spawning subagents
+            tool_name: Name of the spawn tool (e.g., spawn_subagents)
+            args: Tool arguments containing tasks list
+            call_id: Tool call ID
+        """
+        if self._app:
+            self._call_app_method("show_subagent_card_from_spawn", agent_id, args, call_id)
+
     def update_hook_execution(
         self,
         agent_id: str,
@@ -1408,24 +1432,54 @@ class TextualTerminalDisplay(TerminalDisplay):
         if not writes:
             return ""
 
+        # Get categorized writes if available
+        categorized = {}
+        if hasattr(self.orchestrator, "get_context_path_writes_categorized"):
+            categorized = self.orchestrator.get_context_path_writes_categorized()
+        new_files = categorized.get("new", [])
+        modified_files = categorized.get("modified", [])
+
         INLINE_THRESHOLD = 5  # Show inline if <= this many files
 
+        # Create visually distinct section
+        header = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
         if len(writes) <= INLINE_THRESHOLD:
-            # Show files inline
-            footer_lines = ["\n---", "📂 **Files written to context paths:**"]
-            for path in writes:
-                footer_lines.append(f"  • {path}")
+            # Show files inline, split by category
+            footer_lines = [
+                header,
+                "📂 **Context Path Changes**",
+                "",
+            ]
+            if new_files:
+                footer_lines.append("  **New files:**")
+                for path in sorted(new_files):
+                    footer_lines.append(f"    ✚ `{path}`")
+            if modified_files:
+                if new_files:
+                    footer_lines.append("")  # Blank line between sections
+                footer_lines.append("  **Modified files:**")
+                for path in sorted(modified_files):
+                    footer_lines.append(f"    ✎ `{path}`")
             return "\n".join(footer_lines)
         else:
             # Many files - write to log file and show summary
-            log_file_path = self._write_context_path_log(writes)
-            return f"\n---\n📂 **{len(writes)} files written to context paths**\n  View details: {log_file_path}"
+            log_file_path = self._write_context_path_log(writes, new_files, modified_files)
+            summary = f"{len(new_files)} new, {len(modified_files)} modified"
+            return f"{header}\n📂 **{len(writes)} Context Path Changes** ({summary})\n\n  See full list: `{log_file_path}`"
 
-    def _write_context_path_log(self, writes: list[str]) -> str:
+    def _write_context_path_log(
+        self,
+        writes: list[str],
+        new_files: list[str] | None = None,
+        modified_files: list[str] | None = None,
+    ) -> str:
         """Write full context path write list to log directory.
 
         Args:
-            writes: List of file paths written to context paths.
+            writes: List of all file paths written to context paths.
+            new_files: List of new file paths (optional, for categorized output).
+            modified_files: List of modified file paths (optional, for categorized output).
 
         Returns:
             Path to the log file.
@@ -1433,10 +1487,25 @@ class TextualTerminalDisplay(TerminalDisplay):
         log_file = self.output_dir / "context_path_writes.txt"
         try:
             with open(log_file, "w", encoding="utf-8") as f:
-                f.write(f"Context Path Writes - {len(writes)} files\n")
+                f.write(f"Context Path Changes - {len(writes)} files\n")
                 f.write("=" * 50 + "\n\n")
-                for path in sorted(writes):
-                    f.write(f"{path}\n")
+
+                if new_files or modified_files:
+                    # Categorized output
+                    if new_files:
+                        f.write(f"New files ({len(new_files)}):\n")
+                        for path in sorted(new_files):
+                            f.write(f"  + {path}\n")
+                        f.write("\n")
+                    if modified_files:
+                        f.write(f"Modified files ({len(modified_files)}):\n")
+                        for path in sorted(modified_files):
+                            f.write(f"  ~ {path}\n")
+                else:
+                    # Flat output (fallback)
+                    for path in sorted(writes):
+                        f.write(f"{path}\n")
+
             return str(log_file)
         except OSError as exc:
             logger.error(f"Failed to write context path log: {exc}")
@@ -3615,6 +3684,83 @@ Type your question and press Enter to ask the agents.
             timestamp = datetime.now().strftime("%H:%M:%S")
             self._orchestrator_events.append(f"{timestamp} {event}")
 
+        def show_subagent_card_from_spawn(
+            self,
+            agent_id: str,
+            args: Dict[str, Any],
+            call_id: str,
+        ):
+            """Show SubagentCard immediately when spawn_subagents is called.
+
+            This is called from a background thread via notify_subagent_spawn_started,
+            BEFORE the blocking MCP tool execution begins. This allows showing the
+            SubagentCard with pending subagents immediately rather than waiting
+            for tool completion.
+
+            Args:
+                agent_id: ID of the agent spawning subagents
+                args: Tool arguments containing tasks list
+                call_id: Tool call ID for card identification
+            """
+            from massgen.subagent.models import SubagentDisplayData
+
+            tui_log(f"show_subagent_card_from_spawn: agent_id={agent_id}, call_id={call_id}")
+
+            # Validate we have tasks in args
+            tasks = args.get("tasks", [])
+            if not tasks:
+                tui_log("show_subagent_card_from_spawn: no tasks in args")
+                return
+
+            tui_log(f"show_subagent_card_from_spawn: creating card for {len(tasks)} tasks")
+
+            # Create SubagentDisplayData for each task (all pending/running)
+            subagents = []
+            for i, task_data in enumerate(tasks):
+                subagent_id = task_data.get("subagent_id", task_data.get("id", f"subagent_{i}"))
+                task_desc = task_data.get("task", "")
+
+                subagents.append(
+                    SubagentDisplayData(
+                        id=subagent_id,
+                        task=task_desc,
+                        status="running",  # All start as running
+                        progress_percent=0,
+                        elapsed_seconds=0.0,
+                        timeout_seconds=task_data.get("timeout_seconds", 300),
+                        workspace_path="",  # Not yet assigned
+                        workspace_file_count=0,
+                        last_log_line="Starting...",
+                        error=None,
+                        answer_preview=None,
+                        log_path=None,
+                    ),
+                )
+
+            if not subagents:
+                return
+
+            # Get the agent's timeline and add the card
+            if agent_id in self.agent_widgets:
+                panel = self.agent_widgets[agent_id]
+                try:
+                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                    # Create and add SubagentCard to timeline
+                    card = SubagentCard(
+                        subagents=subagents,
+                        tool_call_id=call_id,
+                        id=f"subagent_{call_id}",
+                    )
+                    timeline.add_widget(card)
+                    tui_log(
+                        f"show_subagent_card_from_spawn: added SubagentCard with {len(subagents)} pending subagents",
+                    )
+                except Exception as e:
+                    tui_log(f"show_subagent_card_from_spawn: failed to add card: {e}")
+            else:
+                tui_log(f"show_subagent_card_from_spawn: agent {agent_id} not in agent_widgets")
+
         def show_final_presentation(
             self,
             answer: str,
@@ -4528,6 +4674,15 @@ Type your question and press Enter to ask the agents.
             modal = TaskPlanModal(
                 tasks=event.tasks,
                 focused_task_id=event.focused_task_id,
+            )
+            self.push_screen(modal)
+            event.stop()
+
+        def on_subagent_card_open_modal(self, event: SubagentCard.OpenModal) -> None:
+            """Handle subagent card click - show subagent modal with log streaming."""
+            modal = SubagentModal(
+                subagent=event.subagent,
+                all_subagents=event.all_subagents,
             )
             self.push_screen(modal)
             event.stop()
@@ -6453,6 +6608,8 @@ Type your question and press Enter to ask the agents.
 
                 # Check if this is a Planning MCP tool - we'll show TaskPlanCard instead
                 is_planning_tool = self._is_planning_mcp_tool(tool_data.tool_name)
+                # Check if this is a subagent tool - we'll show SubagentCard instead
+                is_subagent_tool = self._is_subagent_tool(tool_data.tool_name)
 
                 if tool_data.status == "running":
                     # Check if this is an args update for existing tool
@@ -6461,17 +6618,24 @@ Type your question and press Enter to ask the agents.
                         # Update existing card with args (both truncated and full)
                         if tool_data.args_summary:
                             existing_card.set_params(tool_data.args_summary, tool_data.args_full)
+                    elif is_subagent_tool:
+                        # Subagent tool starting - show SubagentCard with pending tasks from args
+                        self._show_subagent_card_from_args(tool_data, timeline)
                     elif not is_planning_tool:
                         # New tool started - add card to timeline (skip planning tools)
                         timeline.add_tool(tool_data)
                 else:
                     # Tool completed/failed - update existing card (if it exists)
-                    if not is_planning_tool:
+                    if not is_planning_tool and not is_subagent_tool:
                         timeline.update_tool(tool_data.tool_id, tool_data)
 
                     # Check if this is a Planning MCP tool and display TaskPlanCard
+                    tui_log(f"_add_tool_content: tool_status={tool_data.status}, tool_name={tool_data.tool_name}")
                     if tool_data.status == "success":
                         self._check_and_display_task_plan(tool_data, timeline)
+                        # Check if this is a subagent tool - update existing card with results
+                        if is_subagent_tool:
+                            self._update_subagent_card_with_results(tool_data, timeline)
 
                     # Refresh header if this is a background operation (to show bg badge)
                     if tool_data.status == "background":
@@ -6732,6 +6896,332 @@ Type your question and press Enter to ask the agents.
             ]
             tool_lower = tool_name.lower()
             return any(pt in tool_lower for pt in planning_tools)
+
+        def _is_subagent_tool(self, tool_name: str) -> bool:
+            """Check if a tool is a subagent tool (should show SubagentCard instead of tool card).
+
+            Args:
+                tool_name: The tool name to check
+
+            Returns:
+                True if this is a subagent spawning tool
+            """
+            subagent_tools = [
+                "spawn_subagents",
+                "spawn_subagent",
+            ]
+            tool_lower = tool_name.lower()
+            return any(st in tool_lower for st in subagent_tools)
+
+        def _show_subagent_card_from_args(self, tool_data, timeline) -> None:
+            """Show SubagentCard when spawn_subagents tool starts, parsing tasks from args.
+
+            This allows users to see subagents as they're being spawned, not just after completion.
+            NOTE: This is a fallback path - the callback via show_subagent_card_from_spawn
+            should create the card immediately. This path only runs when the "running" chunk
+            arrives (which may be delayed due to stream buffering).
+            """
+            import json
+
+            from massgen.subagent.models import SubagentDisplayData
+
+            # Check if card already exists (created by callback)
+            card_id = f"subagent_{tool_data.tool_id}"
+            try:
+                timeline.query_one(f"#{card_id}", SubagentCard)
+                tui_log(f"_show_subagent_card_from_args: card {card_id} already exists, skipping")
+                return
+            except Exception:
+                pass  # Card doesn't exist, continue to create it
+
+            # Also check for any SubagentCard in the timeline (callback might use different ID)
+            try:
+                cards = list(timeline.query(SubagentCard))
+                if cards:
+                    tui_log(f"_show_subagent_card_from_args: SubagentCard already exists ({cards[0].id}), skipping")
+                    return
+            except Exception:
+                pass
+
+            # Parse args to get task list
+            args = tool_data.args_full
+            if not args:
+                tui_log("_show_subagent_card_from_args: no args_full")
+                return
+
+            try:
+                args_data = json.loads(args)
+            except (json.JSONDecodeError, TypeError):
+                tui_log(f"_show_subagent_card_from_args: failed to parse args: {args[:100]}")
+                return
+
+            if not isinstance(args_data, dict):
+                return
+
+            # Extract tasks from args
+            tasks = args_data.get("tasks", [])
+            if not tasks:
+                tui_log("_show_subagent_card_from_args: no tasks in args")
+                return
+
+            tui_log(f"_show_subagent_card_from_args: found {len(tasks)} tasks to spawn")
+
+            # Create SubagentDisplayData for each task (all pending/running)
+            subagents = []
+            for task_data in tasks:
+                subagent_id = task_data.get("subagent_id", task_data.get("id", f"subagent_{len(subagents)}"))
+                task_desc = task_data.get("task", "")
+
+                subagents.append(
+                    SubagentDisplayData(
+                        id=subagent_id,
+                        task=task_desc,
+                        status="running",  # All start as running
+                        progress_percent=0,
+                        elapsed_seconds=0.0,
+                        timeout_seconds=task_data.get("timeout_seconds", 300),
+                        workspace_path="",  # Not yet assigned
+                        workspace_file_count=0,
+                        last_log_line="Starting...",
+                        error=None,
+                        answer_preview=None,
+                        log_path=None,
+                    ),
+                )
+
+            if not subagents:
+                return
+
+            # Create and add SubagentCard to timeline
+            card = SubagentCard(
+                subagents=subagents,
+                tool_call_id=tool_data.tool_id,
+                id=f"subagent_{tool_data.tool_id}",
+            )
+            timeline.add_widget(card)
+            tui_log(f"_show_subagent_card_from_args: added SubagentCard with {len(subagents)} pending subagents")
+
+        def _update_subagent_card_with_results(self, tool_data, timeline) -> None:
+            """Update existing SubagentCard with completion results.
+
+            Called when spawn_subagents tool completes to update status, progress, answers, etc.
+            """
+            import json
+
+            from massgen.subagent.models import SubagentDisplayData
+
+            # Find existing card - check both possible IDs since callback might use different ID
+            card_id = f"subagent_{tool_data.tool_id}"
+            card = None
+            try:
+                card = timeline.query_one(f"#{card_id}", SubagentCard)
+                tui_log(f"_update_subagent_card_with_results: found card by tool_id: {card_id}")
+            except Exception:
+                # Also try querying by tool_call_id if different
+                if hasattr(tool_data, "tool_call_id") and tool_data.tool_call_id != tool_data.tool_id:
+                    alt_id = f"subagent_{tool_data.tool_call_id}"
+                    try:
+                        card = timeline.query_one(f"#{alt_id}", SubagentCard)
+                        tui_log(f"_update_subagent_card_with_results: found card by tool_call_id: {alt_id}")
+                    except Exception:
+                        pass
+
+                # Try finding ANY SubagentCard in the timeline
+                if card is None:
+                    try:
+                        cards = list(timeline.query(SubagentCard))
+                        if cards:
+                            card = cards[0]  # Use first matching card
+                            tui_log(f"_update_subagent_card_with_results: found card by query: {card.id}")
+                    except Exception:
+                        pass
+
+            if card is None:
+                tui_log(f"_update_subagent_card_with_results: no card found (tried {card_id}), skipping duplicate creation")
+                # Don't create a new card - the callback already created one
+                # Just log and return to avoid duplicates
+                return
+
+            # Parse results
+            result = tool_data.result_full
+            if not result:
+                return
+
+            try:
+                result_data = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                return
+
+            if not isinstance(result_data, dict):
+                return
+
+            # Extract spawned subagents list
+            spawned = result_data.get("results", result_data.get("spawned_subagents", result_data.get("subagents", [])))
+            if not spawned:
+                return
+
+            # Build updated subagent list
+            updated_subagents = []
+            for sa_data in spawned:
+                # Map status from result to our display status
+                raw_status = sa_data.get("status", "running")
+                if raw_status == "completed":
+                    display_status = "completed"
+                    progress = 100
+                elif raw_status == "completed_but_timeout":
+                    display_status = "timeout"
+                    progress = sa_data.get("completion_percentage", 100)
+                elif raw_status == "failed":
+                    display_status = "failed"
+                    progress = 0
+                else:
+                    display_status = "running"
+                    progress = 0
+
+                elapsed = sa_data.get("execution_time_seconds", 0.0)
+
+                # Count files in workspace if it exists
+                workspace_path = sa_data.get("workspace", "")
+                file_count = 0
+                if workspace_path:
+                    from pathlib import Path
+
+                    workspace = Path(workspace_path)
+                    if workspace.exists():
+                        try:
+                            file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
+                        except Exception:
+                            pass
+
+                # Try to get task from original card data
+                task = sa_data.get("task", "")
+                if not task:
+                    # Try to find in existing card
+                    subagent_id = sa_data.get("subagent_id", sa_data.get("id", "unknown"))
+                    for existing in card.subagents:
+                        if existing.id == subagent_id:
+                            task = existing.task
+                            break
+
+                updated_subagents.append(
+                    SubagentDisplayData(
+                        id=sa_data.get("subagent_id", sa_data.get("id", "unknown")),
+                        task=task,
+                        status=display_status,
+                        progress_percent=progress,
+                        elapsed_seconds=elapsed,
+                        timeout_seconds=sa_data.get("timeout_seconds", 300),
+                        workspace_path=workspace_path,
+                        workspace_file_count=file_count,
+                        last_log_line=sa_data.get("error", "") if sa_data.get("error") else "",
+                        error=sa_data.get("error"),
+                        answer_preview=sa_data.get("answer", "")[:200] if sa_data.get("answer") else None,
+                        log_path=sa_data.get("log_path"),
+                    ),
+                )
+
+            if updated_subagents:
+                card.update_subagents(updated_subagents)
+                tui_log(f"_update_subagent_card_with_results: updated card with {len(updated_subagents)} subagents")
+
+        def _check_and_display_subagent_card(self, tool_data, timeline) -> None:
+            """Check if tool result is from subagent spawn and display SubagentCard.
+
+            Subagent tools include:
+            - spawn_subagents
+            - spawn_subagent
+            """
+            import json
+
+            from massgen.subagent.models import SubagentDisplayData
+
+            # Check if tool name matches a subagent tool
+            tool_name = tool_data.tool_name.lower()
+            tui_log(f"_check_and_display_subagent_card: tool_name={tool_name}, is_subagent={self._is_subagent_tool(tool_name)}")
+            if not self._is_subagent_tool(tool_name):
+                return
+
+            # Try to parse the result as JSON to extract spawned subagents
+            result = tool_data.result_full
+            if not result:
+                return
+
+            try:
+                result_data = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                return
+
+            if not isinstance(result_data, dict):
+                return
+
+            # Extract spawned subagents list
+            # The spawn_subagents tool returns results in "results" key
+            spawned = result_data.get("results", result_data.get("spawned_subagents", result_data.get("subagents", [])))
+            tui_log(f"_check_and_display_subagent_card: found {len(spawned) if spawned else 0} spawned subagents")
+            if not spawned:
+                return
+
+            # Create SubagentDisplayData for each spawned subagent
+            subagents = []
+            for sa_data in spawned:
+                # Map status from result to our display status
+                raw_status = sa_data.get("status", "running")
+                if raw_status == "completed":
+                    display_status = "completed"
+                    progress = 100
+                elif raw_status == "completed_but_timeout":
+                    display_status = "timeout"
+                    progress = sa_data.get("completion_percentage", 100)
+                elif raw_status == "failed":
+                    display_status = "failed"
+                    progress = 0
+                else:
+                    display_status = "running"
+                    progress = 0
+
+                elapsed = sa_data.get("execution_time_seconds", 0.0)
+
+                # Count files in workspace if it exists
+                workspace_path = sa_data.get("workspace", "")
+                file_count = 0
+                if workspace_path:
+                    from pathlib import Path
+
+                    workspace = Path(workspace_path)
+                    if workspace.exists():
+                        try:
+                            file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
+                        except Exception:
+                            pass
+
+                subagents.append(
+                    SubagentDisplayData(
+                        id=sa_data.get("subagent_id", sa_data.get("id", "unknown")),
+                        task=sa_data.get("task", ""),  # May be empty if not in result
+                        status=display_status,
+                        progress_percent=progress,
+                        elapsed_seconds=elapsed,
+                        timeout_seconds=sa_data.get("timeout_seconds", 300),
+                        workspace_path=workspace_path,
+                        workspace_file_count=file_count,
+                        last_log_line=sa_data.get("error", "") if sa_data.get("error") else "",
+                        error=sa_data.get("error"),
+                        answer_preview=sa_data.get("answer", "")[:200] if sa_data.get("answer") else None,
+                        log_path=sa_data.get("log_path"),
+                    ),
+                )
+
+            if not subagents:
+                return
+
+            # Create and add SubagentCard to timeline
+            card = SubagentCard(
+                subagents=subagents,
+                tool_call_id=tool_data.tool_id,
+                id=f"subagent_{tool_data.tool_id}",
+            )
+            timeline.add_widget(card)
+            tui_log(f"_check_and_display_subagent_card: added SubagentCard with {len(subagents)} subagents")
 
         def _check_and_display_task_plan(self, tool_data, timeline) -> None:
             """Check if tool result is from Planning MCP and display TaskPlanCard.

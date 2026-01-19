@@ -616,42 +616,12 @@ HeaderWidget.hidden {
     min-height: 4;
     width: 100%;
     padding: 0 1;
-    margin-bottom: 1;
     background: #f5f5f5;
 }
 
-/* During execution - show status in input bar, hide actual input */
-#input_area.execution-mode {
-    height: 3;
-    min-height: 3;
-    margin-bottom: 1;
-}
-
-#input_area.execution-mode #question_input {
-    display: none;
-}
-
-#input_area.execution-mode #input_header {
-    display: none;
-}
-
-/* Execution bar - shown during coordination, hidden otherwise */
+/* Execution bar - hidden (keeping input area consistent in all states) */
 #execution_bar {
     display: none;
-    layout: horizontal;
-    height: 3;
-    width: 100%;
-    padding: 0 2;
-    background: #e8e8e8;
-    border: solid #d32f2f;
-    align-vertical: middle;
-}
-
-#input_area.execution-mode #execution_bar {
-    display: block;
-    layout: horizontal;
-    height: 3;
-    align-vertical: middle;
 }
 
 #execution_status {
@@ -687,19 +657,6 @@ HeaderWidget.hidden {
 #cancel_button:focus {
     background: #f44336;
     border: none;
-}
-
-/* During execution, hide hint and input but keep header */
-#input_area.execution-mode #input_hint {
-    display: none;
-}
-
-#input_area.execution-mode #vim_indicator {
-    display: none;
-}
-
-#input_area.execution-mode #input_header {
-    display: none;
 }
 
 /* === Path Autocomplete Dropdown === */
@@ -1958,10 +1915,9 @@ ScrollbarThumb:hover {
 }
 
 /* Footer */
+/* Footer - hidden (using custom input area instead) */
 Footer {
-    background: #0066cc;
-    color: #ffffff;
-    dock: bottom;
+    display: none;
 }
 
 /* Safe mode indicator */
@@ -3213,10 +3169,10 @@ WizardModal {
 
 #wizard_container {
     width: 90%;
-    max-width: 100;
+    max-width: 80;
     height: 85%;
     background: #ffffff;
-    border: solid #0066cc;
+    border: solid #0077b6;
     padding: 1 2;
     layout: vertical;
 }
@@ -3226,7 +3182,6 @@ WizardModal {
     height: auto;
     width: 100%;
     padding: 0 0 1 0;
-    border-bottom: solid #e0e0e0;
 }
 
 #wizard_progress_bar {
@@ -3247,7 +3202,7 @@ WizardModal {
 
 #wizard_title {
     text-style: bold;
-    color: #0066cc;
+    color: #0077b6;
     text-align: center;
     width: 100%;
     margin-top: 1;
@@ -3292,11 +3247,13 @@ WizardModal {
     align: center middle;
     padding-top: 1;
     layout: horizontal;
+    border-top: solid #e0e0e0;
 }
 
 #wizard_nav Button {
     margin: 0 1;
     min-width: 12;
+    height: 3;
     text-align: center;
     content-align: center middle;
 }
@@ -3369,26 +3326,23 @@ StepComponent {
     height: auto;
     max-height: 20;
     overflow-y: auto;
-    padding: 1;
-    background: #ffffff;
-    border: solid #e0e0e0;
+    padding: 0;
+    background: transparent;
 }
 
 .provider-item {
     height: 2;
     padding: 0 1;
-    margin-bottom: 1;
-    background: #f5f5f5;
-    border: solid #e0e0e0;
+    margin-bottom: 0;
+    background: transparent;
 }
 
 .provider-item:hover {
-    background: #e8e8e8;
-    border: solid #bdbdbd;
+    background: #f0f0f0;
 }
 
 .provider-item.configured {
-    border-left: thick #4caf50;
+    border-left: thick #2e7d32;
 }
 
 .provider-item.unconfigured {
@@ -3397,37 +3351,33 @@ StepComponent {
 
 .provider-item.selected {
     background: #e8f5e9;
-    border: solid #4caf50;
 }
 
 /* Single select option list */
 .option-list {
     height: auto;
     max-height: 15;
-    padding: 1;
+    padding: 0;
 }
 
 .option-item {
     height: auto;
     min-height: 3;
     padding: 1;
-    margin-bottom: 1;
-    background: #f5f5f5;
-    border: solid #e0e0e0;
+    margin-bottom: 0;
+    background: transparent;
 }
 
 .option-item:hover {
-    background: #e8e8e8;
-    border: solid #bdbdbd;
+    background: #f0f0f0;
 }
 
 .option-item:focus {
-    border: solid #0066cc;
+    background: #e8f5e9;
 }
 
 .option-item.selected {
     background: #e8f5e9;
-    border: solid #4caf50;
 }
 
 .option-label {
@@ -3585,12 +3535,12 @@ StepComponent {
 }
 
 .complete-icon {
-    color: #4caf50;
+    color: #2e7d32;
     margin-bottom: 1;
 }
 
 .complete-title {
-    color: #4caf50;
+    color: #2e7d32;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -3601,6 +3551,348 @@ StepComponent {
 }
 
 .complete-next-steps {
-    color: #0066cc;
+    color: #0077b6;
     margin-top: 1;
+}
+
+/* === CLI-Style Wizard Status Classes === */
+
+/* Status indicators */
+.wizard-status-ok {
+    color: #2e7d32;
+    width: 100%;
+}
+
+.wizard-status-error {
+    color: #c62828;
+    width: 100%;
+}
+
+.wizard-status-warning {
+    color: #f57f17;
+    width: 100%;
+}
+
+.wizard-status-muted {
+    color: #757575;
+    width: 100%;
+}
+
+/* Section titles - teal/cyan, bold */
+.wizard-section-title {
+    color: #0077b6;
+    text-style: bold;
+    width: 100%;
+    margin-top: 1;
+    margin-bottom: 0;
+}
+
+/* Status items - 2 space indent */
+.wizard-status-item {
+    padding-left: 2;
+    width: 100%;
+}
+
+/* Description text - 6 space indent, muted */
+.wizard-description {
+    padding-left: 6;
+    color: #757575;
+    width: 100%;
+}
+
+/* ============================================================================
+ * Modern Wizard Framework Styling (Light Theme)
+ * Card-based wizard with ASCII banner, breadcrumb stepper, and status indicators
+ * ============================================================================ */
+
+/* --- ASCII Banner --- */
+ASCIIBanner {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+    text-align: center;
+    padding: 0 0 1 0;
+}
+
+ASCIIBanner .banner-text {
+    color: #0077b6;
+    text-style: bold;
+}
+
+ASCIIBanner .banner-subtitle {
+    color: #757575;
+    text-align: center;
+    margin-top: 0;
+}
+
+/* --- Breadcrumb Stepper --- */
+BreadcrumbStepper {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+    padding: 1 2;
+}
+
+BreadcrumbStepper .stepper-track {
+    width: auto;
+    height: 1;
+    content-align: center middle;
+}
+
+BreadcrumbStepper .stepper-labels {
+    width: auto;
+    height: 1;
+    content-align: center middle;
+}
+
+BreadcrumbStepper .step-indicator {
+    width: auto;
+    height: 1;
+}
+
+BreadcrumbStepper .step-indicator.completed {
+    color: #2e7d32;
+}
+
+BreadcrumbStepper .step-indicator.current {
+    color: #0077b6;
+    text-style: bold;
+}
+
+BreadcrumbStepper .step-indicator.pending {
+    color: #bdbdbd;
+}
+
+BreadcrumbStepper .step-connector {
+    color: #bdbdbd;
+    width: auto;
+}
+
+BreadcrumbStepper .step-connector.completed {
+    color: #2e7d32;
+}
+
+BreadcrumbStepper .step-label {
+    width: auto;
+    text-align: center;
+    padding: 0 1;
+}
+
+BreadcrumbStepper .step-label.current {
+    color: #0077b6;
+    text-style: bold;
+}
+
+BreadcrumbStepper .step-label.completed {
+    color: #2e7d32;
+}
+
+BreadcrumbStepper .step-label.pending {
+    color: #bdbdbd;
+}
+
+/* --- Status Indicator --- */
+StatusIndicator {
+    width: auto;
+    height: 1;
+}
+
+StatusIndicator.pending {
+    color: #bdbdbd;
+}
+
+StatusIndicator.loading {
+    color: #0077b6;
+}
+
+StatusIndicator.success {
+    color: #2e7d32;
+}
+
+StatusIndicator.error {
+    color: #c62828;
+}
+
+StatusIndicator.warning {
+    color: #f57f17;
+}
+
+/* --- Status Row --- */
+StatusRow {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}
+
+StatusRow .status-label {
+    width: 1fr;
+}
+
+StatusRow .status-detail {
+    width: auto;
+    color: #757575;
+}
+
+/* --- Wizard Modal Container --- */
+WizardModal {
+    align: center middle;
+    background: #ffffff 80%;
+}
+
+WizardModal #wizard_outer {
+    width: 90%;
+    max-width: 80;
+    height: 90%;
+    background: #fafafa;
+    border: double #0077b6;
+    padding: 1 2;
+}
+
+WizardModal #wizard_banner {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+    padding: 0;
+}
+
+WizardModal #wizard_banner .banner-text {
+    color: #0077b6;
+    text-align: center;
+}
+
+WizardModal #wizard_stepper {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+    padding: 1 0;
+}
+
+WizardModal #wizard_card {
+    width: 100%;
+    height: 1fr;
+    min-height: 12;
+    margin: 0 1;
+}
+
+WizardModal #wizard_card .card-border-top,
+WizardModal #wizard_card .card-border-bottom {
+    color: #e0e0e0;
+    text-align: center;
+}
+
+WizardModal #wizard_card .card-content {
+    padding: 2 3;
+    height: 1fr;
+    overflow-y: auto;
+}
+
+WizardModal #wizard_title {
+    text-style: bold;
+    color: #212121;
+    text-align: center;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+WizardModal #wizard_description {
+    color: #757575;
+    text-align: center;
+    width: 100%;
+    margin-bottom: 2;
+}
+
+WizardModal #wizard_step_content {
+    width: 100%;
+    height: auto;
+    min-height: 6;
+}
+
+WizardModal #wizard_error {
+    color: #c62828;
+    background: #ffebee;
+    text-align: center;
+    width: 100%;
+    height: auto;
+    padding: 1;
+    margin: 1 0;
+    border: solid #c62828;
+}
+
+WizardModal #wizard_error.hidden {
+    display: none;
+}
+
+WizardModal #wizard_nav {
+    height: 3;
+    width: 100%;
+    align: center middle;
+    padding: 1 0;
+}
+
+WizardModal #wizard_nav Button {
+    margin: 0 2;
+    min-width: 14;
+}
+
+WizardModal #wizard_back {
+    background: #f5f5f5;
+    color: #212121;
+}
+
+WizardModal #wizard_back:hover {
+    background: #e0e0e0;
+}
+
+WizardModal #wizard_back.disabled {
+    background: #fafafa;
+    color: #bdbdbd;
+}
+
+WizardModal #wizard_next {
+    background: #4caf50;
+    color: #ffffff;
+    text-style: bold;
+}
+
+WizardModal #wizard_next:hover {
+    background: #43a047;
+}
+
+WizardModal #wizard_cancel {
+    background: #f5f5f5;
+    color: #757575;
+}
+
+WizardModal #wizard_cancel:hover {
+    background: #f44336;
+    color: #ffffff;
+}
+
+WizardModal #wizard_hints {
+    width: 100%;
+    height: 1;
+    color: #bdbdbd;
+    text-align: center;
+    padding: 0 2;
+}
+
+/* --- Section Titles (used in step components) --- */
+.section-title {
+    color: #0077b6;
+    text-style: bold;
+    width: 100%;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+/* --- Success/Error Messages --- */
+.success-message {
+    color: #2e7d32;
+    text-align: center;
+    padding: 1;
+}
+
+.error-message {
+    color: #c62828;
+    padding: 1;
 }

@@ -55,37 +55,34 @@ class WelcomeStep(StepComponent):
 
     DEFAULT_CSS = """
     WelcomeStep {
-        align: center middle;
         width: 100%;
-        height: 100%;
+        height: auto;
+        padding: 1 2;
     }
 
     WelcomeStep .wizard-welcome {
         width: 100%;
         height: auto;
-        align: center middle;
-        padding: 2 4;
+        padding: 1 0;
     }
 
     WelcomeStep .wizard-welcome-intro {
-        color: $text-muted;
-        text-align: center;
+        color: #8b949e;
         width: 100%;
-        margin-bottom: 2;
-    }
-
-    WelcomeStep .wizard-welcome-feature {
-        color: $text;
-        width: 100%;
-        padding-left: 4;
         margin-bottom: 1;
     }
 
-    WelcomeStep .wizard-welcome-hint {
-        color: $text-muted;
-        text-align: center;
+    WelcomeStep .wizard-welcome-feature {
+        color: #3fb950;
         width: 100%;
-        margin-top: 3;
+        margin-bottom: 0;
+    }
+
+    WelcomeStep .wizard-welcome-hint {
+        color: #6e7681;
+        text-style: italic;
+        width: 100%;
+        margin-top: 2;
     }
     """
 
@@ -110,7 +107,7 @@ class WelcomeStep(StepComponent):
                 yield Label("This wizard will help you:", classes="wizard-welcome-intro")
                 for feature in self._features:
                     yield Label(f"  ✓ {feature}", classes="wizard-welcome-feature")
-            yield Label("Press Next to continue or Escape to cancel", classes="wizard-welcome-hint")
+            yield Label("Press [Next] to continue or [Escape] to cancel", classes="wizard-welcome-hint")
 
     def get_value(self) -> Any:
         return True  # Welcome step always "completes"

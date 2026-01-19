@@ -1062,6 +1062,64 @@ class Orchestrator(ChatAgent):
             f"[Orchestrator] Updated MCP servers for {agent_id}, now has {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} servers",
         )
 
+        # Note: Subagent spawn callbacks are set up later when coordination_ui is available
+        # See setup_subagent_spawn_callbacks() method
+
+    def setup_subagent_spawn_callbacks(self) -> None:
+        """Set up subagent spawn callbacks for all agents.
+
+        This should be called AFTER coordination_ui is set on the orchestrator,
+        as the callbacks need access to the display for TUI notifications.
+
+        Called from CoordinationUI.set_orchestrator() after coordination_ui is assigned.
+        """
+        if not hasattr(self, "coordination_ui") or not self.coordination_ui:
+            logger.debug("[Orchestrator] No coordination_ui, skipping subagent spawn callback setup")
+            return
+
+        for agent_id, agent in self.agents.items():
+            if hasattr(agent, "backend") and hasattr(agent.backend, "set_subagent_spawn_callback"):
+                self._setup_subagent_spawn_callback(agent_id, agent)
+
+    def _setup_subagent_spawn_callback(self, agent_id: str, agent: Any) -> None:
+        """Set up callback to notify TUI when subagent spawning starts.
+
+        This creates a wrapper callback that captures the agent_id and forwards
+        spawn notifications to the TUI display for immediate visual feedback.
+
+        Args:
+            agent_id: ID of the agent
+            agent: Agent instance
+        """
+        # Get display if available (coordination_ui.display)
+        display = None
+        if hasattr(self, "coordination_ui") and self.coordination_ui:
+            display = getattr(self.coordination_ui, "display", None)
+
+        if not display:
+            logger.debug(f"[Orchestrator] No display available for subagent spawn callback on {agent_id}")
+            return
+
+        if not hasattr(display, "notify_subagent_spawn_started"):
+            logger.debug(f"[Orchestrator] Display doesn't support notify_subagent_spawn_started for {agent_id}")
+            return
+
+        # Create wrapper callback that captures agent_id
+        def spawn_callback(tool_name: str, args: Dict[str, Any], call_id: str) -> None:
+            """Forward spawn notification to TUI display."""
+            try:
+                display.notify_subagent_spawn_started(agent_id, tool_name, args, call_id)
+                logger.debug(f"[Orchestrator] Notified TUI of subagent spawn for {agent_id}")
+            except Exception as e:
+                logger.debug(f"[Orchestrator] Failed to notify TUI of subagent spawn: {e}")
+
+        # Set callback on backend
+        if hasattr(agent.backend, "set_subagent_spawn_callback"):
+            agent.backend.set_subagent_spawn_callback(spawn_callback)
+            logger.info(f"[Orchestrator] Set subagent spawn callback for {agent_id}")
+        else:
+            logger.debug(f"[Orchestrator] Backend for {agent_id} doesn't support subagent spawn callback")
+
     def _create_subagent_mcp_config(self, agent_id: str, agent: Any) -> Dict[str, Any]:
         """
         Create MCP server configuration for subagent tools.
@@ -1105,6 +1163,54 @@ class Orchestrator(ChatAgent):
         json.dump(agent_configs, agent_configs_file)
         agent_configs_file.close()
         agent_configs_path = agent_configs_file.name
+
+        # Extract context_paths from orchestrator config to pass to subagents
+        # This allows subagents to read the same codebase/files as the parent
+        context_paths_path = ""
+        parent_context_paths = []
+        if hasattr(self, "config") and isinstance(getattr(self.config, "__dict__", {}), dict):
+            # Try to get context_paths from the raw config dict stored on agents
+            if hasattr(agent.backend, "config") and "context_paths" in agent.backend.config:
+                parent_context_paths = agent.backend.config.get("context_paths", [])
+
+        if parent_context_paths:
+            context_paths_file = tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".json",
+                prefix="massgen_subagent_context_paths_",
+                delete=False,
+            )
+            json.dump(parent_context_paths, context_paths_file)
+            context_paths_file.close()
+            context_paths_path = context_paths_file.name
+            logger.info(
+                f"[Orchestrator] Passing {len(parent_context_paths)} context paths to subagent MCP",
+            )
+
+        # Extract coordination config to pass to subagents for planning tools inheritance
+        coordination_config_path = ""
+        if hasattr(self.config, "coordination_config") and self.config.coordination_config:
+            coord_cfg = self.config.coordination_config
+            # Extract relevant coordination settings that subagents should inherit
+            parent_coordination_config = {}
+            if hasattr(coord_cfg, "enable_agent_task_planning"):
+                parent_coordination_config["enable_agent_task_planning"] = coord_cfg.enable_agent_task_planning
+            if hasattr(coord_cfg, "task_planning_filesystem_mode"):
+                parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
+
+            if parent_coordination_config:
+                coordination_config_file = tempfile.NamedTemporaryFile(
+                    mode="w",
+                    suffix=".json",
+                    prefix="massgen_subagent_coordination_config_",
+                    delete=False,
+                )
+                json.dump(parent_coordination_config, coordination_config_file)
+                coordination_config_file.close()
+                coordination_config_path = coordination_config_file.name
+                logger.info(
+                    f"[Orchestrator] Passing coordination config to subagent MCP: {list(parent_coordination_config.keys())}",
+                )
 
         # Get subagent configuration from coordination config
         max_concurrent = 3
@@ -1160,6 +1266,10 @@ class Orchestrator(ChatAgent):
             subagent_orchestrator_config_json,
             "--log-directory",
             log_directory,
+            "--context-paths-file",
+            context_paths_path,
+            "--coordination-config-file",
+            coordination_config_path,
         ]
 
         config = {
@@ -6741,6 +6851,26 @@ Your answer:"""
         if not ppm:
             return []
         return ppm.get_context_path_writes()
+
+    def get_context_path_writes_categorized(self) -> dict[str, list[str]]:
+        """
+        Get categorized lists of new and modified files in context paths.
+
+        Returns:
+            Dict with 'new' and 'modified' keys, each containing a list of file paths
+        """
+        if not self._selected_agent:
+            return {"new": [], "modified": []}
+        agent = self.agents.get(self._selected_agent)
+        if not agent or not hasattr(agent, "backend") or not agent.backend:
+            return {"new": [], "modified": []}
+        filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+        if not filesystem_manager:
+            return {"new": [], "modified": []}
+        ppm = getattr(filesystem_manager, "path_permission_manager", None)
+        if not ppm:
+            return {"new": [], "modified": []}
+        return ppm.get_context_path_writes_categorized()
 
     def _clear_context_path_write_tracking(self) -> None:
         """Clear context path write tracking for all agents at the start of each turn."""

@@ -27,6 +27,8 @@ from .multi_line_input import MultiLineInput
 from .path_suggestion import PathSuggestion, PathSuggestionDropdown
 from .quickstart_wizard import QuickstartWizard
 from .setup_wizard import SetupWizard
+from .subagent_card import SubagentCard
+from .subagent_modal import SubagentModal
 from .tab_bar import AgentTab, AgentTabBar, AgentTabChanged
 from .task_plan_card import TaskPlanCard
 from .task_plan_modal import TaskPlanModal
@@ -38,6 +40,14 @@ from .wizard_base import (
     WizardModal,
     WizardState,
     WizardStep,
+)
+from .wizard_components import (
+    ASCIIBanner,
+    BreadcrumbStepper,
+    CardContainer,
+    KeyboardHints,
+    StatusIndicator,
+    StatusRow,
 )
 
 __all__ = [
@@ -58,6 +68,9 @@ __all__ = [
     # Task plan card and modal
     "TaskPlanCard",
     "TaskPlanModal",
+    # Subagent card and modal
+    "SubagentCard",
+    "SubagentModal",
     # Background tasks modal
     "BackgroundTasksModal",
     # Injection sub-card
@@ -89,4 +102,11 @@ __all__ = [
     "StepComponent",
     "SetupWizard",
     "QuickstartWizard",
+    # Wizard components
+    "ASCIIBanner",
+    "BreadcrumbStepper",
+    "CardContainer",
+    "KeyboardHints",
+    "StatusIndicator",
+    "StatusRow",
 ]

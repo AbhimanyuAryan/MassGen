@@ -590,6 +590,11 @@ class CoordinationUI:
         # Set bidirectional reference so orchestrator can access UI (for broadcast prompts)
         orchestrator.coordination_ui = self
 
+        # Set up subagent spawn callbacks now that coordination_ui is available
+        # This allows the TUI to show SubagentCard immediately when spawn_subagents is called
+        if hasattr(orchestrator, "setup_subagent_spawn_callbacks"):
+            orchestrator.setup_subagent_spawn_callbacks()
+
         # Auto-detect agent IDs if not provided
         # Sort for consistent anonymous mapping with coordination_tracker
         if agent_ids is None:
@@ -1172,6 +1177,11 @@ class CoordinationUI:
         self.orchestrator = orchestrator
         # Set bidirectional reference so orchestrator can access UI (for broadcast prompts)
         orchestrator.coordination_ui = self
+
+        # Set up subagent spawn callbacks now that coordination_ui is available
+        # This allows the TUI to show SubagentCard immediately when spawn_subagents is called
+        if hasattr(orchestrator, "setup_subagent_spawn_callbacks"):
+            orchestrator.setup_subagent_spawn_callbacks()
 
         # Auto-detect agent IDs if not provided
         # Sort for consistent anonymous mapping with coordination_tracker
