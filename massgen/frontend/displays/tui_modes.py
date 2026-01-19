@@ -106,8 +106,9 @@ class TuiModeState:
         - Single agent + refinement OFF: max_new_answers_per_agent=1, skip_voting=True,
           skip_final_presentation=True (quick mode: one answer → done, no extra LLM call)
         - Multi-agent + refinement ON: Normal behavior
-        - Multi-agent + refinement OFF: max_new_answers_per_agent=1, skip_final_presentation=True
-          (quick mode: no final presentation LLM call, uses existing answer)
+        - Multi-agent + refinement OFF: max_new_answers_per_agent=1, skip_final_presentation=True,
+          disable_injection=True, defer_voting_until_all_answered=True
+          (quick mode: agents work independently, vote once after all answered)
         """
         overrides: Dict[str, Any] = {}
 
@@ -122,6 +123,12 @@ class TuiModeState:
                 # Single agent + refinement off = one answer, skip voting enforcement
                 # Agent submits new_answer → immediate use as final answer
                 overrides["skip_voting"] = True
+            else:
+                # Multi-agent + refinement off = agents work independently
+                # No injection (each agent sees only the original task)
+                overrides["disable_injection"] = True
+                # Defer voting until all agents have answered (avoid wasteful restarts)
+                overrides["defer_voting_until_all_answered"] = True
         # Note: Single agent + refinement ON keeps voting - vote signals "I'm done refining"
 
         return overrides

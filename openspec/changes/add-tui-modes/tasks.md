@@ -51,6 +51,11 @@
 - [ ] 9.3 Update enforcement logic to not require vote when skip_voting=True
 - [ ] 9.4 Handle single-agent direct presentation flow when refinement OFF
 - [ ] 9.5 Ensure single-agent with refinement ON still has voting (vote = "I'm done refining")
+- [x] 9.6 Add `disable_injection` config flag to AgentConfig
+- [x] 9.7 Implement disable_injection logic (skip injection callback, skip restart signaling)
+- [x] 9.8 Add `defer_voting_until_all_answered` config flag to AgentConfig
+- [x] 9.9 Implement deferred voting with `_is_waiting_for_all_answers()` helper
+- [x] 9.10 Update TuiModeState.get_orchestrator_overrides() for multi-agent refinement OFF
 
 ## 10. Controller Integration
 - [ ] 10.1 Modify `_run_turn()` to get mode state from adapter
@@ -70,11 +75,40 @@
 - [ ] 12.4 Add plan info display styles
 - [ ] 12.5 Add override button styles
 
-## 13. Testing
-- [ ] 13.1 Test TuiModeState.get_orchestrator_overrides() logic
-- [ ] 13.2 Test TuiModeState.get_effective_agents() filtering
-- [ ] 13.3 Test tab bar disabled state
-- [ ] 13.4 Manual test: plan mode flow end-to-end
-- [ ] 13.5 Manual test: single-agent mode with tab selection
-- [ ] 13.6 Manual test: refinement off behavior
-- [ ] 13.7 Manual test: override post-completion
+## 13. Context Path Write Access
+- [ ] 13.1 Add `_has_write_context_paths()` helper to orchestrator
+- [ ] 13.2 Add `_enable_context_write_access()` helper to orchestrator
+- [ ] 13.3 Refactor `skip_final_presentation` logic to handle write context paths
+- [ ] 13.4 Single agent: enable writes without LLM call when refinement OFF
+- [ ] 13.5 Multi-agent: require presentation only if write paths exist
+- [x] 13.6 Add `recreate_container_for_write_access()` to FilesystemManager
+- [x] 13.7 Call `recreate_container_for_write_access()` in orchestrator before final presentation
+
+## 14. Context Path Write Tracking (Snapshot-based mtime comparison)
+- [x] 14.1 Add `_context_path_snapshot: Dict[str, float]` to PathPermissionManager (path -> mtime)
+- [x] 14.2 Add `snapshot_writable_context_paths()` method - walks dirs, stores path+mtime
+- [x] 14.3 Add `compute_context_path_writes()` method - compares current state to snapshot, populates `_context_path_writes`
+- [x] 14.4 Keep `get_context_path_writes()` method (returns computed list)
+- [x] 14.5 Keep `clear_context_path_writes()` method (clears both snapshot and writes list)
+- [x] 14.6 Call `snapshot_writable_context_paths()` in orchestrator before final presentation
+- [x] 14.7 Call `compute_context_path_writes()` in orchestrator after final presentation
+- [x] 14.8 Expose `get_context_path_writes()` through orchestrator
+- [x] 14.9 Display written files in TUI final answer footer (inline if ≤5 files)
+- [x] 14.10 Write full list to `{log_dir}/context_path_writes.txt` when >5 files
+- [x] 14.11 Show summary with log path in footer for many files
+
+## 15. Testing
+- [ ] 15.1 Test TuiModeState.get_orchestrator_overrides() logic
+- [ ] 15.2 Test TuiModeState.get_effective_agents() filtering
+- [ ] 15.3 Test tab bar disabled state
+- [ ] 15.4 Manual test: plan mode flow end-to-end
+- [ ] 15.5 Manual test: single-agent mode with tab selection
+- [ ] 15.6 Manual test: refinement off behavior
+- [ ] 15.7 Manual test: override post-completion
+- [ ] 15.8 Manual test: single agent + refinement OFF + write context path
+- [ ] 15.9 Manual test: multi-agent + refinement OFF + write context path
+- [ ] 15.10 Manual test: multi-agent + refinement OFF + no write context path
+- [ ] 15.11 Manual test: context path write tracking (inline display)
+- [ ] 15.12 Manual test: context path write tracking (log file for many files)
+- [ ] 15.13 Manual test: multi-agent + refinement OFF independent execution (no injection)
+- [ ] 15.14 Manual test: multi-agent + refinement OFF deferred voting (agents wait for all)

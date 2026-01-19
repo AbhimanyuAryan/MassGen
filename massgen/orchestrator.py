@@ -1536,6 +1536,9 @@ class Orchestrator(ChatAgent):
             # Reset restart_pending flag at start of coordination (will be set again if restart needed)
             self.restart_pending = False
 
+            # Clear context path write tracking at start of each turn
+            self._clear_context_path_write_tracking()
+
             # Clear agent workspaces for new turn (if this is a multi-turn conversation with history)
             if conversation_context and conversation_context.get(
                 "conversation_history",
@@ -2991,6 +2994,10 @@ Your answer:"""
             # Start any agents that aren't running and haven't voted yet
             current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
             for agent_id in self.agents.keys():
+                # Skip agents that are waiting for all answers before voting
+                if self._is_waiting_for_all_answers(agent_id):
+                    continue
+
                 if agent_id not in active_streams and not self.agent_states[agent_id].has_voted and not self.agent_states[agent_id].is_killed:
                     # Apply rate limiting before starting agent
                     await self._apply_agent_startup_rate_limit(agent_id)
@@ -3529,16 +3536,23 @@ Your answer:"""
                     state.votes = {}  # Clear stale vote data
                 votes.clear()
 
-                for agent_id in self.agent_states.keys():
-                    self.agent_states[agent_id].restart_pending = True
+                # Skip restart signaling when injection is disabled (multi-agent refinement OFF)
+                # Agents work independently and don't need to see each other's answers
+                if not self.config.disable_injection:
+                    for agent_id in self.agent_states.keys():
+                        self.agent_states[agent_id].restart_pending = True
 
-                # Track restart signals
-                self.coordination_tracker.track_restart_signal(
-                    restart_triggered_id,
-                    list(self.agent_states.keys()),
-                )
-                # Note that the agent that sent the restart signal had its stream end so we should mark as completed. NOTE the below breaks it.
-                self.coordination_tracker.complete_agent_restart(restart_triggered_id)
+                    # Track restart signals
+                    self.coordination_tracker.track_restart_signal(
+                        restart_triggered_id,
+                        list(self.agent_states.keys()),
+                    )
+                    # Note that the agent that sent the restart signal had its stream end so we should mark as completed. NOTE the below breaks it.
+                    self.coordination_tracker.complete_agent_restart(restart_triggered_id)
+                else:
+                    logger.info(
+                        "[disable_injection] Skipping restart signaling - agents work independently",
+                    )
             # Set has_voted = True for agents that voted (only if no reset signal)
             else:
                 for agent_id, vote_data in voted_agents.items():
@@ -4181,6 +4195,11 @@ Your answer:"""
         # This is async to allow copying snapshots before injection
         async def get_injection_content() -> Optional[str]:
             """Check if mid-stream injection is needed and return content."""
+            # Skip injection if disabled (multi-agent refinement OFF mode)
+            # Agents work independently without seeing each other's work
+            if self.config.disable_injection:
+                return None
+
             if not self._check_restart_pending(agent_id):
                 return None
 
@@ -4839,16 +4858,66 @@ Your answer:"""
         When an agent reaches max_new_answers_per_agent, they should only
         have the vote tool available (no new_answer or broadcast tools).
 
+        When defer_voting_until_all_answered=True, also requires ALL agents
+        to have answered before voting is allowed.
+
         Args:
             agent_id: The agent to check
 
         Returns:
-            True if agent must vote (has hit answer limit), False otherwise.
+            True if agent must vote (has hit answer limit AND can vote now), False otherwise.
         """
         if self.config.max_new_answers_per_agent is None:
             return False
         answer_count = len(self.coordination_tracker.answers_by_agent.get(agent_id, []))
-        return answer_count >= self.config.max_new_answers_per_agent
+        hit_answer_limit = answer_count >= self.config.max_new_answers_per_agent
+
+        if not hit_answer_limit:
+            return False
+
+        # If defer_voting_until_all_answered is enabled, also check that all agents have answered
+        if self.config.defer_voting_until_all_answered:
+            all_answered = all(state.answer is not None for state in self.agent_states.values())
+            if not all_answered:
+                # Agent hit their limit but others haven't answered yet
+                # Return False - agent is in "waiting" state, handled by _is_waiting_for_all_answers
+                return False
+
+        return True
+
+    def _is_waiting_for_all_answers(self, agent_id: str) -> bool:
+        """Check if agent is waiting for all agents to answer before voting.
+
+        This happens when defer_voting_until_all_answered=True and this agent
+        has hit their answer limit but other agents haven't answered yet.
+
+        Args:
+            agent_id: The agent to check
+
+        Returns:
+            True if agent should wait (not run), False otherwise.
+        """
+        if not self.config.defer_voting_until_all_answered:
+            return False
+
+        if self.config.max_new_answers_per_agent is None:
+            return False
+
+        answer_count = len(self.coordination_tracker.answers_by_agent.get(agent_id, []))
+        hit_answer_limit = answer_count >= self.config.max_new_answers_per_agent
+
+        if not hit_answer_limit:
+            return False
+
+        # Check if all agents have answered
+        all_answered = all(state.answer is not None for state in self.agent_states.values())
+        if all_answered:
+            return False  # Can proceed to voting
+
+        logger.debug(
+            f"[defer_voting] {agent_id} waiting for all agents to answer before voting",
+        )
+        return True
 
     def _get_buffer_content(self, agent: "ChatAgent") -> tuple[Optional[str], int]:
         """Get streaming buffer content from agent backend for enforcement tracking.
@@ -5274,6 +5343,16 @@ Your answer:"""
         if agent.backend.filesystem_manager:
             # agent.backend.filesystem_manager.clear_workspace()  # Don't clear for now.
             agent.backend.filesystem_manager.log_current_state("before execution")
+
+            # For single-agent mode with skip_voting (refinement OFF), enable context write access
+            # from the START of coordination so the agent can write directly to context paths
+            if self.config.skip_voting and self._has_write_context_paths(agent):
+                logger.info(
+                    f"[Orchestrator] Single-agent mode: enabling context write access from start for {agent_id}",
+                )
+                # Snapshot BEFORE enabling writes (to track what gets written)
+                agent.backend.filesystem_manager.path_permission_manager.snapshot_writable_context_paths()
+                agent.backend.filesystem_manager.path_permission_manager.set_context_write_access_enabled(True)
 
         # Create agent execution span for hierarchical tracing in Logfire
         # This groups all tool calls, LLM calls, and events under this agent's execution
@@ -6605,6 +6684,77 @@ Your answer:"""
         except Exception as e:
             return ("error", str(e))
 
+    def _has_write_context_paths(self, agent: "ChatAgent") -> bool:
+        """
+        Check if agent has any context paths with write permission configured.
+
+        Args:
+            agent: The agent to check
+
+        Returns:
+            True if agent has write context paths, False otherwise
+        """
+        if not hasattr(agent, "backend") or not agent.backend:
+            return False
+        filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+        if not filesystem_manager:
+            return False
+        ppm = getattr(filesystem_manager, "path_permission_manager", None)
+        if not ppm:
+            return False
+        return any(mp.will_be_writable for mp in ppm.managed_paths if mp.path_type == "context")
+
+    def _enable_context_write_access(self, agent: "ChatAgent") -> None:
+        """
+        Enable write access for context paths on the given agent.
+
+        Args:
+            agent: The agent to enable write access for
+        """
+        if not hasattr(agent, "backend") or not agent.backend:
+            return
+        filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+        if not filesystem_manager:
+            return
+        ppm = getattr(filesystem_manager, "path_permission_manager", None)
+        if not ppm:
+            return
+        ppm.set_context_write_access_enabled(True)
+        logger.info(f"[Orchestrator] Enabled context write access for agent: {agent.agent_id}")
+
+    def get_context_path_writes(self) -> list[str]:
+        """
+        Get list of files written to context paths by the final agent.
+
+        Returns:
+            List of file paths written to context paths
+        """
+        if not self._selected_agent:
+            return []
+        agent = self.agents.get(self._selected_agent)
+        if not agent or not hasattr(agent, "backend") or not agent.backend:
+            return []
+        filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+        if not filesystem_manager:
+            return []
+        ppm = getattr(filesystem_manager, "path_permission_manager", None)
+        if not ppm:
+            return []
+        return ppm.get_context_path_writes()
+
+    def _clear_context_path_write_tracking(self) -> None:
+        """Clear context path write tracking for all agents at the start of each turn."""
+        for agent_id, agent in self.agents.items():
+            if not hasattr(agent, "backend") or not agent.backend:
+                continue
+            filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+            if not filesystem_manager:
+                continue
+            ppm = getattr(filesystem_manager, "path_permission_manager", None)
+            if ppm and hasattr(ppm, "clear_context_path_writes"):
+                ppm.clear_context_path_writes()
+                logger.debug(f"[Orchestrator] Cleared context path write tracking for {agent_id}")
+
     async def _present_final_answer(self) -> AsyncGenerator[StreamChunk, None]:
         """Present the final coordinated answer with optional post-evaluation and restart loop."""
 
@@ -6644,64 +6794,99 @@ Your answer:"""
 
         # Check if we should skip final presentation (quick mode - refinement OFF)
         if self.config.skip_final_presentation:
-            # Use existing answer directly without an additional LLM call
-            existing_answer = self.agent_states[self._selected_agent].answer
-            if existing_answer:
-                # Notify TUI to highlight winner (TextualTerminalDisplay)
-                if hasattr(self, "coordination_ui") and self.coordination_ui:
-                    display = getattr(self.coordination_ui, "display", None)
-                    if display and hasattr(display, "highlight_winner_quick"):
-                        display.highlight_winner_quick(
-                            winner_id=self._selected_agent,
-                            vote_results=vote_results,
-                        )
+            # Check if we have write context paths - this affects whether we can skip
+            agent = self.agents.get(self._selected_agent)
+            has_write_context_paths = self._has_write_context_paths(agent) if agent else False
+            is_single_agent_mode = self.config.skip_voting  # skip_voting implies single-agent mode
 
-                log_stream_chunk(
-                    "orchestrator",
-                    "content",
-                    f"\n{existing_answer}\n",
-                    self._selected_agent,
+            # Decision matrix:
+            # - Single agent + write paths: Enable writes directly (no LLM call), skip presentation
+            # - Multi-agent + write paths: Need final presentation to copy files, fall through
+            # - Multi-agent + no write paths: Safe to skip, no files need copying
+
+            if is_single_agent_mode and has_write_context_paths:
+                # Single agent mode with write context paths:
+                # Write access was already enabled at start of coordination (in _stream_agent_execution)
+                # and snapshot was taken then, so we just skip to the presentation logic
+                logger.info(
+                    "[skip_final_presentation] Single agent mode with write context paths - writes already enabled at coordination start",
                 )
-                yield StreamChunk(
-                    type="content",
-                    content=f"\n{existing_answer}\n",
-                    source=self._selected_agent,
+                # Fall through to skip logic below
+
+            elif not is_single_agent_mode and has_write_context_paths:
+                # Multi-agent mode with write context paths:
+                # Need final presentation to copy winning agent's files to context paths
+                logger.info(
+                    "[skip_final_presentation] Multi-agent mode with write context paths - falling through to final presentation",
                 )
-                self._final_presentation_content = existing_answer
+                # Fall through to normal presentation (don't skip)
+                pass  # Continue to normal presentation logic below
 
-                # Save the final snapshot (creates final/ directory with answer.txt)
-                # This copies the agent's workspace to the final directory
-                final_context = self.get_last_context(self._selected_agent)
-                await self._save_agent_snapshot(
-                    self._selected_agent,
-                    answer_content=existing_answer,
-                    is_final=True,
-                    context_data=final_context,
-                )
+            # For all other cases (single agent without write paths, or multi-agent without write paths),
+            # we can skip the final presentation
+            if not (not is_single_agent_mode and has_write_context_paths):
+                # Use existing answer directly without an additional LLM call
+                existing_answer = self.agent_states[self._selected_agent].answer
+                if existing_answer:
+                    # Notify TUI to highlight winner (TextualTerminalDisplay)
+                    if hasattr(self, "coordination_ui") and self.coordination_ui:
+                        display = getattr(self.coordination_ui, "display", None)
+                        if display and hasattr(display, "highlight_winner_quick"):
+                            display.highlight_winner_quick(
+                                winner_id=self._selected_agent,
+                                vote_results=vote_results,
+                            )
 
-                # Track the final answer in coordination tracker
-                self.coordination_tracker.set_final_answer(
-                    self._selected_agent,
-                    existing_answer,
-                    snapshot_timestamp="final",
-                )
+                    log_stream_chunk(
+                        "orchestrator",
+                        "content",
+                        f"\n{existing_answer}\n",
+                        self._selected_agent,
+                    )
+                    yield StreamChunk(
+                        type="content",
+                        content=f"\n{existing_answer}\n",
+                        source=self._selected_agent,
+                    )
+                    self._final_presentation_content = existing_answer
 
-                # Add to conversation history
-                self.add_to_history("assistant", existing_answer)
+                    # Save the final snapshot (creates final/ directory with answer.txt)
+                    # This copies the agent's workspace to the final directory
+                    final_context = self.get_last_context(self._selected_agent)
+                    await self._save_agent_snapshot(
+                        self._selected_agent,
+                        answer_content=existing_answer,
+                        is_final=True,
+                        context_data=final_context,
+                    )
 
-                # Save coordination logs
-                self.save_coordination_logs()
+                    # Track the final answer in coordination tracker
+                    self.coordination_tracker.set_final_answer(
+                        self._selected_agent,
+                        existing_answer,
+                        snapshot_timestamp="final",
+                    )
 
-                # Update workflow phase
-                self.workflow_phase = "presenting"
-                log_stream_chunk("orchestrator", "done", None, self._selected_agent)
-                yield StreamChunk(type="done", source=self._selected_agent)
-                return  # Skip post-evaluation and all remaining logic
-            else:
-                # No existing answer - fall through to normal presentation
-                logger.warning(
-                    f"[skip_final_presentation] No existing answer for {self._selected_agent}, falling back to normal presentation",
-                )
+                    # Compute context path writes (compare current state to snapshot taken at start)
+                    if agent.backend.filesystem_manager:
+                        agent.backend.filesystem_manager.path_permission_manager.compute_context_path_writes()
+
+                    # Add to conversation history
+                    self.add_to_history("assistant", existing_answer)
+
+                    # Save coordination logs
+                    self.save_coordination_logs()
+
+                    # Update workflow phase
+                    self.workflow_phase = "presenting"
+                    log_stream_chunk("orchestrator", "done", None, self._selected_agent)
+                    yield StreamChunk(type="done", source=self._selected_agent)
+                    return  # Skip post-evaluation and all remaining logic
+                else:
+                    # No existing answer - fall through to normal presentation
+                    logger.warning(
+                        f"[skip_final_presentation] No existing answer for {self._selected_agent}, falling back to normal presentation",
+                    )
 
         # Stream the final presentation (with full tool support)
         presentation_content = ""
@@ -6963,6 +7148,33 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
         # Enable write access for final agent on context paths. This ensures that those paths marked `write` by the user are now writable (as all previous agents were read-only).
         if agent.backend.filesystem_manager:
+            # Snapshot context paths BEFORE enabling write access (for tracking what gets written)
+            agent.backend.filesystem_manager.path_permission_manager.snapshot_writable_context_paths()
+
+            # Recreate Docker container with write access to context paths
+            # The original container was created with read-only mounts for context paths
+            # (to prevent race conditions during coordination). For final presentation,
+            # we need write access so the agent can write to context paths via shell commands.
+            if agent.backend.filesystem_manager.docker_manager:
+                skills_directory = None
+                massgen_skills = []
+                load_previous_session_skills = False
+                if self.config.coordination_config:
+                    if self.config.coordination_config.use_skills:
+                        skills_directory = self.config.coordination_config.skills_directory
+                        massgen_skills = self.config.coordination_config.massgen_skills or []
+                        load_previous_session_skills = getattr(
+                            self.config.coordination_config,
+                            "load_previous_session_skills",
+                            False,
+                        )
+                agent.backend.filesystem_manager.recreate_container_for_write_access(
+                    skills_directory=skills_directory,
+                    massgen_skills=massgen_skills,
+                    load_previous_session_skills=load_previous_session_skills,
+                )
+
+            # Enable write access in PathPermissionManager (for MCP filesystem tools)
             agent.backend.filesystem_manager.path_permission_manager.set_context_write_access_enabled(
                 True,
             )
@@ -7481,6 +7693,10 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 selected_agent_id,
                 AgentStatus.COMPLETED,
             )
+
+            # Compute context path writes (compare current state to snapshot taken before presentation)
+            if agent.backend.filesystem_manager:
+                agent.backend.filesystem_manager.path_permission_manager.compute_context_path_writes()
 
             # Add token usage and cost to presentation span before closing
             if hasattr(agent.backend, "token_usage") and agent.backend.token_usage:

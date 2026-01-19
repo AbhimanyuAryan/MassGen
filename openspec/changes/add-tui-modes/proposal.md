@@ -45,12 +45,25 @@ The Textual TUI currently lacks native mode toggles for common multi-agent workf
 - Support runtime config overrides from TUI mode state
 - Note: Single agent + refinement ON keeps voting (vote = "I'm done refining")
 
+### Context Path Write Access (Refinement OFF)
+- Single agent + refinement OFF: Enable write access for context paths even without final presentation LLM call
+- Multi-agent + refinement OFF: Require final presentation only if write context paths exist
+- Multi-agent + refinement OFF + no write context paths: Skip final presentation entirely
+
+### Context Path Write Tracking
+- Track files written to context paths during final presentation
+- Display written files in final answer footer (file-level granularity)
+- When ≤5 files: show inline in footer
+- When >5 files: show summary count with path to `{log_dir}/context_path_writes.txt`
+- Purely mechanistic tracking (no prompt changes)
+
 ## Impact
 - Affected specs: textual-tui (new capability)
 - Affected code:
-  - `massgen/frontend/displays/textual_terminal_display.py` (mode integration)
+  - `massgen/frontend/displays/textual_terminal_display.py` (mode integration, write tracking display)
   - `massgen/frontend/displays/textual_widgets/tab_bar.py` (single-agent mode)
   - `massgen/frontend/interactive_controller.py` (mode state propagation)
-  - `massgen/orchestrator.py` (skip_voting flag)
+  - `massgen/orchestrator.py` (skip_voting flag, write context path helpers, write tracking exposure)
+  - `massgen/filesystem_manager/_path_permission_manager.py` (write tracking)
   - New files: `tui_modes.py`, `mode_bar.py`
   - Theme files for new widget styling

@@ -107,6 +107,12 @@ class PathPermissionManager:
         # File operation tracker for read-before-delete enforcement
         self.file_operation_tracker = FileOperationTracker(enforce_read_before_delete=enforce_read_before_delete)
 
+        # Snapshot-based context path write tracking
+        # We snapshot files (path -> mtime) before final presentation and compare after
+        # to detect new/modified files. This catches ALL writes (tools, bash, etc.)
+        self._context_path_snapshot: Dict[str, float] = {}  # path -> mtime at snapshot time
+        self._context_path_writes: List[str] = []  # computed list of written files
+
         logger.info(
             f"[PathPermissionManager] Initialized with context_write_access_enabled={context_write_access_enabled}, " f"enforce_read_before_delete={enforce_read_before_delete}",
         )
@@ -186,6 +192,111 @@ class PathPermissionManager:
 
         # Clear permission cache to force recalculation
         self._permission_cache.clear()
+
+    def snapshot_writable_context_paths(self) -> None:
+        """
+        Take a snapshot of all files in writable context paths.
+
+        Stores file paths and their modification times (mtime).
+        Call this BEFORE final presentation to establish baseline.
+        """
+        self._context_path_snapshot.clear()
+
+        # Find all writable context paths
+        writable_context_paths = [mp for mp in self.managed_paths if mp.path_type == "context" and mp.will_be_writable]
+
+        if not writable_context_paths:
+            logger.debug("[PathPermissionManager] No writable context paths to snapshot")
+            return
+
+        file_count = 0
+        for mp in writable_context_paths:
+            if mp.is_file:
+                # Single file context path
+                if mp.path.exists() and mp.path.is_file():
+                    self._context_path_snapshot[str(mp.path)] = mp.path.stat().st_mtime
+                    file_count += 1
+            else:
+                # Directory context path - walk all files
+                if mp.path.exists() and mp.path.is_dir():
+                    for file_path in mp.path.rglob("*"):
+                        if file_path.is_file():
+                            try:
+                                self._context_path_snapshot[str(file_path)] = file_path.stat().st_mtime
+                                file_count += 1
+                            except OSError:
+                                # File may have been deleted/moved during walk
+                                pass
+
+        logger.info(f"[PathPermissionManager] Snapshot taken: {file_count} files in {len(writable_context_paths)} writable context paths")
+
+    def compute_context_path_writes(self) -> List[str]:
+        """
+        Compare current state against snapshot to detect written files.
+
+        Call this AFTER final presentation completes.
+        Detects:
+        - New files (exist now but not in snapshot)
+        - Modified files (exist in both but current mtime > snapshot mtime)
+
+        Returns:
+            List of file paths that were written (new or modified)
+        """
+        self._context_path_writes.clear()
+
+        # Find all writable context paths
+        writable_context_paths = [mp for mp in self.managed_paths if mp.path_type == "context" and mp.will_be_writable]
+
+        if not writable_context_paths:
+            return []
+
+        current_files: Dict[str, float] = {}
+
+        # Collect current state
+        for mp in writable_context_paths:
+            if mp.is_file:
+                if mp.path.exists() and mp.path.is_file():
+                    current_files[str(mp.path)] = mp.path.stat().st_mtime
+            else:
+                if mp.path.exists() and mp.path.is_dir():
+                    for file_path in mp.path.rglob("*"):
+                        if file_path.is_file():
+                            try:
+                                current_files[str(file_path)] = file_path.stat().st_mtime
+                            except OSError:
+                                pass
+
+        # Compare: find new and modified files
+        for file_path, current_mtime in current_files.items():
+            if file_path not in self._context_path_snapshot:
+                # New file
+                self._context_path_writes.append(file_path)
+                logger.debug(f"[PathPermissionManager] New file detected: {file_path}")
+            elif current_mtime > self._context_path_snapshot[file_path]:
+                # Modified file
+                self._context_path_writes.append(file_path)
+                logger.debug(f"[PathPermissionManager] Modified file detected: {file_path}")
+
+        logger.info(f"[PathPermissionManager] Context path writes detected: {len(self._context_path_writes)} files")
+        return self._context_path_writes
+
+    def get_context_path_writes(self) -> List[str]:
+        """
+        Get list of files written to context paths.
+
+        Returns:
+            List of file paths that were written to context paths (computed by compute_context_path_writes)
+        """
+        return list(self._context_path_writes)
+
+    def clear_context_path_writes(self) -> None:
+        """Clear the write tracking (both snapshot and writes list)."""
+        if self._context_path_snapshot:
+            logger.debug(f"[PathPermissionManager] Clearing snapshot with {len(self._context_path_snapshot)} files")
+        if self._context_path_writes:
+            logger.debug(f"[PathPermissionManager] Clearing {len(self._context_path_writes)} context path write records")
+        self._context_path_snapshot.clear()
+        self._context_path_writes.clear()
 
     def add_context_paths(self, context_paths: List[Dict[str, Any]]) -> None:
         """

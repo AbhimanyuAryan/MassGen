@@ -3309,3 +3309,403 @@ ToolCallCard InjectionToggle:hover {
 ToolCallCard InjectionToggle.expanded {
     min-height: 3;
 }
+
+/* ============================================
+   Wizard Framework Styling
+   ============================================ */
+
+/* Wizard Modal - full screen centered */
+WizardModal {
+    align: center middle;
+}
+
+#wizard_container {
+    width: 90%;
+    max-width: 100;
+    height: 85%;
+    background: #161b22;
+    border: solid #58a6ff;
+    padding: 1 2;
+    layout: vertical;
+}
+
+/* Wizard header section */
+#wizard_header {
+    height: auto;
+    width: 100%;
+    padding: 0 0 1 0;
+    border-bottom: solid #30363d;
+}
+
+#wizard_progress_bar {
+    height: 1;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#wizard_progress_bar Bar {
+    color: #58a6ff;
+}
+
+#wizard_step_counter {
+    text-align: right;
+    color: #8b949e;
+    width: 100%;
+}
+
+#wizard_title {
+    text-style: bold;
+    color: #58a6ff;
+    text-align: center;
+    width: 100%;
+    margin-top: 1;
+}
+
+#wizard_description {
+    color: #8b949e;
+    text-align: center;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+/* Wizard content area - holds step component */
+#wizard_content {
+    height: 1fr;
+    width: 100%;
+    overflow-y: auto;
+    margin: 1 0;
+    padding: 1 2;
+}
+
+/* Wizard error message */
+#wizard_error {
+    color: #f85149;
+    text-align: center;
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: #3d1515;
+    border: solid #f85149;
+    margin-bottom: 1;
+}
+
+#wizard_error.hidden {
+    display: none;
+}
+
+/* Wizard navigation buttons */
+#wizard_nav {
+    height: 3;
+    width: 100%;
+    align: center middle;
+    padding-top: 1;
+    layout: horizontal;
+}
+
+#wizard_nav Button {
+    margin: 0 1;
+    min-width: 12;
+    text-align: center;
+    content-align: center middle;
+}
+
+#wizard_back {
+    background: #21262d;
+    border: solid #30363d;
+}
+
+#wizard_back:hover {
+    background: #30363d;
+    border: solid #484f58;
+}
+
+#wizard_back.disabled {
+    background: #161b22;
+    color: #484f58;
+    border: solid #21262d;
+}
+
+#wizard_next {
+    background: #238636;
+    border: solid #238636;
+}
+
+#wizard_next:hover {
+    background: #2ea043;
+    border: solid #2ea043;
+}
+
+#wizard_cancel {
+    background: #b62324;
+    border: solid #b62324;
+}
+
+#wizard_cancel:hover {
+    background: #da3633;
+    border: solid #da3633;
+}
+
+/* === Step Components Base === */
+StepComponent {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+}
+
+/* Welcome step styling */
+.wizard-welcome {
+    align: center middle;
+    text-align: center;
+}
+
+.wizard-welcome-title {
+    color: #58a6ff;
+    text-style: bold;
+    margin-bottom: 2;
+}
+
+.wizard-welcome-subtitle {
+    color: #8b949e;
+    margin-bottom: 1;
+}
+
+/* Provider checkbox list */
+.provider-list {
+    height: auto;
+    max-height: 20;
+    overflow-y: auto;
+    padding: 1;
+    background: #161b22;
+    border: solid #30363d;
+}
+
+.provider-item {
+    height: 2;
+    padding: 0 1;
+    margin-bottom: 1;
+    background: #21262d;
+    border: solid #30363d;
+}
+
+.provider-item:hover {
+    background: #30363d;
+    border: solid #484f58;
+}
+
+.provider-item.configured {
+    border-left: thick #3fb950;
+}
+
+.provider-item.unconfigured {
+    border-left: thick #8b949e;
+}
+
+.provider-item.selected {
+    background: #0d3a0d;
+    border: solid #3fb950;
+}
+
+/* Single select option list */
+.option-list {
+    height: auto;
+    max-height: 15;
+    padding: 1;
+}
+
+.option-item {
+    height: auto;
+    min-height: 3;
+    padding: 1;
+    margin-bottom: 1;
+    background: #21262d;
+    border: solid #30363d;
+}
+
+.option-item:hover {
+    background: #30363d;
+    border: solid #484f58;
+}
+
+.option-item:focus {
+    border: solid #58a6ff;
+}
+
+.option-item.selected {
+    background: #0d3a0d;
+    border: solid #3fb950;
+}
+
+.option-label {
+    color: #e6edf3;
+    text-style: bold;
+}
+
+.option-description {
+    color: #8b949e;
+    margin-top: 0;
+}
+
+/* Toggle step styling */
+.toggle-container {
+    align: center middle;
+    padding: 2;
+}
+
+.toggle-label {
+    color: #e6edf3;
+    margin-bottom: 1;
+}
+
+.toggle-description {
+    color: #8b949e;
+    margin-top: 1;
+}
+
+/* Password input styling */
+.password-container {
+    padding: 1 2;
+}
+
+.password-label {
+    color: #58a6ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.password-input {
+    height: 3;
+    background: #0d1117;
+    border: solid #30363d;
+}
+
+.password-input:focus {
+    border: solid #58a6ff;
+}
+
+.password-hint {
+    color: #8b949e;
+    text-style: italic;
+    margin-top: 1;
+}
+
+/* Text input styling */
+.text-input-container {
+    padding: 1 2;
+}
+
+.text-input-label {
+    color: #e6edf3;
+    margin-bottom: 1;
+}
+
+.text-input {
+    height: 3;
+    background: #0d1117;
+    border: solid #30363d;
+}
+
+.text-input:focus {
+    border: solid #58a6ff;
+}
+
+/* Multi-line text area */
+.text-area-input {
+    height: 10;
+    background: #0d1117;
+    border: solid #30363d;
+}
+
+.text-area-input:focus {
+    border: solid #58a6ff;
+}
+
+/* Model select styling */
+.model-select-container {
+    padding: 1 2;
+}
+
+.model-select-label {
+    color: #e6edf3;
+    margin-bottom: 1;
+}
+
+.model-search {
+    height: 3;
+    background: #0d1117;
+    border: solid #30363d;
+    margin-bottom: 1;
+}
+
+.model-search:focus {
+    border: solid #58a6ff;
+}
+
+.model-list {
+    height: auto;
+    max-height: 15;
+    background: #161b22;
+    border: solid #30363d;
+    padding: 0;
+}
+
+.model-item {
+    height: 2;
+    padding: 0 1;
+    background: transparent;
+}
+
+.model-item:hover {
+    background: #21262d;
+}
+
+.model-item.selected {
+    background: #0d3a0d;
+    color: #3fb950;
+}
+
+/* Preview step styling */
+.preview-container {
+    height: 1fr;
+    padding: 1;
+}
+
+.preview-header {
+    color: #58a6ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.preview-content {
+    height: 1fr;
+    background: #0d1117;
+    border: solid #30363d;
+    padding: 1;
+    color: #e6edf3;
+}
+
+/* Complete step styling */
+.complete-container {
+    align: center middle;
+    text-align: center;
+}
+
+.complete-icon {
+    color: #3fb950;
+    margin-bottom: 1;
+}
+
+.complete-title {
+    color: #3fb950;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.complete-message {
+    color: #8b949e;
+    margin-bottom: 2;
+}
+
+.complete-next-steps {
+    color: #58a6ff;
+    margin-top: 1;
+}

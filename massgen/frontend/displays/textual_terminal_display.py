@@ -1379,10 +1379,68 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app:
             self._call_app_method("notify_error", agent_id, error)
 
+    def update_loading_status(self, message: str):
+        """Update the loading status text on all agent panels.
+
+        Use this during initialization to show progress like:
+        - "Creating agents..."
+        - "Starting Docker containers..."
+        - "Connecting to MCP servers..."
+        """
+        if self._app:
+            self._call_app_method("_update_all_loading_text", message)
+
     def update_status_bar_votes(self, vote_counts: Dict[str, int]):
         """Update vote counts in the status bar."""
         if self._app:
             self._call_app_method("update_status_bar_votes", vote_counts)
+
+    def _get_context_path_writes_footer(self) -> str:
+        """Generate footer text for context path writes.
+
+        Returns:
+            Footer text if files were written, empty string otherwise.
+        """
+        if not self.orchestrator:
+            return ""
+
+        writes = self.orchestrator.get_context_path_writes() if hasattr(self.orchestrator, "get_context_path_writes") else []
+        if not writes:
+            return ""
+
+        INLINE_THRESHOLD = 5  # Show inline if <= this many files
+
+        if len(writes) <= INLINE_THRESHOLD:
+            # Show files inline
+            footer_lines = ["\n---", "📂 **Files written to context paths:**"]
+            for path in writes:
+                footer_lines.append(f"  • {path}")
+            return "\n".join(footer_lines)
+        else:
+            # Many files - write to log file and show summary
+            log_file_path = self._write_context_path_log(writes)
+            return f"\n---\n📂 **{len(writes)} files written to context paths**\n  View details: {log_file_path}"
+
+    def _write_context_path_log(self, writes: list[str]) -> str:
+        """Write full context path write list to log directory.
+
+        Args:
+            writes: List of file paths written to context paths.
+
+        Returns:
+            Path to the log file.
+        """
+        log_file = self.output_dir / "context_path_writes.txt"
+        try:
+            with open(log_file, "w", encoding="utf-8") as f:
+                f.write(f"Context Path Writes - {len(writes)} files\n")
+                f.write("=" * 50 + "\n\n")
+                for path in sorted(writes):
+                    f.write(f"{path}\n")
+            return str(log_file)
+        except OSError as exc:
+            logger.error(f"Failed to write context path log: {exc}")
+            return ""
 
     def show_final_answer(self, answer: str, vote_results=None, selected_agent=None):
         """Show final answer with flush effect."""
@@ -1391,7 +1449,19 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         stream_buffer = self._final_stream_buffer.strip() if hasattr(self, "_final_stream_buffer") else ""
         display_answer = answer or stream_buffer
+
+        # Add context path writes footer if any files were written
+        context_writes_footer = self._get_context_path_writes_footer()
+        if context_writes_footer:
+            display_answer = display_answer.rstrip() + "\n" + context_writes_footer
+            # Also update the stream buffer so the footer appears in the final display
+            if hasattr(self, "_final_stream_buffer") and self._final_stream_buffer:
+                self._final_stream_buffer = self._final_stream_buffer.rstrip() + "\n" + context_writes_footer
+
         if self._final_stream_active:
+            # Update the stream with the footer before ending
+            if context_writes_footer and self._app:
+                self._call_app_method("update_final_stream", self._final_stream_buffer)
             self._end_final_answer_stream()
         elif not stream_buffer and self._app:
             self._final_stream_active = True
@@ -3390,6 +3460,11 @@ Type your question and press Enter to ask the agents.
                 widget.current_line_label.update("")
             self.notify("Agent panels reset", severity="information")
 
+        def _update_all_loading_text(self, message: str) -> None:
+            """Update loading text on all agent panels."""
+            for widget in self.agent_widgets.values():
+                widget._update_loading_text(message)
+
         async def _flush_buffers(self):
             """Flush buffered content to widgets."""
             self._pending_flush = False
@@ -3584,8 +3659,11 @@ Type your question and press Enter to ask the agents.
             self._celebrate_winner(selected_agent, answer)
 
             # Show final answer in winner's AgentPanel via FinalPresentationCard
+            # Check if stream was already started (begin_final_stream returns early if so)
+            already_streamed = hasattr(self, "_final_header_added") and self._final_header_added
             self.begin_final_stream(selected_agent, vote_results or {})
-            if answer:
+            # Only add content if this is a fresh stream (not already streamed via show_final_answer)
+            if answer and not already_streamed:
                 self.update_final_stream(answer)
             self.end_final_stream()
 
@@ -5853,7 +5931,7 @@ Type your question and press Enter to ask the agents.
                 # Loading indicator - centered, shown when waiting with no content
                 with Container(id=self._loading_id, classes="loading-container"):
                     yield ProgressIndicator(
-                        message="Waiting for agent...",
+                        message="Ready",
                         id=f"progress_{self._dom_safe_id}",
                     )
 
@@ -5921,7 +5999,7 @@ Type your question and press Enter to ask the agents.
 
         def on_mount(self) -> None:
             """Start the loading spinner when the panel is mounted."""
-            self._start_loading_spinner("Waiting for agent...")
+            self._start_loading_spinner("Ready")
 
         def set_in_use(self, in_use: bool) -> None:
             """Set whether this panel is in use (for single-agent mode).

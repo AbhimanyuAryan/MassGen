@@ -178,6 +178,14 @@ class UIAdapter(ABC):
             level: Severity level ("info", "warning", "error").
         """
 
+    def update_loading_status(self, message: str) -> None:
+        """Update loading status text during initialization.
+
+        Args:
+            message: Status message like "Creating agents...", "Starting Docker..."
+        """
+        # Default: just notify. Subclasses can override for better UX.
+
     def show_help(self, text: str) -> None:
         """Display help text.
 
@@ -500,6 +508,11 @@ class TextualInteractiveAdapter(UIAdapter):
         if self._display and self._display._app:
             severity = "warning" if level == "warning" else "error" if level == "error" else "information"
             self._display._call_app_method("notify", message, severity=severity)
+
+    def update_loading_status(self, message: str) -> None:
+        """Update loading status text on all agent panels."""
+        if self._display:
+            self._display.update_loading_status(message)
 
     def show_help(self, text: str) -> None:
         """Show help modal."""

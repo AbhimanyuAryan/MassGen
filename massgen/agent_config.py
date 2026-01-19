@@ -250,6 +250,15 @@ class AgentConfig:
     # When True, uses the existing answer directly without an additional LLM call
     skip_final_presentation: bool = False
 
+    # Disable injection of other agents' answers (used by TUI multi-agent refinement OFF)
+    # When True, agents work independently without seeing each other's work mid-stream
+    disable_injection: bool = False
+
+    # Defer voting until all agents have answered (used by TUI multi-agent refinement OFF)
+    # When True, voting only starts after all agents submit their answers
+    # Prevents wasteful restarts when agents vote before everyone has answered
+    defer_voting_until_all_answered: bool = False
+
     # Debug mode for restart feature - override final answer on attempt 1 only
     debug_final_answer: Optional[str] = None
 

@@ -25,11 +25,20 @@ from .injection_card import InjectionSubCard
 from .mode_bar import ModeBar, ModeChanged, ModeToggle, OverrideRequested
 from .multi_line_input import MultiLineInput
 from .path_suggestion import PathSuggestion, PathSuggestionDropdown
+from .quickstart_wizard import QuickstartWizard
+from .setup_wizard import SetupWizard
 from .tab_bar import AgentTab, AgentTabBar, AgentTabChanged
 from .task_plan_card import TaskPlanCard
 from .task_plan_modal import TaskPlanModal
 from .tool_card import ToolCallCard, format_tool_display_name, get_tool_category
 from .tool_detail_modal import ToolDetailModal
+from .wizard_base import (
+    StepComponent,
+    WizardCompleted,
+    WizardModal,
+    WizardState,
+    WizardStep,
+)
 
 __all__ = [
     # Mode bar
@@ -72,4 +81,12 @@ __all__ = [
     # Path autocomplete
     "PathSuggestion",
     "PathSuggestionDropdown",
+    # Wizard framework
+    "WizardModal",
+    "WizardState",
+    "WizardStep",
+    "WizardCompleted",
+    "StepComponent",
+    "SetupWizard",
+    "QuickstartWizard",
 ]
