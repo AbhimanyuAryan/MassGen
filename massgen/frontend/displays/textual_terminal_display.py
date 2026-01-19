@@ -944,6 +944,7 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._final_stream_active = False
         self._final_stream_buffer: str = ""
         self._final_presentation_agent: Optional[str] = None
+        self._routing_to_post_eval_card = False  # Bug 2 fix: prevent timeline routing during post-eval
 
         self._app_ready = threading.Event()
         self._input_handler: Optional[Callable[[str], None]] = None
@@ -1178,6 +1179,16 @@ class TextualTerminalDisplay(TerminalDisplay):
             content_type: Type of content - "thinking", "tool", "status", "presentation"
             tool_call_id: Optional unique ID for tool calls (enables tracking across events)
         """
+        # Bug 2 fix: Skip timeline updates if content is being routed to post-eval card
+        if hasattr(self, "_routing_to_post_eval_card") and self._routing_to_post_eval_card:
+            return
+
+        # Skip timeline updates after final presentation card is complete
+        # (prevents "presenting final answer" messages from appearing below the card)
+        if hasattr(self, "_final_presentation_card") and self._final_presentation_card:
+            if hasattr(self._final_presentation_card, "_is_streaming") and not self._final_presentation_card._is_streaming:
+                return
+
         if not content:
             return
 
@@ -1565,7 +1576,11 @@ class TextualTerminalDisplay(TerminalDisplay):
             )
 
     def show_post_evaluation_content(self, content: str, agent_id: str):
-        """Display post-evaluation streaming content."""
+        """Display post-evaluation streaming content.
+
+        Bug 2 fix: _routing_to_post_eval_card flag is set at coordination level
+        when post-eval starts, preventing duplicate routing to timeline.
+        """
         eval_msg = f"\n[POST-EVALUATION]\n{content}"
         self._write_to_agent_file(agent_id, eval_msg)
         for line in content.splitlines() or [content]:
@@ -1582,6 +1597,9 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     def end_post_evaluation_content(self, agent_id: str):
         """Called when post-evaluation is complete to show footer with buttons."""
+        # Bug 2 fix: Clear flag when post-eval ends
+        self._routing_to_post_eval_card = False
+
         if self._app:
             self._call_app_method("end_post_evaluation", agent_id)
 
@@ -4000,8 +4018,8 @@ Type your question and press Enter to ask the agents.
             """
             # Finalize the FinalPresentationCard
             if self._final_presentation_card:
-                # If post-eval status wasn't set explicitly (e.g., no post-eval agent), mark as verified
-                if self._final_presentation_card._post_eval_status == "none":
+                # Mark as verified when post-eval completes (unless it's a restart request)
+                if self._final_presentation_card._post_eval_status in ("none", "evaluating"):
                     self._final_presentation_card.set_post_eval_status("verified")
 
                 # Mark the card as complete (shows footer with buttons)
@@ -4112,11 +4130,30 @@ Type your question and press Enter to ask the agents.
 
         def update_final_stream(self, chunk: str):
             """Append streaming chunks to the FinalPresentationCard."""
-            if chunk and self._final_presentation_card:
-                try:
-                    self._final_presentation_card.append_chunk(chunk)
-                except Exception as e:
-                    logger.error(f"FinalPresentationCard.append_chunk failed: {e}")
+            if not chunk:
+                return
+
+            # Buffer chunks if card doesn't exist yet (race condition with highlight_winner_quick)
+            if not self._final_presentation_card:
+                if not hasattr(self, "_pending_final_chunks"):
+                    self._pending_final_chunks = []
+                self._pending_final_chunks.append(chunk)
+                return
+
+            # Flush any pending chunks first (from before card was created)
+            if hasattr(self, "_pending_final_chunks") and self._pending_final_chunks:
+                for pending_chunk in self._pending_final_chunks:
+                    try:
+                        self._final_presentation_card.append_chunk(pending_chunk)
+                    except Exception as e:
+                        logger.error(f"FinalPresentationCard.append_chunk (pending) failed: {e}")
+                self._pending_final_chunks = []
+
+            # Now append the current chunk
+            try:
+                self._final_presentation_card.append_chunk(chunk)
+            except Exception as e:
+                logger.error(f"FinalPresentationCard.append_chunk failed: {e}")
 
         def end_final_stream(self):
             """Mark the final presentation streaming as complete.
@@ -4212,6 +4249,16 @@ Type your question and press Enter to ask the agents.
                     )
                     timeline.add_widget(card)
                     self._final_presentation_card = card
+
+                    # Flush any pending chunks that arrived before card was created (Bug 1 fix)
+                    if hasattr(self, "_pending_final_chunks") and self._pending_final_chunks:
+                        for pending_chunk in self._pending_final_chunks:
+                            try:
+                                card.append_chunk(pending_chunk)
+                            except Exception as e:
+                                self.log.error(f"Error flushing pending chunk: {e}")
+                        self._pending_final_chunks = []
+
                     # Don't call complete() - streaming content will come via update_final_stream
                     # and show_final_answer will call end_final_stream -> end_post_evaluation -> complete()
 

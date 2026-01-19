@@ -364,6 +364,7 @@ class CoordinationUI:
                             delattr(self, attr_name)
 
                 # Handle post-evaluation content streaming
+                # Bug 2 fix: Removed local _routed_to_post_eval variable - display-level flag handles this now
                 if source and content and chunk_type == "content":
                     # Check if we're in post-evaluation
                     if hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
@@ -381,11 +382,17 @@ class CoordinationUI:
                 # Detect post-evaluation start
                 if chunk_type == "status" and "Post-evaluation" in content:
                     self._in_post_evaluation = True
+                    # Bug 2 fix: Set display flag to prevent timeline routing during post-eval
+                    if self.display and hasattr(self.display, "_routing_to_post_eval_card"):
+                        self.display._routing_to_post_eval_card = True
 
                 # Detect post-evaluation completion and show footer
                 if chunk_type == "status" and hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
                     if "Evaluation complete" in content or "Restart requested" in content:
                         self._in_post_evaluation = False
+                        # Bug 2 fix: Clear display flag when post-eval ends
+                        if self.display and hasattr(self.display, "_routing_to_post_eval_card"):
+                            self.display._routing_to_post_eval_card = False
                         if self.display and hasattr(self.display, "end_post_evaluation_content"):
                             # Use tracked winner, fall back to source
                             winner = getattr(self, "_post_eval_winner", None) or source
@@ -399,6 +406,7 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
 
                     # Process content by source
+                    # Bug 2 fix: Display-level flag prevents timeline routing, so no check needed here
                     await self._process_content(source, content)
 
             # Flush agent content buffers BEFORE processing final answer
@@ -970,6 +978,7 @@ class CoordinationUI:
                             delattr(self, attr_name)
 
                 # Handle post-evaluation content streaming
+                # Bug 2 fix: Removed local _routed_to_post_eval variable - display-level flag handles this now
                 if source and content and chunk_type == "content":
                     # Check if we're in post-evaluation
                     if hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
@@ -987,11 +996,17 @@ class CoordinationUI:
                 # Detect post-evaluation start
                 if chunk_type == "status" and "Post-evaluation" in content:
                     self._in_post_evaluation = True
+                    # Bug 2 fix: Set display flag to prevent timeline routing during post-eval
+                    if self.display and hasattr(self.display, "_routing_to_post_eval_card"):
+                        self.display._routing_to_post_eval_card = True
 
                 # Detect post-evaluation completion and show footer
                 if chunk_type == "status" and hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
                     if "Evaluation complete" in content or "Restart requested" in content:
                         self._in_post_evaluation = False
+                        # Bug 2 fix: Clear display flag when post-eval ends
+                        if self.display and hasattr(self.display, "_routing_to_post_eval_card"):
+                            self.display._routing_to_post_eval_card = False
                         if self.display and hasattr(self.display, "end_post_evaluation_content"):
                             # Use tracked winner, fall back to source
                             winner = getattr(self, "_post_eval_winner", None) or source
@@ -1005,6 +1020,7 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
 
                     # Process content by source
+                    # Bug 2 fix: Display-level flag prevents timeline routing, so no check needed here
                     await self._process_content(source, content)
 
             # Flush agent content buffers BEFORE processing final answer
@@ -1453,11 +1469,13 @@ class CoordinationUI:
                             delattr(self, attr_name)
 
                 # Handle post-evaluation content streaming
+                _routed_to_post_eval = False
                 if source and content and chunk_type == "content":
                     # Check if we're in post-evaluation by looking for the status message
                     if hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
                         if self.display and hasattr(self.display, "show_post_evaluation_content"):
                             self.display.show_post_evaluation_content(content, source)
+                            _routed_to_post_eval = True
 
                 # Track selected agent for post-evaluation
                 if content and "🏆 Selected Agent:" in content:
@@ -1470,11 +1488,17 @@ class CoordinationUI:
                 # Detect post-evaluation start
                 if chunk_type == "status" and "Post-evaluation" in content:
                     self._in_post_evaluation = True
+                    # Bug 2 fix: Set display flag to prevent timeline routing during post-eval
+                    if self.display and hasattr(self.display, "_routing_to_post_eval_card"):
+                        self.display._routing_to_post_eval_card = True
 
                 # Detect post-evaluation completion and show footer
                 if chunk_type == "status" and hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
                     if "Evaluation complete" in content or "Restart requested" in content:
                         self._in_post_evaluation = False
+                        # Bug 2 fix: Clear display flag when post-eval ends
+                        if self.display and hasattr(self.display, "_routing_to_post_eval_card"):
+                            self.display._routing_to_post_eval_card = False
                         if self.display and hasattr(self.display, "end_post_evaluation_content"):
                             # Use tracked winner, fall back to source
                             winner = getattr(self, "_post_eval_winner", None) or source
@@ -1488,6 +1512,7 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
 
                     # Process content by source
+                    # Bug 2 fix: Display-level flag prevents timeline routing, so no check needed here
                     await self._process_content(source, content)
 
             # Flush agent content buffers BEFORE processing final answer
