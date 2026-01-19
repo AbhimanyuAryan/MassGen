@@ -57,16 +57,12 @@ try:
         AgentTabChanged,
         BackgroundTasksModal,
         CompletionFooter,
-        FinalPresentationBanner,
         FinalPresentationCard,
-        FinalPresentationFooter,
         ModeBar,
         ModeChanged,
         MultiLineInput,
         OverrideRequested,
         PathSuggestionDropdown,
-        PostEvaluationBanner,
-        SessionCompleteBanner,
         SubagentCard,
         SubagentModal,
         TaskPlanCard,
@@ -1601,10 +1597,6 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     def show_restart_banner(self, reason: str, instructions: str, attempt: int, max_attempts: int):
         """Display restart decision banner."""
-        import sys
-
-        print(f"[DEBUG] TextualDisplay.show_restart_banner called: attempt={attempt}, reason={reason[:50]}", file=sys.stderr)
-
         banner_msg = f"\n{'=' * 60}\n" f"RESTART TRIGGERED (Attempt {attempt}/{max_attempts})\n" f"Reason: {reason}\n" f"Instructions: {instructions}\n" f"{'=' * 60}\n"
 
         self._write_to_system_file(banner_msg)
@@ -1617,8 +1609,6 @@ class TextualTerminalDisplay(TerminalDisplay):
                 attempt,
                 max_attempts,
             )
-        else:
-            print("[DEBUG] show_restart_banner: self._app is None!", file=sys.stderr)
 
     def show_restart_context_panel(self, reason: str, instructions: str):
         """Display restart context panel at top of UI (for attempt 2+)."""
@@ -3926,234 +3916,120 @@ Type your question and press Enter to ask the agents.
             self.end_final_stream()
 
         def show_post_evaluation(self, content: str, agent_id: str):
-            """Show post-evaluation content in the winner's timeline.
+            """Show post-evaluation content in the FinalPresentationCard.
 
-            Adds a Post-Evaluation banner (once, same style as RestartBanner)
-            and the content as normal text. Parses tool calls and shows them as cards.
+            Routes post-evaluation content to the unified card instead of
+            using separate banners and timeline items.
             """
             import re
 
-            # Get the winner's timeline
-            if agent_id in self.agent_widgets:
-                panel = self.agent_widgets[agent_id]
-                try:
-                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+            # Route to the FinalPresentationCard if available
+            if self._final_presentation_card:
+                # Filter out JSON tool call content before passing to card
+                if content:
+                    stripped = content.strip()
 
-                    # Add Post-Evaluation banner only once (same style as RestartBanner)
-                    if not getattr(self, "_post_eval_header_added", False):
-                        banner = PostEvaluationBanner(id="post_evaluation_banner")
-                        timeline.add_widget(banner)
-                        self._post_eval_header_added = True
+                    # Skip JSON fragments and tool call content
+                    json_indicators = [
+                        '"action_type"',
+                        '"submit_data"',
+                        '"restart_data"',
+                        '"action": "submit"',
+                        '"confirmed": true',
+                        '"confirmed":true',
+                        '": "submit"',
+                        '": "restart_orchestration"',
+                    ]
 
-                    # Check for tool call JSON in content
-                    if content:
-                        # Skip content that looks like JSON tool calls
-                        # Check if this chunk is part of a JSON object
-                        stripped = content.strip()
+                    is_json_fragment = any(ind in content for ind in json_indicators)
 
-                        # Skip JSON fragments and tool call content
-                        json_indicators = [
-                            '"action_type"',
-                            '"submit_data"',
-                            '"restart_data"',
-                            '"action": "submit"',
-                            '"confirmed": true',
-                            '"confirmed":true',
-                            '": "submit"',
-                            '": "restart_orchestration"',
-                        ]
+                    # Also skip lines that are just JSON syntax
+                    is_json_syntax = stripped in ["{", "}", "```json", "```", '",', '",']
+                    is_json_syntax = is_json_syntax or stripped.startswith('"action')
+                    is_json_syntax = is_json_syntax or stripped.startswith('"confirmed')
+                    is_json_syntax = is_json_syntax or stripped.startswith('"submit')
+                    is_json_syntax = is_json_syntax or stripped.startswith('"restart')
 
-                        is_json_fragment = any(ind in content for ind in json_indicators)
+                    if not is_json_fragment and not is_json_syntax:
+                        # Filter out any remaining JSON blocks
+                        clean_content = content
 
-                        # Also skip lines that are just JSON syntax
-                        is_json_syntax = stripped in ["{", "}", "```json", "```", '",', '",']
-                        is_json_syntax = is_json_syntax or stripped.startswith('"action')
-                        is_json_syntax = is_json_syntax or stripped.startswith('"confirmed')
-                        is_json_syntax = is_json_syntax or stripped.startswith('"submit')
-                        is_json_syntax = is_json_syntax or stripped.startswith('"restart')
+                        # Remove JSON code blocks
+                        clean_content = re.sub(r"```json\s*\{[\s\S]*?\}\s*```", "", clean_content)
 
-                        if is_json_fragment or is_json_syntax:
-                            # Don't display JSON tool call content
-                            pass
-                        else:
-                            # Filter out any remaining JSON blocks
-                            clean_content = content
+                        # Remove inline JSON objects with action_type
+                        clean_content = re.sub(
+                            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"action_type"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',
+                            "",
+                            clean_content,
+                            flags=re.DOTALL,
+                        )
 
-                            # Remove JSON code blocks
-                            clean_content = re.sub(r"```json\s*\{[\s\S]*?\}\s*```", "", clean_content)
+                        # Clean up any leftover JSON fragments
+                        clean_content = re.sub(r"^\s*[\{\}]\s*$", "", clean_content, flags=re.MULTILINE)
 
-                            # Remove inline JSON objects with action_type
-                            clean_content = re.sub(
-                                r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*"action_type"[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',
-                                "",
-                                clean_content,
-                                flags=re.DOTALL,
-                            )
-
-                            # Clean up any leftover JSON fragments
-                            clean_content = re.sub(r"^\s*[\{\}]\s*$", "", clean_content, flags=re.MULTILINE)
-
-                            clean_content = clean_content.strip()
-                            if clean_content:
-                                timeline.add_text(clean_content, text_class="post-eval")
-
-                except Exception as e:
-                    logger.debug(f"Failed to add post-evaluation content: {e}")
+                        clean_content = clean_content.strip()
+                        if clean_content:
+                            # Set status to evaluating and add content
+                            self._final_presentation_card.set_post_eval_status("evaluating", clean_content)
 
             self.add_orchestrator_event(f"[POST-EVALUATION] {agent_id}: {content}")
 
         def show_post_evaluation_tool(self, tool_name: str, args: dict, agent_id: str):
-            """Display post-evaluation tool call using ToolCallCard.
+            """Update FinalPresentationCard with post-evaluation tool decision.
 
             Args:
                 tool_name: "submit" or "restart_orchestration"
                 args: Tool arguments dict
                 agent_id: The winner agent ID
             """
-            import uuid
-            from datetime import datetime
-
-            from .content_handlers import ToolDisplayData
-
-            if agent_id not in self.agent_widgets:
-                return
-
-            panel = self.agent_widgets[agent_id]
-            try:
-                timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
-
-                # Create ToolDisplayData for the post-eval tool
+            # Update the FinalPresentationCard status based on tool decision
+            if self._final_presentation_card:
                 if tool_name == "submit":
-                    display_name = "Submit Answer"
-                    args_summary = "confirmed: true"
-                    result_summary = "Answer confirmed and submitted"
-                    icon = "✓"
-                    color = "#3fb950"  # green
+                    self._final_presentation_card.set_post_eval_status("verified")
                 elif tool_name == "restart_orchestration":
-                    display_name = "Restart Orchestration"
                     reason = args.get("reason", "No reason provided")
-                    args.get("instructions", "")
-                    args_summary = f"reason: {reason[:60]}..." if len(reason) > 60 else f"reason: {reason}"
-                    result_summary = f"Restart requested: {reason[:40]}..." if len(reason) > 40 else f"Restart requested: {reason}"
-                    icon = "🔄"
-                    color = "#d29922"  # amber
-                else:
-                    return  # Unknown tool
-
-                tool_data = ToolDisplayData(
-                    tool_id=f"post_eval_{uuid.uuid4().hex[:8]}",
-                    tool_name=tool_name,
-                    display_name=display_name,
-                    tool_type="workspace",  # Post-eval tools are workspace category
-                    category="workspace",
-                    icon=icon,
-                    color=color,
-                    status="success",  # Post-eval tools complete immediately
-                    start_time=datetime.now(),
-                    end_time=datetime.now(),
-                    args_summary=args_summary,
-                    args_full=str(args),
-                    result_summary=result_summary,
-                    result_full=result_summary,
-                    elapsed_seconds=0.0,
-                )
-
-                card = timeline.add_tool(tool_data)
-                card.set_status("success")
-                if tool_name == "submit":
-                    card.set_result("Answer confirmed and submitted", "Answer confirmed")
-                else:
-                    card.set_result(
-                        f"Restart requested.\nReason: {args.get('reason', 'N/A')}\n" f"Instructions: {args.get('instructions', 'N/A')}",
-                        "Restart requested",
-                    )
-
-            except Exception as e:
-                logger.debug(f"Failed to display post-eval tool: {e}")
+                    self._final_presentation_card.set_post_eval_status("restart", f"Reason: {reason}")
 
         def end_post_evaluation(self, agent_id: str):
-            """Mark post-evaluation as complete and show turn complete banner with final answer."""
-            if agent_id in self.agent_widgets:
-                panel = self.agent_widgets[agent_id]
-                try:
-                    timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+            """Mark post-evaluation as complete via the FinalPresentationCard.
 
-                    # Add turn complete banner and footer
-                    if not getattr(self, "_post_eval_footer_added", False):
-                        # Add the turn complete banner
-                        turn_banner = SessionCompleteBanner(
-                            label="✅ Turn Complete",
-                            id="session_complete_banner",
-                        )
-                        timeline.add_widget(turn_banner)
+            This finalizes the card by:
+            1. Marking post-eval as verified (if not already set to restart)
+            2. Calling complete() to show footer with Copy/Workspace buttons
+            """
+            # Finalize the FinalPresentationCard
+            if self._final_presentation_card:
+                # If post-eval status wasn't set explicitly (e.g., no post-eval agent), mark as verified
+                if self._final_presentation_card._post_eval_status == "none":
+                    self._final_presentation_card.set_post_eval_status("verified")
 
-                        # Display the final answer summary if available
-                        if hasattr(self, "_final_stream_content") and self._final_stream_content:
-                            # Create a nice final answer display
-                            answer_text = self._final_stream_content.strip()
-                            if answer_text:
-                                from rich.markdown import Markdown
-                                from rich.panel import Panel
-                                from textual.widgets import Static
+                # Mark the card as complete (shows footer with buttons)
+                self._final_presentation_card.complete()
 
-                                # Create a panel with the final answer using Rich
-                                try:
-                                    # Render markdown content
-                                    md_content = Markdown(answer_text)
-                                    answer_panel = Panel(
-                                        md_content,
-                                        title="📝 Final Answer",
-                                        title_align="left",
-                                        border_style="green",
-                                        padding=(1, 2),
-                                        expand=True,
-                                    )
-                                except Exception:
-                                    # Fallback to plain text
-                                    answer_panel = Panel(
-                                        answer_text,
-                                        title="📝 Final Answer",
-                                        title_align="left",
-                                        border_style="green",
-                                        padding=(1, 2),
-                                        expand=True,
-                                    )
-
-                                # Use Static with expand=True to allow full height
-                                answer_widget = Static(answer_panel, id="final_answer_display", expand=True)
-                                timeline.add_widget(answer_widget)
-
-                        # Add footer with buttons
-                        footer = FinalPresentationFooter(
-                            agent_id=agent_id,
-                            id="final_presentation_footer",
-                        )
-                        timeline.add_widget(footer)
-                        self._post_eval_footer_added = True
-
-                        # Scroll to the bottom to show the turn complete banner
+                # Scroll to show the complete card
+                if agent_id in self.agent_widgets:
+                    panel = self.agent_widgets[agent_id]
+                    try:
+                        timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         timeline._auto_scroll()
-
-                except Exception as e:
-                    logger.debug(f"Failed to add post-evaluation footer: {e}")
+                    except Exception:
+                        pass
 
         def begin_final_stream(self, agent_id: str, vote_results: Dict[str, Any]):
-            """Start final presentation streaming into the winner's AgentPanel.
-
-            Uses simple timeline items (separator header + text) instead of
-            a complex card widget - keeps everything in the normal flow.
+            """Start final presentation streaming using unified FinalPresentationCard.
 
             This method:
             1. Auto-switches to the winner's tab
             2. Marks the winner tab with trophy styling
-            3. Adds a "🏆 FINAL PRESENTATION" header separator to the timeline (once)
+            3. Creates a FinalPresentationCard in the winner's timeline for streaming
             """
-            # Prevent duplicate headers - check if we've already started or if winner was quick-highlighted
+            # Prevent duplicate cards - check if we've already started or if winner was quick-highlighted
             if hasattr(self, "_final_header_added") and self._final_header_added:
                 return
             if hasattr(self, "_winner_quick_highlighted") and self._winner_quick_highlighted:
-                # Winner already shown via highlight_winner_quick, skip adding another banner
-                # But still set up for streaming
+                # Winner already shown via highlight_winner_quick, skip adding another card
+                # But still set up for streaming - the card was already created by highlight_winner_quick
                 self._final_presentation_agent = agent_id
                 self._final_header_added = True  # Prevent future duplicates
                 if agent_id in self.agent_widgets:
@@ -4167,11 +4043,10 @@ Type your question and press Enter to ask the agents.
 
             # Store the winner agent for routing chunks
             self._final_presentation_agent = agent_id
-            self._final_presentation_card = None  # Not using card anymore
+            self._final_presentation_card = None  # Will hold the FinalPresentationCard
             self._final_stream_timeline = None  # Track timeline for streaming
-            self._final_header_added = True  # Track that header was added
+            self._final_header_added = True  # Track that card was added
             self._post_eval_header_added = False  # Reset post-eval tracking
-            self._final_stream_content = ""  # Accumulate final answer content
 
             # 1. Auto-switch to winner's tab
             if self._tab_bar:
@@ -4185,7 +4060,7 @@ Type your question and press Enter to ask the agents.
                 self.agent_widgets[agent_id].remove_class("hidden")
                 self._active_agent_id = agent_id
 
-            # 3. Add Final Presentation banner to timeline (same style as RestartBanner)
+            # 3. Create FinalPresentationCard and add to timeline
             if agent_id in self.agent_widgets:
                 panel = self.agent_widgets[agent_id]
 
@@ -4214,46 +4089,52 @@ Type your question and press Enter to ask the agents.
                             return f"A{num}" if num else aid
                         return aid
 
-                    vote_str = ""
-                    if vote_counts:
-                        # Format: "A1.1 (1), A2.1 (2)" - parentheses make vote counts clearer
-                        counts = ", ".join(f"{get_answer_label(aid)} ({cnt})" for aid, cnt in vote_counts.items())
-                        tie_note = " (tie-breaker)" if is_tie else ""
-                        winner_label = get_answer_label(winner)
-                        vote_str = f" | {counts} | Winner: {winner_label}{tie_note}"
+                    # Build formatted vote results for the card
+                    formatted_vote_results = {
+                        "vote_counts": {get_answer_label(aid): cnt for aid, cnt in vote_counts.items()},
+                        "winner": get_answer_label(winner),
+                        "is_tie": is_tie,
+                    }
 
-                    # Add banner (same style as RestartBanner but different color)
-                    banner_text = f"🏆 FINAL PRESENTATION{vote_str}"
-                    banner = FinalPresentationBanner(label=banner_text, id="final_presentation_banner")
-                    timeline.add_widget(banner)
+                    # Create the unified card
+                    card = FinalPresentationCard(
+                        agent_id=agent_id,
+                        vote_results=formatted_vote_results,
+                        id="final_presentation_card",
+                    )
+                    timeline.add_widget(card)
+                    self._final_presentation_card = card
 
-                    # Scroll banner to top to emphasize it
-                    timeline.scroll_to_widget("final_presentation_banner")
+                    # Scroll to show the card
+                    timeline.scroll_to_widget("final_presentation_card")
                 except Exception as e:
-                    logger.debug(f"Failed to add final presentation banner: {e}")
+                    logger.debug(f"Failed to create final presentation card: {e}")
 
         def update_final_stream(self, chunk: str):
-            """Append streaming chunks as normal text to the winner's timeline."""
-            if self._final_stream_timeline and chunk:
-                # Add as plain text - no green highlighting
-                self._final_stream_timeline.add_text(chunk, text_class="final-answer")
-                # Accumulate content for final answer display
-                if not hasattr(self, "_final_stream_content"):
-                    self._final_stream_content = ""
-                self._final_stream_content += chunk
+            """Append streaming chunks to the FinalPresentationCard."""
+            if chunk and self._final_presentation_card:
+                try:
+                    self._final_presentation_card.append_chunk(chunk)
+                except Exception as e:
+                    logger.error(f"FinalPresentationCard.append_chunk failed: {e}")
 
         def end_final_stream(self):
             """Mark the final presentation streaming as complete.
 
-            Note: The footer with buttons is added after post-evaluation completes,
-            not here.
+            Note: The footer with buttons is shown via the card after post-evaluation.
             """
             # Only end if we actually started
             if not getattr(self, "_final_header_added", False):
                 return
 
-            # Don't add footer here - it will be added after post-evaluation
-            # Just clear the streaming timeline reference (keep agent for post-eval)
+            # Mark the card's streaming as complete (but don't show footer yet)
+            # Footer will appear after post-evaluation via end_post_evaluation
+            if self._final_presentation_card:
+                # Don't call complete() yet - that shows footer
+                # Just flush the buffer
+                pass
+
+            # Clear the streaming timeline reference (keep card for post-eval)
             self._final_stream_timeline = None
 
             if self.post_eval_panel and not self.coordination_display._post_evaluation_lines:
@@ -4289,7 +4170,7 @@ Type your question and press Enter to ask the agents.
                 self.agent_widgets[winner_id].remove_class("hidden")
                 self._active_agent_id = winner_id
 
-            # 3. Add a "WINNER SELECTED" banner to the winner's timeline
+            # 3. Add a "WINNER SELECTED" card to the winner's timeline using FinalPresentationCard
             if winner_id in self.agent_widgets:
                 panel = self.agent_widgets[winner_id]
                 try:
@@ -4316,23 +4197,28 @@ Type your question and press Enter to ask the agents.
                             return f"A{num}" if num else aid
                         return aid
 
-                    vote_str = ""
-                    if vote_counts:
-                        # Format: "A1.1 (1), A2.1 (2)" - parentheses make vote counts clearer
-                        counts = ", ".join(f"{get_answer_label(aid)} ({cnt})" for aid, cnt in vote_counts.items())
-                        tie_note = " (tie-breaker)" if is_tie else ""
-                        winner_label = get_answer_label(winner)
-                        vote_str = f" | {counts} | Winner: {winner_label}{tie_note}"
+                    # Build formatted vote results for the card
+                    formatted_vote_results = {
+                        "vote_counts": {get_answer_label(aid): cnt for aid, cnt in vote_counts.items()},
+                        "winner": get_answer_label(winner),
+                        "is_tie": is_tie,
+                    }
 
-                    # Add banner indicating winner was selected using existing answer
-                    banner_text = f"🏆 WINNER SELECTED{vote_str}"
-                    banner = FinalPresentationBanner(label=banner_text, id="winner_selected_banner")
-                    timeline.add_widget(banner)
+                    # Create the unified card - content will be streamed via update_final_stream
+                    card = FinalPresentationCard(
+                        agent_id=winner_id,
+                        vote_results=formatted_vote_results,
+                        id="winner_selected_card",
+                    )
+                    timeline.add_widget(card)
+                    self._final_presentation_card = card
+                    # Don't call complete() - streaming content will come via update_final_stream
+                    # and show_final_answer will call end_final_stream -> end_post_evaluation -> complete()
 
-                    # Scroll banner to top to emphasize it
-                    timeline.scroll_to_widget("winner_selected_banner")
+                    # Scroll to show the card
+                    timeline.scroll_to_widget("winner_selected_card")
                 except Exception as e:
-                    logger.debug(f"Failed to add winner selected banner: {e}")
+                    logger.debug(f"Failed to add winner selected card: {e}")
 
             # 4. Show toast notification
             self.notify(f"🏆 [bold]{winner_id}[/] selected as winner!", timeout=4)

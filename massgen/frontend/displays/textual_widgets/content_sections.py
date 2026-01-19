@@ -11,6 +11,7 @@ Composable UI sections for displaying different content types:
 - CompletionFooter: Subtle completion indicator
 """
 
+import logging
 from typing import Dict, Optional
 
 from rich.text import Text
@@ -22,6 +23,8 @@ from textual.widgets import RichLog, Static
 
 from ..content_handlers import ToolDisplayData
 from .tool_card import ToolCallCard
+
+logger = logging.getLogger(__name__)
 
 
 class ToolSection(Vertical):
@@ -1448,153 +1451,6 @@ class CompletionFooter(Static):
         self.is_visible = False
 
 
-class FinalPresentationFooter(Vertical):
-    """Footer widget for final presentation with buttons and continue message.
-
-    Design:
-    ```
-    [Copy]  [Workspace]
-    💬 Type below to continue the conversation
-    ```
-    """
-
-    DEFAULT_CSS = """
-    FinalPresentationFooter {
-        width: 100%;
-        height: auto;
-        padding: 0;
-        margin: 0;
-    }
-
-    FinalPresentationFooter #final_footer_buttons {
-        width: 100%;
-        height: auto;
-        padding: 1 2;
-        align: left middle;
-    }
-
-    FinalPresentationFooter #final_footer_buttons Button {
-        margin-right: 2;
-        min-width: 14;
-        height: 3;
-    }
-
-    FinalPresentationFooter #final_footer_buttons #final_copy_btn {
-        background: #238636;
-        color: #ffffff;
-        border: none;
-    }
-
-    FinalPresentationFooter #final_footer_buttons #final_copy_btn:hover {
-        background: #2ea043;
-    }
-
-    FinalPresentationFooter #final_footer_buttons #final_workspace_btn {
-        background: #21262d;
-        color: #c9d1d9;
-        border: solid #30363d;
-    }
-
-    FinalPresentationFooter #final_footer_buttons #final_workspace_btn:hover {
-        background: #30363d;
-    }
-
-    FinalPresentationFooter #final_footer_continue {
-        color: #8b949e;
-        text-style: italic;
-        height: 1;
-        padding: 0 2;
-        margin-bottom: 1;
-    }
-    """
-
-    def __init__(self, agent_id: str = "", id: Optional[str] = None) -> None:
-        super().__init__(id=id)
-        self.agent_id = agent_id
-
-    def compose(self) -> ComposeResult:
-        from textual.containers import Horizontal
-        from textual.widgets import Button, Label
-
-        with Horizontal(id="final_footer_buttons"):
-            yield Button("📋 Copy", id="final_copy_btn")
-            yield Button("📂 Workspace", id="final_workspace_btn")
-        yield Label("💬 Type below to continue the conversation", id="final_footer_continue")
-
-    def on_button_pressed(self, event) -> None:
-        """Handle button presses."""
-        from textual.widgets import Button
-
-        if not isinstance(event, Button.Pressed):
-            return
-
-        if event.button.id == "final_copy_btn":
-            self._copy_to_clipboard()
-        elif event.button.id == "final_workspace_btn":
-            self._open_workspace()
-
-    def _copy_to_clipboard(self) -> None:
-        """Copy final answer to system clipboard."""
-        import platform
-        import subprocess
-
-        # Get content from the timeline above this footer
-        try:
-            # Find parent timeline and collect text content
-            parent = self.parent
-            content_lines = []
-            if parent:
-                for child in parent.children:
-                    if child == self:
-                        break  # Stop at footer
-                    if hasattr(child, "renderable"):
-                        content_lines.append(str(child.renderable))
-
-            full_content = "\n".join(content_lines)
-
-            system = platform.system()
-            if system == "Darwin":
-                process = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-                process.communicate(full_content.encode("utf-8"))
-            elif system == "Windows":
-                process = subprocess.Popen(["clip"], stdin=subprocess.PIPE, shell=True)
-                process.communicate(full_content.encode("utf-8"))
-            else:
-                process = subprocess.Popen(
-                    ["xclip", "-selection", "clipboard"],
-                    stdin=subprocess.PIPE,
-                )
-                process.communicate(full_content.encode("utf-8"))
-            self.app.notify("Copied to clipboard", severity="information")
-        except Exception as e:
-            self.app.notify(f"Failed to copy: {e}", severity="error")
-
-    def _open_workspace(self) -> None:
-        """Open workspace browser for the winning agent."""
-        try:
-            app = self.app
-            # Debug: check what methods are available
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.info(f"[FinalPresentationFooter] app type: {type(app)}")
-            logger.info(f"[FinalPresentationFooter] has method: {hasattr(app, '_show_workspace_browser_for_agent')}")
-
-            if hasattr(app, "_show_workspace_browser_for_agent"):
-                app._show_workspace_browser_for_agent(self.agent_id)
-            else:
-                # Fallback: try using action_open_workspace_browser
-                if hasattr(app, "action_open_workspace_browser"):
-                    app.action_open_workspace_browser()
-                else:
-                    self.app.notify("Workspace browser not available", severity="warning")
-        except Exception as e:
-            import traceback
-
-            self.app.notify(f"Failed to open workspace: {e}", severity="error")
-            logging.getLogger(__name__).error(f"Workspace error: {traceback.format_exc()}")
-
-
 class RestartBanner(Static):
     """Subtle, professional restart separator banner.
 
@@ -1658,175 +1514,24 @@ class RestartBanner(Static):
         return text
 
 
-class FinalPresentationBanner(Static):
-    """Banner for final presentation section - matches RestartBanner style.
-
-    Design - same format as RestartBanner but with golden trophy color:
-    ```
-      ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-                    🏆 FINAL PRESENTATION | Winner: agent_a
-      ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-    ```
-    """
-
-    DEFAULT_CSS = """
-    FinalPresentationBanner {
-        width: 100%;
-        height: auto;
-        margin: 1 0;
-        padding: 0;
-    }
-    """
-
-    def __init__(self, label: str = "", id: Optional[str] = None) -> None:
-        super().__init__(id=id)
-        self._label = label
-
-    def render(self) -> Text:
-        """Render the final presentation banner."""
-        text = Text()
-
-        line_char = "┄"
-        line_width = 68
-
-        # Top line - golden/amber tinted (matches RestartBanner style)
-        text.append("  ", style="")
-        text.append(line_char * line_width, style="dim #d4a017")
-        text.append("\n")
-
-        # Center label with trophy gold color
-        label_centered = self._label.center(line_width)
-        text.append("  ", style="")
-        text.append(label_centered, style="#ffd700")
-        text.append("\n")
-
-        # Bottom line
-        text.append("  ", style="")
-        text.append(line_char * line_width, style="dim #d4a017")
-
-        return text
-
-
-class PostEvaluationBanner(Static):
-    """Banner for post-evaluation section - matches RestartBanner style.
-
-    Design - same format as RestartBanner but with blue color:
-    ```
-      ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-                            🔍 Post-Evaluation
-      ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-    ```
-    """
-
-    DEFAULT_CSS = """
-    PostEvaluationBanner {
-        width: 100%;
-        height: auto;
-        margin: 1 0;
-        padding: 0;
-    }
-    """
-
-    def __init__(self, label: str = "🔍 Post-Evaluation", id: Optional[str] = None) -> None:
-        super().__init__(id=id)
-        self._label = label
-
-    def render(self) -> Text:
-        """Render the post-evaluation banner."""
-        text = Text()
-
-        line_char = "┄"
-        line_width = 68
-
-        # Top line - blue tinted (matches RestartBanner style with leading spaces)
-        text.append("  ", style="")
-        text.append(line_char * line_width, style="dim #58a6ff")
-        text.append("\n")
-
-        # Center label with blue color
-        label_centered = self._label.center(line_width)
-        text.append("  ", style="")
-        text.append(label_centered, style="#58a6ff")
-        text.append("\n")
-
-        # Bottom line
-        text.append("  ", style="")
-        text.append(line_char * line_width, style="dim #58a6ff")
-
-        return text
-
-
-class SessionCompleteBanner(Static):
-    """Banner shown after post-evaluation completes - matches RestartBanner style.
-
-    Design - same format as RestartBanner with green success color:
-    ```
-      ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-                          ✅ Turn Complete
-      ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-    ```
-    """
-
-    DEFAULT_CSS = """
-    SessionCompleteBanner {
-        width: 100%;
-        height: auto;
-        margin: 1 0;
-        padding: 0;
-    }
-    """
-
-    def __init__(
-        self,
-        label: str = "✅ Turn Complete",
-        id: Optional[str] = None,
-    ) -> None:
-        super().__init__(id=id)
-        self._label = label
-
-    def render(self) -> Text:
-        """Render the turn complete banner."""
-        text = Text()
-
-        line_char = "┄"
-        line_width = 68
-
-        # Top line - green tinted (success color, matches RestartBanner style)
-        text.append("  ", style="")
-        text.append(line_char * line_width, style="dim #3fb950")
-        text.append("\n")
-
-        # Center label with green color
-        label_centered = self._label.center(line_width)
-        text.append("  ", style="")
-        text.append(label_centered, style="#3fb950")
-        text.append("\n")
-
-        # Bottom line
-        text.append("  ", style="")
-        text.append(line_char * line_width, style="dim #3fb950")
-
-        return text
-
-
 class FinalPresentationCard(Vertical):
-    """Card widget for displaying the final presentation in the winner's timeline.
+    """Unified card widget for displaying the final answer presentation.
 
     Shows a header with trophy icon, vote summary, streaming content area,
-    post-evaluation section, action buttons (Copy/Workspace), and continue message.
+    collapsible post-evaluation section, action buttons (Copy/Workspace), and continue message.
 
     Design:
     ```
-    ┌─ 🏆 FINAL PRESENTATION ───────────────────────────────────────────┐
-    │  Votes: agent_a:2, agent_b:1 | Winner: agent_a                    │
+    ┌─ 🏆 FINAL ANSWER ─────────────────────────────────────────────────┐
+    │  Winner: Agent A (2 votes)  |  Votes: A(2), B(1)                  │
     ├───────────────────────────────────────────────────────────────────┤
-    │  [Final answer content with internal scrollbar...]                │
+    │  [Final answer content with markdown rendering...]                │
     │                                                                   │
     ├───────────────────────────────────────────────────────────────────┤
-    │  🔍 Post-Evaluation                                               │
-    │  [Evaluation content...]                                          │
+    │  ✓ Verified by Post-Evaluation                    [▾ Show Details]│
+    │  [Collapsible evaluation content...]                              │
     ├───────────────────────────────────────────────────────────────────┤
-    │  [Copy]  [Workspace]                                              │
+    │  [📋 Copy]  [📂 Workspace]                                        │
     │  💬 Type below to continue the conversation                       │
     └───────────────────────────────────────────────────────────────────┘
     ```
@@ -1838,12 +1543,12 @@ class FinalPresentationCard(Vertical):
         height: auto;
         margin: 1 0;
         padding: 0;
-        border: solid #dcdcaa;
-        background: #2d2d25;
+        border: solid #ffd700;
+        background: #1a1a1a;
     }
 
     FinalPresentationCard.streaming {
-        border: double #dcdcaa;
+        border: double #ffd700;
     }
 
     FinalPresentationCard.completed {
@@ -1855,8 +1560,8 @@ class FinalPresentationCard(Vertical):
         width: 100%;
         height: auto;
         padding: 0 1;
-        background: #3d3510;
-        border-bottom: solid #dcdcaa 50%;
+        background: #2d2510;
+        border-bottom: solid #ffd700 50%;
     }
 
     FinalPresentationCard.completed #final_card_header {
@@ -1865,7 +1570,7 @@ class FinalPresentationCard(Vertical):
     }
 
     FinalPresentationCard #final_card_title {
-        color: #dcdcaa;
+        color: #ffd700;
         text-style: bold;
     }
 
@@ -1881,36 +1586,71 @@ class FinalPresentationCard(Vertical):
     FinalPresentationCard #final_card_content {
         width: 100%;
         height: auto;
-        max-height: 20;
-        padding: 1;
+        min-height: 5;
+        max-height: 25;
+        padding: 1 2;
         background: #1e1e1e;
         overflow-y: auto;
     }
 
-    FinalPresentationCard #final_card_log {
+    FinalPresentationCard #final_card_text {
+        width: 100%;
         height: auto;
+        min-height: 3;
         background: #1e1e1e;
-        color: #d4d4d4;
+        color: #e6e6e6;
     }
 
     FinalPresentationCard #final_card_post_eval {
         width: 100%;
         height: auto;
-        max-height: 8;
-        padding: 1;
-        background: #1a1a2e;
-        border-top: solid #30363d;
-        overflow-y: auto;
+        padding: 0;
+        background: #161b22;
+        border-top: dashed #30363d;
     }
 
     FinalPresentationCard #final_card_post_eval.hidden {
         display: none;
     }
 
-    FinalPresentationCard #post_eval_title {
-        color: #569cd6;
-        text-style: bold;
-        height: 1;
+    FinalPresentationCard #post_eval_header {
+        width: 100%;
+        height: 2;
+        padding: 0 2;
+        background: #161b22;
+    }
+
+    FinalPresentationCard #post_eval_status {
+        color: #3fb950;
+        width: auto;
+    }
+
+    FinalPresentationCard #post_eval_status.evaluating {
+        color: #58a6ff;
+    }
+
+    FinalPresentationCard #post_eval_toggle {
+        color: #8b949e;
+        width: auto;
+        text-align: right;
+        margin-left: 1;
+    }
+
+    FinalPresentationCard #post_eval_toggle:hover {
+        color: #c9d1d9;
+        text-style: underline;
+    }
+
+    FinalPresentationCard #post_eval_details {
+        width: 100%;
+        height: auto;
+        max-height: 10;
+        padding: 0 2 1 2;
+        overflow-y: auto;
+    }
+
+    FinalPresentationCard #post_eval_details.collapsed {
+        display: none;
     }
 
     FinalPresentationCard #post_eval_content {
@@ -1921,7 +1661,7 @@ class FinalPresentationCard(Vertical):
     FinalPresentationCard #final_card_footer {
         width: 100%;
         height: auto;
-        padding: 1;
+        padding: 1 2;
         background: #21262d;
         border-top: solid #30363d;
     }
@@ -1938,6 +1678,15 @@ class FinalPresentationCard(Vertical):
     FinalPresentationCard #final_card_buttons Button {
         margin-right: 1;
         min-width: 12;
+    }
+
+    FinalPresentationCard #final_card_copy_btn {
+        background: #238636;
+        color: #ffffff;
+    }
+
+    FinalPresentationCard #final_card_copy_btn:hover {
+        background: #2ea043;
     }
 
     FinalPresentationCard #continue_message {
@@ -1961,40 +1710,42 @@ class FinalPresentationCard(Vertical):
         self.vote_results = vote_results or {}
         self._final_content: list = []
         self._post_eval_content: list = []
-        self._line_buffer = ""
         self._is_streaming = True
+        self._post_eval_expanded = False
+        self._post_eval_status = "none"  # none, evaluating, verified
         self.add_class("streaming")
 
     def compose(self) -> ComposeResult:
         from textual.containers import Horizontal, ScrollableContainer
-        from textual.widgets import Button, Label, RichLog
+        from textual.widgets import Button, Label
 
         # Header section
         with Vertical(id="final_card_header"):
             yield Label(self._build_title(), id="final_card_title")
             yield Label(self._build_vote_summary(), id="final_card_votes")
 
-        # Content section with streaming log (scrollable)
+        # Content section with Static text (scrollable)
         with ScrollableContainer(id="final_card_content"):
-            yield RichLog(id="final_card_log", highlight=True, markup=True, wrap=True)
+            yield Static("", id="final_card_text", markup=True)
 
         # Post-evaluation section (hidden until post-eval content arrives)
-        with ScrollableContainer(id="final_card_post_eval", classes="hidden"):
-            yield Label("🔍 Post-Evaluation", id="post_eval_title")
-            yield Static("", id="post_eval_content")
+        with Vertical(id="final_card_post_eval", classes="hidden"):
+            with Horizontal(id="post_eval_header"):
+                yield Label("🔍 Evaluating...", id="post_eval_status", classes="evaluating")
+                yield Label("", id="post_eval_toggle")
+            with ScrollableContainer(id="post_eval_details", classes="collapsed"):
+                yield Static("", id="post_eval_content")
 
         # Footer with buttons and continue message (hidden until complete)
         with Vertical(id="final_card_footer", classes="hidden"):
             with Horizontal(id="final_card_buttons"):
-                yield Button("Copy", id="final_card_copy_btn", classes="action-primary")
-                yield Button("Workspace", id="final_card_workspace_btn")
+                yield Button("📋 Copy", id="final_card_copy_btn")
+                yield Button("📂 Workspace", id="final_card_workspace_btn")
             yield Label("💬 Type below to continue the conversation", id="continue_message")
 
     def _build_title(self) -> str:
-        """Build the title with trophy and agent info."""
-        if self.model_name:
-            return f"🏆 FINAL PRESENTATION — {self.agent_id} ({self.model_name})"
-        return f"🏆 FINAL PRESENTATION — {self.agent_id}"
+        """Build the title with trophy icon."""
+        return "🏆 FINAL ANSWER"
 
     def _build_vote_summary(self) -> str:
         """Build the vote summary line."""
@@ -2008,10 +1759,12 @@ class FinalPresentationCard(Vertical):
         if not vote_counts:
             return ""
 
-        counts_str = ", ".join(f"{aid}:{count}" for aid, count in vote_counts.items())
+        # Format: "Winner: agent_a (2v) | Votes: agent_a(2), agent_b(1)"
+        winner_count = vote_counts.get(winner, 0)
         tie_note = " (tie-breaker)" if is_tie else ""
+        counts_str = ", ".join(f"{aid}({count})" for aid, count in vote_counts.items())
 
-        return f"Votes: {counts_str} | Winner: {winner}{tie_note}"
+        return f"Winner: {winner} ({winner_count}v){tie_note} | Votes: {counts_str}"
 
     def append_chunk(self, chunk: str) -> None:
         """Append streaming content to the card.
@@ -2023,37 +1776,29 @@ class FinalPresentationCard(Vertical):
             return
 
         try:
-            log = self.query_one("#final_card_log", RichLog)
+            text_widget = self.query_one("#final_card_text", Static)
 
-            # Process line buffer for clean line breaks
-            self._line_buffer += chunk
+            # Accumulate content
+            self._final_content.append(chunk)
 
-            # Split on newlines and write complete lines
-            while "\n" in self._line_buffer:
-                line, self._line_buffer = self._line_buffer.split("\n", 1)
-                if line.strip():
-                    log.write(line)
-                    self._final_content.append(line)
+            # Update the Static widget with all accumulated content
+            full_text = "".join(self._final_content)
+            text_widget.update(full_text)
 
-            # Auto-scroll
-            content = self.query_one("#final_card_content", ScrollableContainer)
-            content.scroll_end(animate=False)
-        except Exception:
-            pass
+            # Auto-scroll to show latest content
+            try:
+                content = self.query_one("#final_card_content", ScrollableContainer)
+                content.scroll_end(animate=False)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.error(f"FinalPresentationCard.append_chunk error: {e}")
 
     def complete(self) -> None:
         """Mark the presentation as complete and show action buttons."""
         from textual.widgets import Label
 
-        # Flush remaining buffer
-        if self._line_buffer.strip():
-            try:
-                log = self.query_one("#final_card_log", RichLog)
-                log.write(self._line_buffer)
-                self._final_content.append(self._line_buffer)
-            except Exception:
-                pass
-        self._line_buffer = ""
         self._is_streaming = False
 
         # Update styling
@@ -2063,7 +1808,7 @@ class FinalPresentationCard(Vertical):
         # Update title to show completed
         try:
             title = self.query_one("#final_card_title", Label)
-            title.update(f"{self._build_title()} | ✅ Completed")
+            title.update("✅ FINAL ANSWER")
         except Exception:
             pass
 
@@ -2076,7 +1821,40 @@ class FinalPresentationCard(Vertical):
 
     def get_content(self) -> str:
         """Get the full content for copy operation."""
-        return "\n".join(self._final_content)
+        # Join chunks directly since they may already contain newlines
+        return "".join(self._final_content)
+
+    def on_click(self, event) -> None:
+        """Handle clicks on the post-eval toggle."""
+        from textual.widgets import Label
+
+        # Check if click was on the toggle label
+        try:
+            toggle = self.query_one("#post_eval_toggle", Label)
+            if toggle.region.contains(event.x, event.y):
+                self._toggle_post_eval_details()
+        except Exception:
+            pass
+
+    def _toggle_post_eval_details(self) -> None:
+        """Toggle the post-evaluation details visibility."""
+        from textual.containers import ScrollableContainer
+        from textual.widgets import Label
+
+        try:
+            details = self.query_one("#post_eval_details", ScrollableContainer)
+            toggle = self.query_one("#post_eval_toggle", Label)
+
+            if self._post_eval_expanded:
+                details.add_class("collapsed")
+                toggle.update("▸ Show Details")
+                self._post_eval_expanded = False
+            else:
+                details.remove_class("collapsed")
+                toggle.update("▾ Hide Details")
+                self._post_eval_expanded = True
+        except Exception:
+            pass
 
     def on_button_pressed(self, event) -> None:
         """Handle button presses."""
@@ -2128,8 +1906,53 @@ class FinalPresentationCard(Vertical):
         except Exception as e:
             self.app.notify(f"Failed to open workspace: {e}", severity="error")
 
+    def set_post_eval_status(self, status: str, content: str = "") -> None:
+        """Set the post-evaluation status and optionally add content.
+
+        Args:
+            status: One of "evaluating", "verified", "restart"
+            content: Optional content to display in the details section
+        """
+        from textual.widgets import Label
+
+        self._post_eval_status = status
+
+        try:
+            # Show the post-eval section
+            post_eval_section = self.query_one("#final_card_post_eval")
+            post_eval_section.remove_class("hidden")
+
+            # Update status label
+            status_label = self.query_one("#post_eval_status", Label)
+            toggle_label = self.query_one("#post_eval_toggle", Label)
+
+            if status == "evaluating":
+                status_label.update("🔍 Evaluating...")
+                status_label.add_class("evaluating")
+                toggle_label.update("")
+            elif status == "verified":
+                status_label.update("✓ Verified by Post-Evaluation")
+                status_label.remove_class("evaluating")
+                if self._post_eval_content:
+                    toggle_label.update("▸ Show Details")
+            elif status == "restart":
+                status_label.update("🔄 Restart Requested")
+                status_label.remove_class("evaluating")
+                if self._post_eval_content:
+                    toggle_label.update("▸ Show Details")
+
+            # Add content if provided
+            if content and content.strip():
+                self._post_eval_content.append(content)
+                post_eval_static = self.query_one("#post_eval_content", Static)
+                full_content = "\n".join(self._post_eval_content)
+                post_eval_static.update(full_content)
+
+        except Exception:
+            pass
+
     def add_post_evaluation(self, content: str) -> None:
-        """Add post-evaluation content to the card.
+        """Add post-evaluation content to the card (legacy method).
 
         Args:
             content: The post-evaluation text to display
@@ -2137,22 +1960,11 @@ class FinalPresentationCard(Vertical):
         if not content.strip():
             return
 
-        self._post_eval_content.append(content)
-
-        try:
-            # Show the post-eval section
-            post_eval_section = self.query_one("#final_card_post_eval", ScrollableContainer)
-            post_eval_section.remove_class("hidden")
-
-            # Update content
-            post_eval_static = self.query_one("#post_eval_content", Static)
-            full_content = "\n".join(self._post_eval_content)
-            post_eval_static.update(full_content)
-
-            # Auto-scroll within post-eval section
-            post_eval_section.scroll_end(animate=False)
-        except Exception:
-            pass
+        # If status not set, set to evaluating
+        if self._post_eval_status == "none":
+            self.set_post_eval_status("evaluating", content)
+        else:
+            self.set_post_eval_status(self._post_eval_status, content)
 
     def get_post_evaluation_content(self) -> str:
         """Get the full post-evaluation content."""

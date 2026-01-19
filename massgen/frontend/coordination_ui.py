@@ -6,6 +6,7 @@ Main interface for coordinating agents with visual display.
 """
 
 import asyncio
+import logging
 import queue
 import re
 import threading
@@ -39,6 +40,9 @@ except ImportError:
 
     def is_web_display_available():
         return False
+
+
+logger = logging.getLogger(__name__)
 
 
 class CoordinationUI:
@@ -396,6 +400,14 @@ class CoordinationUI:
 
                     # Process content by source
                     await self._process_content(source, content)
+
+            # Flush agent content buffers BEFORE processing final answer
+            # This ensures any streamed content reaches the display before we complete
+            try:
+                if hasattr(self, "_agent_content_buffers") and self._agent_content_buffers:
+                    await self._flush_agent_content_buffers()
+            except asyncio.CancelledError:
+                pass
 
             # Get final presentation content from orchestrator state
             status = orchestrator.get_status()
@@ -995,6 +1007,14 @@ class CoordinationUI:
                     # Process content by source
                     await self._process_content(source, content)
 
+            # Flush agent content buffers BEFORE processing final answer
+            # This ensures any streamed content reaches the display before we complete
+            try:
+                if hasattr(self, "_agent_content_buffers") and self._agent_content_buffers:
+                    await self._flush_agent_content_buffers()
+            except asyncio.CancelledError:
+                pass
+
             # Get final presentation content from orchestrator state
             # Note: With restart feature, get_final_presentation is called INSIDE the orchestrator
             # during _present_final_answer, so chunks already came through the main stream above.
@@ -1469,6 +1489,14 @@ class CoordinationUI:
 
                     # Process content by source
                     await self._process_content(source, content)
+
+            # Flush agent content buffers BEFORE processing final answer
+            # This ensures any streamed content reaches the display before we complete
+            try:
+                if hasattr(self, "_agent_content_buffers") and self._agent_content_buffers:
+                    await self._flush_agent_content_buffers()
+            except asyncio.CancelledError:
+                pass
 
             # Display vote results and get final presentation
             status = orchestrator.get_status()

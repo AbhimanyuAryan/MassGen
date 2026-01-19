@@ -546,9 +546,10 @@ class TextualInteractiveAdapter(UIAdapter):
         import json
 
         try:
-            from massgen.logger_config import get_log_session_root
+            from massgen.logger_config import get_log_session_dir
 
-            log_dir = get_log_session_root()
+            # Use get_log_session_dir() which includes turn/attempt subdirs
+            log_dir = get_log_session_dir()
             final_dir = log_dir / "final"
 
             if not final_dir.exists():
