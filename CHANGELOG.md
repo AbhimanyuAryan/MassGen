@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
-**v0.1.40 (January 19, 2026)** - Textual TUI Interactive Mode
-Interactive terminal UI with `--display textual` for interactive MassGen sessions. Real-time agent output streaming, context path injection, human feedback integration, keyboard-driven navigation with Vim mode support, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics/costs/votes/timeline. Enhanced plan execution with mode selection UI and improved final answer presentation. Multiple performance improvements including Docker build speedup and optimized rendering.
+**v0.1.40 (January 19, 2026)** - Textual TUI Interactive Mode (Experimental)
+Interactive terminal UI with `--display textual` for interactive MassGen sessions. Real-time agent output streaming, context path injection, human feedback integration, keyboard-driven navigation, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics/costs/votes/timeline. Enhanced plan execution with mode selection UI and improved final answer presentation.
 
 **v0.1.39 (January 16, 2026)** - Plan and Execute Workflow
 Complete plan-then-execute workflow with `--plan-and-execute` for autonomous planning and execution, `--execute-plan` to run existing plans. Task verification workflow with `verified` status and verification groups for batch validation. Plan storage system in `.massgen/plans/` with frozen snapshots and execution tracking. Response API function call message sanitization fixes.
@@ -27,7 +27,7 @@ Task planning mode with `--plan` flag creates structured plans for future workfl
   - Real-time agent output streaming with syntax highlighting
   - Agent tab bar for switching between agents and post-evaluation views
   - Keyboard-driven navigation with extensive keyboard shortcuts
-  - Vim mode support with `j/k` scrolling and `:q` to quit
+  - Keyboard navigation with `j/k` scrolling and `:q` to quit
   - Comprehensive modals:
     - `?` or `h`: Keyboard shortcuts help
     - `f`: Full agent output
@@ -46,12 +46,6 @@ Task planning mode with `--plan` flag creates structured plans for future workfl
   - Plan execution mode selection UI
   - Scrolling improvements with visual indicators
   - Tool input/output display with color-coded formatting
-
-- **Textual TUI Performance Improvements**:
-  - Optimized rendering for large outputs
-  - Efficient buffering for streaming content
-  - Reduced memory footprint for long-running sessions
-  - Docker build speedup for faster initialization
 
 ### Changed
 - **Final Answer View**: Improved presentation and formatting in Textual TUI

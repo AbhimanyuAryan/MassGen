@@ -9,7 +9,9 @@ After posting, update the social links below.
 
 We're excited to release MassGen v0.1.40, adding Textual TUI Interactive Mode! 🚀
 
-MassGen now features an interactive terminal UI with `--display textual` for interactive sessions. Experience real-time agent output streaming, keyboard-driven navigation with Vim mode support, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics, costs, votes, and timeline visualization. Enhanced plan execution with mode selection UI and improved final answer presentation.
+⚠️ **Note**: These features are experimental and under active development.
+
+MassGen now features an interactive terminal UI with `--display textual` for interactive sessions. Experience real-time agent output streaming, keyboard-driven navigation, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics, costs, votes, and timeline visualization. Enhanced plan execution with mode selection UI and improved final answer presentation.
 
 ## Install
 
@@ -33,7 +35,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 We're excited to release MassGen v0.1.40, adding Textual TUI Interactive Mode! 🚀
 
-Run `massgen --display textual` for an interactive terminal UI with real-time agent streaming, keyboard navigation (Vim mode), workspace browser, answer comparisons, and modals for costs/votes/timeline. Includes performance optimizations and Docker build speedup.
+Run `massgen --display textual` for an interactive terminal UI with real-time agent streaming, keyboard navigation (`j/k`, `:q`), workspace browser, answer comparisons, and modals for costs/votes/timeline.
 
 Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.40
 

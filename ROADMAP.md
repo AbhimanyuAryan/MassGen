@@ -61,22 +61,12 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
   - Real-time agent output streaming with syntax highlighting
   - Agent tab bar for switching between agents and post-evaluation views
   - Keyboard-driven navigation with extensive keyboard shortcuts
-  - Vim mode support with `j/k` scrolling and `:q` to quit
+  - Keyboard navigation with `j/k` scrolling and `:q` to quit
   - Comprehensive modals for metrics, costs, votes, timeline, workspace browser, and answer comparisons
   - Context path injection UI with `@` syntax support
   - Human feedback integration with prompt modal
   - Enhanced final answer presentation with formatting
   - Plan execution mode selection UI
-
-- **Context Path @ Syntax**: Add `@path/to/file` syntax to include files/directories as read-only context ([#767](https://github.com/massgen/MassGen/issues/767))
-  - Inline context path inclusion in prompts
-  - Improved context path handling in TUI
-
-### Performance Improvements
-- Optimized rendering for large outputs
-- Efficient buffering for streaming content
-- Reduced memory footprint for long-running sessions
-- Docker build speedup for faster initialization
 
 ### Fixed
 - Tool inputs not showing in later answers

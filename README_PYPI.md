@@ -158,11 +158,12 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 **🎉 Released: January 19, 2026** | **Next Update: January 19, 2026**
 
+⚠️ **Note**: v0.1.40 features are experimental and under active development.
+
 **What's New in v0.1.40:**
-- **🖥️ Textual TUI Interactive Mode** - Interactive terminal UI with real-time agent streaming, keyboard shortcuts, and Vim mode
+- **🖥️ Textual TUI Interactive Mode** - Interactive terminal UI with real-time agent streaming and keyboard shortcuts
 - **📎 Context Path @ Syntax** - Include files/directories inline with `@path/to/file` syntax and autocomplete
 - **💬 Interactive Modals** - Access costs (`c`), votes (`v`), workspace browser (`w`), answer comparisons (`b`), and more
-- **⚡ Performance Boost** - Optimized rendering, reduced memory footprint, and faster Docker initialization
 
 **Try v0.1.40 Features:**
 ```bash
@@ -1215,16 +1216,11 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 **🎉 Released: January 19, 2026**
 
 #### Textual TUI Interactive Mode
-- **Interactive Terminal UI**: Use `--display textual` for interactive sessions with real-time agent streaming, syntax highlighting, and Vim mode navigation (`j/k` scrolling, `:q` to quit)
+- **Interactive Terminal UI**: Use `--display textual` for interactive sessions with real-time agent streaming, syntax highlighting, and keyboard navigation (`j/k` scrolling, `:q` to quit)
 - **Comprehensive Modals**: Access metrics (`c`), costs, votes (`v`), timeline (`t`), workspace browser (`w`), answer comparisons (`b`), and keyboard shortcuts (`?` or `h`)
 - **Context Path Injection**: Inline file inclusion with `@path/to/file` syntax and autocomplete UI
 - **Human Feedback Integration**: Interactive prompt modal for agent questions during execution
 - **Plan Execution UI**: Mode selection interface with enhanced final answer presentation
-
-#### Performance & Stability
-- **Rendering Optimization**: Efficient buffering and reduced memory footprint for long-running sessions
-- **Docker Build Speedup**: Faster initialization for containerized environments
-- **Bug Fixes**: Resolved tool input display, scrolling behavior, Ctrl+C handling, menu display, and path permission issues
 
 #### Documentation
 - **Textual TUI Architecture**: `docs/dev_notes/textual_tui_architecture.md`

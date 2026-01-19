@@ -230,11 +230,12 @@ Most configurations use environment variables for API keys:so
 ### v0.1.40 - Latest
 **New Features:** Textual TUI Interactive Mode, Context Path @ Syntax, Performance & Stability Improvements
 
+⚠️ **Note**: These features are experimental and under active development.
+
 **Key Features:**
-- **Textual TUI Interactive Mode**: Launch with `--display textual` for interactive terminal UI with real-time agent streaming, keyboard shortcuts, and Vim mode navigation
+- **Textual TUI Interactive Mode**: Launch with `--display textual` for interactive terminal UI with real-time agent streaming and keyboard shortcuts
 - **Context Path @ Syntax**: Include files/directories inline with `@path/to/file` syntax with autocomplete support in TUI
 - **Interactive Modals**: Access costs (`c`), votes (`v`), workspace browser (`w`), answer comparisons (`b`), and keyboard shortcuts (`?` or `h`)
-- **Performance Boost**: Optimized rendering, reduced memory footprint, and faster Docker initialization
 
 **Try It:**
 ```bash
