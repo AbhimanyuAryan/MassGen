@@ -28,7 +28,7 @@ import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Set, Tuple
 
 from ._broadcast_channel import BroadcastChannel
 from .agent_config import AgentConfig
@@ -285,6 +285,10 @@ class Orchestrator(ChatAgent):
         # Stores pending results for each parent agent until they can be injected
         # Format: {parent_agent_id: [(subagent_id, SubagentResult), ...]}
         self._pending_subagent_results: Dict[str, List[Tuple[str, "SubagentResult"]]] = {}
+
+        # Track which subagents have been injected to prevent duplicates
+        # Format: {agent_id: set(subagent_id, ...)}
+        self._injected_subagents: Dict[str, Set[str]] = {}
 
         # Async subagent configuration (parsed from coordination_config)
         async_subagent_config = {}
@@ -4314,11 +4318,11 @@ Your answer:"""
         )
 
     def _get_pending_subagent_results(self, agent_id: str) -> List[Tuple[str, "SubagentResult"]]:
-        """Get and clear pending subagent results for an agent.
+        """Get pending subagent results for an agent by polling the MCP server.
 
-        This is called by SubagentCompleteHook to retrieve pending results
-        for injection. Results are cleared after retrieval to prevent
-        duplicate injections.
+        This is called by SubagentCompleteHook to retrieve completed subagent results
+        for injection. Polls the subagent MCP server to find completed subagents,
+        fetches their results, and tracks which ones have been injected.
 
         Args:
             agent_id: The agent to get pending results for
@@ -4326,12 +4330,71 @@ Your answer:"""
         Returns:
             List of (subagent_id, SubagentResult) tuples, or empty list
         """
-        pending = self._pending_subagent_results.get(agent_id, [])
-        if pending:
-            # Clear after retrieval to prevent duplicate injection
-            self._pending_subagent_results[agent_id] = []
-            logger.debug(f"[Orchestrator] Retrieved {len(pending)} pending subagent result(s) for {agent_id}")
-        return pending
+        try:
+            # Get the agent to access its MCP client
+            agent = self.agents.get(agent_id)
+            if not agent or not hasattr(agent, "mcp_client"):
+                return []
+
+            # Initialize injected set for this agent if needed
+            if agent_id not in self._injected_subagents:
+                self._injected_subagents[agent_id] = set()
+
+            # Poll the subagent MCP server for all subagents
+            list_result = agent.mcp_client.call_tool(f"mcp__subagent_{agent_id}__list_subagents", {})
+
+            if not list_result.get("success") or not list_result.get("subagents"):
+                return []
+
+            # Find completed subagents that haven't been injected yet
+            pending_results = []
+            for subagent_info in list_result["subagents"]:
+                subagent_id = subagent_info.get("subagent_id")
+                status = subagent_info.get("status")
+
+                # Skip if not completed or already injected
+                if status != "completed" or subagent_id in self._injected_subagents[agent_id]:
+                    continue
+
+                # Fetch the subagent's result
+                result_response = agent.mcp_client.call_tool(
+                    f"mcp__subagent_{agent_id}__get_subagent_result",
+                    {"subagent_id": subagent_id},
+                )
+
+                if result_response.get("success") and result_response.get("result"):
+                    # Import SubagentResult here to avoid circular import
+                    from massgen.subagent.models import SubagentResult
+
+                    result_data = result_response["result"]
+                    result = SubagentResult(
+                        subagent_id=result_data.get("subagent_id", subagent_id),
+                        success=result_data.get("success", False),
+                        status=result_data.get("status", "unknown"),
+                        answer=result_data.get("answer", ""),
+                        error=result_data.get("error"),
+                        workspace_path=result_data.get("workspace_path", ""),
+                        execution_time_seconds=result_data.get("execution_time_seconds", 0.0),
+                        token_usage=result_data.get("token_usage", {}),
+                    )
+
+                    pending_results.append((subagent_id, result))
+                    # Mark as injected
+                    self._injected_subagents[agent_id].add(subagent_id)
+                    logger.debug(
+                        f"[Orchestrator] Fetched completed subagent {subagent_id} for {agent_id} " f"(status={result.status})",
+                    )
+
+            if pending_results:
+                logger.debug(
+                    f"[Orchestrator] Retrieved {len(pending_results)} completed subagent(s) for {agent_id}",
+                )
+
+            return pending_results
+
+        except Exception as e:
+            logger.error(f"[Orchestrator] Error polling for completed subagents: {e}", exc_info=True)
+            return []
 
     def _setup_hook_manager_for_agent(
         self,
