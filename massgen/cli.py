@@ -2440,6 +2440,9 @@ async def run_question_with_history(
                     "subagent_max_concurrent",
                     3,
                 ),
+                subagent_round_timeouts=coordination_settings.get(
+                    "subagent_round_timeouts",
+                ),
                 subagent_orchestrator=subagent_orchestrator_config,
                 use_two_tier_workspace=coordination_settings.get(
                     "use_two_tier_workspace",
@@ -2884,6 +2887,9 @@ async def run_single_question(
                     "subagent_max_concurrent",
                     3,
                 ),
+                subagent_round_timeouts=coordination_settings.get(
+                    "subagent_round_timeouts",
+                ),
                 subagent_orchestrator=subagent_orchestrator_config,
             )
 
@@ -2996,6 +3002,7 @@ async def run_single_question(
                 enable_subagents=coord_cfg.get("enable_subagents", False),
                 subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
                 subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+                subagent_round_timeouts=coord_cfg.get("subagent_round_timeouts"),
                 subagent_orchestrator=subagent_orchestrator_config,
             )
 
@@ -5387,6 +5394,7 @@ async def run_textual_interactive_mode(
                         enable_subagents=coord_cfg.get("enable_subagents", False),
                         subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
                         subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+                        subagent_round_timeouts=coord_cfg.get("subagent_round_timeouts"),
                         subagent_orchestrator=subagent_orchestrator_config,
                     )
 

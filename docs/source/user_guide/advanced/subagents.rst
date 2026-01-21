@@ -163,7 +163,6 @@ When subagents are enabled, agents have access to the ``spawn_subagents`` tool:
            "subagent_id": "songs"
          }
        ],
-      "context": "Building a Bob Dylan tribute website with biography, discography, and songs pages",
       "refine": true
     }
   }

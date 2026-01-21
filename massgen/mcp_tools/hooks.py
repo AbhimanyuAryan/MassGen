@@ -895,6 +895,15 @@ class SubagentCompleteHook(PatternHook):
         """Execute the subagent complete hook.
 
         Checks for pending async subagent results and injects them if available.
+
+        Args:
+            function_name (str): Name of the subagent function.
+            arguments (str): Serialized arguments passed to the function.
+            context (Optional[Dict[str, Any]]): Optional execution context.
+            **kwargs: Additional options for hook execution.
+
+        Returns:
+            HookResult: Indicates success or failure and includes any payload.
         """
         if not self._get_pending_results:
             return HookResult.allow()

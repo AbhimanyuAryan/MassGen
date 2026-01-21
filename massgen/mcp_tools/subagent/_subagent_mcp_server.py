@@ -496,9 +496,9 @@ async def create_server() -> fastmcp.FastMCP:
                 _save_subagents_to_filesystem()
 
                 # Compute summary
-                completed = sum(1 for r in results if r.status == "completed")
+                completed = sum(1 for r in results if r.status in ("completed", "completed_but_timeout", "partial"))
                 failed = sum(1 for r in results if r.status == "error")
-                timeout = sum(1 for r in results if r.status == "timeout")
+                timeout = sum(1 for r in results if r.status in ("timeout", "completed_but_timeout"))
                 all_success = all(r.success for r in results)
 
                 return {

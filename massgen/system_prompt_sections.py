@@ -2011,6 +2011,14 @@ spawn_subagents(
 # ])
 ```
 
+**async_ parameter:**
+- `async_=True`: Spawn in background, continue working, results injected later via broadcast. Use when you can do useful work while waiting or user requests background execution.
+- `async_=False` (default): Wait for results before proceeding. Use when you need outputs to complete any other work.
+
+**refine parameter:**
+- `refine=True` (default): Multi-round refinement with voting. Higher quality, slower, more expensive. Use for complex analysis.
+- `refine=False`: Single-pass execution. Faster, cheaper. Use for simple lookups/lists.
+
 ## Available Tools
 
 - `spawn_subagents(tasks, async_?, refine?)` -- Max {self.max_concurrent} parallel tasks.

@@ -340,6 +340,13 @@ class SubagentManager:
         This registry tracks all subagents spawned in the current parent session,
         enabling continuation and discovery across turns.
 
+        Registry format matches MCP server's _save_subagents_to_filesystem() format:
+        {
+            "parent_agent_id": "...",
+            "orchestrator_id": "...",
+            "subagents": [{"subagent_id": "...", ...}, ...]
+        }
+
         Args:
             subagent_id: Unique subagent identifier
             session_id: Session ID for continuation
@@ -348,18 +355,36 @@ class SubagentManager:
         """
         registry_file = self.subagents_base / "_registry.json"
 
-        # Load existing registry or create new one
+        # Load existing registry or create new one with list format
         if registry_file.exists():
             try:
                 registry = json.loads(registry_file.read_text())
+                # Ensure subagents is a list (handle old dict format)
+                if isinstance(registry.get("subagents"), dict):
+                    # Convert old dict format to list format
+                    old_dict = registry["subagents"]
+                    registry["subagents"] = [{"subagent_id": k, **v} for k, v in old_dict.items()]
             except json.JSONDecodeError:
                 logger.warning("[SubagentManager] Failed to parse registry, creating new one")
-                registry = {"subagents": {}}
+                registry = {
+                    "parent_agent_id": self.parent_agent_id,
+                    "orchestrator_id": self.orchestrator_id,
+                    "subagents": [],
+                }
         else:
-            registry = {"subagents": {}}
+            registry = {
+                "parent_agent_id": self.parent_agent_id,
+                "orchestrator_id": self.orchestrator_id,
+                "subagents": [],
+            }
 
-        # Save subagent metadata
-        registry["subagents"][subagent_id] = {
+        # Ensure metadata fields exist
+        registry.setdefault("parent_agent_id", self.parent_agent_id)
+        registry.setdefault("orchestrator_id", self.orchestrator_id)
+
+        # Update or append subagent entry in list
+        subagent_data = {
+            "subagent_id": subagent_id,
             "session_id": session_id,
             "task": config.task[:200],  # Truncate for readability
             "status": result.status,
@@ -367,7 +392,21 @@ class SubagentManager:
             "created_at": datetime.now().isoformat(),
             "execution_time_seconds": result.execution_time_seconds,
             "success": result.success,
+            "continuable": True,
+            "source_agent": self.parent_agent_id,
         }
+
+        # Find and update existing entry, or append new one
+        subagents_list = registry["subagents"]
+        found = False
+        for i, entry in enumerate(subagents_list):
+            if entry.get("subagent_id") == subagent_id:
+                subagents_list[i] = subagent_data
+                found = True
+                break
+
+        if not found:
+            subagents_list.append(subagent_data)
 
         # Write back to disk
         registry_file.write_text(json.dumps(registry, indent=2))
@@ -735,7 +774,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         except asyncio.TimeoutError:
             logger.error(f"[SubagentManager] Subagent {config.id} timed out")
             # Still copy logs even on timeout - they contain useful debugging info
-            _, subprocess_log_dir = self._parse_subprocess_status(workspace)
+            _, subprocess_log_dir, _ = self._parse_subprocess_status(workspace)
             self._write_subprocess_log_reference(config.id, subprocess_log_dir, error="Subagent timed out")
             log_dir = self._get_subagent_log_dir(config.id)
             # Attempt to recover completed work from workspace
@@ -757,7 +796,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     process.kill()
             self._active_processes.pop(config.id, None)
             # Still copy logs even on cancellation - they contain useful debugging info
-            _, subprocess_log_dir = self._parse_subprocess_status(workspace)
+            _, subprocess_log_dir, _ = self._parse_subprocess_status(workspace)
             self._write_subprocess_log_reference(config.id, subprocess_log_dir, error="Subagent cancelled")
             log_dir = self._get_subagent_log_dir(config.id)
             # Attempt to recover completed work from workspace
@@ -771,7 +810,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         except Exception as e:
             logger.error(f"[SubagentManager] Subagent {config.id} error: {e}")
             # Still copy logs even on error - they contain useful debugging info
-            _, subprocess_log_dir = self._parse_subprocess_status(workspace)
+            _, subprocess_log_dir, _ = self._parse_subprocess_status(workspace)
             self._write_subprocess_log_reference(config.id, subprocess_log_dir, error=str(e))
             log_dir = self._get_subagent_log_dir(config.id)
             return SubagentResult.create_error(
@@ -1398,7 +1437,6 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 status="error",
                 workspace_path=str(workspace),
                 started_at=datetime.now(),
-                finished_at=datetime.now(),
             )
             self._subagents[config.id] = state
             # Return error info
@@ -1492,6 +1530,11 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 answer_preview=result.answer[:200] if result.answer else None,
             )
 
+            # Save to registry for continuation support
+            session_id = self._subagent_sessions.get(config.id)
+            if session_id:
+                self._save_subagent_to_registry(config.id, session_id, config, result)
+
             # Clean up task reference
             if config.id in self._background_tasks:
                 del self._background_tasks[config.id]
@@ -1544,7 +1587,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         if registry_file.exists():
             try:
                 registry = json.loads(registry_file.read_text())
-                subagent_entry = registry.get("subagents", {}).get(subagent_id)
+                # Registry format: {"subagents": [{"subagent_id": "...", ...}, ...]}
+                subagents_list = registry.get("subagents", [])
+                for entry in subagents_list:
+                    if entry.get("subagent_id") == subagent_id:
+                        subagent_entry = entry
+                        break
             except json.JSONDecodeError:
                 logger.warning("[SubagentManager] Failed to parse own registry file")
 
@@ -1560,12 +1608,17 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
                 try:
                     agent_registry = json.loads(agent_registry_file.read_text())
-                    found_entry = agent_registry.get("subagents", {}).get(subagent_id)
-                    if found_entry:
-                        subagent_entry = found_entry
-                        logger.info(
-                            f"[SubagentManager] Found subagent {subagent_id} in agent {agent_dir.name}'s registry",
-                        )
+                    subagents_list = agent_registry.get("subagents", [])
+                    for entry in subagents_list:
+                        if entry.get("subagent_id") == subagent_id:
+                            subagent_entry = entry
+                            registry = agent_registry
+                            registry_file = agent_registry_file
+                            logger.info(
+                                f"[SubagentManager] Found subagent {subagent_id} in agent {agent_dir.name}'s registry",
+                            )
+                            break
+                    if subagent_entry:
                         break
                 except json.JSONDecodeError:
                     logger.warning(f"[SubagentManager] Failed to parse registry for agent {agent_dir.name}")
@@ -1968,7 +2021,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         if registry_file.exists():
             try:
                 registry = json.loads(registry_file.read_text())
-                for subagent_id, entry in registry.get("subagents", {}).items():
+                # Registry format: {"subagents": [{"subagent_id": "...", ...}, ...]}
+                subagents_list = registry.get("subagents", [])
+                for entry in subagents_list:
+                    subagent_id = entry.get("subagent_id")
+                    if not subagent_id:
+                        continue
                     subagents[subagent_id] = {
                         "subagent_id": subagent_id,
                         "status": entry.get("status"),
@@ -2000,7 +2058,13 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
                 try:
                     agent_registry = json.loads(agent_registry_file.read_text())
-                    for subagent_id, entry in agent_registry.get("subagents", {}).items():
+                    # Registry format: {"subagents": [{"subagent_id": "...", ...}, ...]}
+                    subagents_list = agent_registry.get("subagents", [])
+                    for entry in subagents_list:
+                        subagent_id = entry.get("subagent_id")
+                        if not subagent_id:
+                            continue
+
                         # Use a prefixed key to avoid collisions between agents
                         # (each agent can have its own subagent with the same ID)
                         prefixed_id = f"{agent_id}_{subagent_id}"

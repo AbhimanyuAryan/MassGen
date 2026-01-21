@@ -107,8 +107,6 @@ The system SHALL handle pending subagent results when the parent session complet
 - **THEN** running subagents are allowed to complete (not forcibly cancelled)
 - **AND** a warning is logged about orphaned subagent results
 
-## ADDED Requirements
-
 ### Requirement: Async Subagent Configuration
 
 The system SHALL support YAML configuration for async subagent behavior.
@@ -117,9 +115,10 @@ The system SHALL support YAML configuration for async subagent behavior.
 - **GIVEN** the following config:
   ```yaml
   orchestrator:
-    async_subagents:
-      enabled: true
-      injection_strategy: "tool_result"
+    coordination:
+      async_subagents:
+        enabled: true
+        injection_strategy: "tool_result"
   ```
 - **WHEN** an agent spawns a subagent with `async=true`
 - **THEN** the subagent runs in background mode

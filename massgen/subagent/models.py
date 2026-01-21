@@ -481,6 +481,7 @@ class SubagentState:
         status: Current execution status
         workspace_path: Path to subagent workspace
         started_at: When execution started
+        finished_at: When execution finished
         result: Final result (when completed)
     """
 
@@ -488,6 +489,7 @@ class SubagentState:
     status: Literal["pending", "running", "completed", "completed_but_timeout", "partial", "failed", "timeout"] = "pending"
     workspace_path: str = ""
     started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
     result: Optional[SubagentResult] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -497,6 +499,7 @@ class SubagentState:
             "status": self.status,
             "workspace_path": self.workspace_path,
             "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "result": self.result.to_dict() if self.result else None,
         }
 

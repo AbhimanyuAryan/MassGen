@@ -145,10 +145,9 @@
   - Document async spawning
   - Explain result injection
   - Provide examples
-  - File: `docs/source/user_guide/subagents.rst`
+  - File: `docs/source/user_guide/advanced/subagents.rst`
 
 - [ ] 9.2 Add example configs
   - Basic async subagent config
   - Multi-subagent parallel config
-  - File: `massgen/configs/tools/subagent/async_subagent_example.yaml`
-
+  - File: `massgen/configs/features/async_subagent_example.yaml`
