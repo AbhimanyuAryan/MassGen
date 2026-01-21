@@ -1,0 +1,43 @@
+# -*- coding: utf-8 -*-
+# Async Subagent Example Configuration
+#
+# Demonstrates using async_=True parameter with spawn_subagents to run
+# subagents in the background while the parent agent continues working.
+# Results are automatically injected when subagents complete.
+#
+# Key Features:
+# - Parent agent spawns subagent with async_=True
+# - Parent continues working immediately (non-blocking)
+# - Subagent result automatically injected on next tool call
+# - Configurable injection strategy (tool_result or user_message)
+#
+# Usage:
+#   uv run massgen --config massgen/configs/features/async_subagent_example.yaml \
+#     "Research OAuth best practices and then implement authentication"
+
+agent:
+  id: async-demo
+  backend:
+    type: claude
+    model: claude-sonnet-4-20250514
+
+orchestrator:
+  # Subagent execution settings
+  coordination:
+    enable_subagents: true
+    subagent_default_timeout: 300  # 5 minutes default
+
+    # Async subagent configuration
+    async_subagents:
+      enabled: true
+      # Injection strategy for delivering subagent results:
+      # - tool_result: Append to next tool call output (default)
+      # - user_message: Inject as separate user message
+      injection_strategy: "tool_result"
+
+  # Context paths for file access
+  context_paths:
+    - path: "."
+      permission: read
+    - path: "./workspace"
+      permission: write
