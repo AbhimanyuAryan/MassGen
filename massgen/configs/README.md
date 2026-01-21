@@ -234,7 +234,7 @@ Most configurations use environment variables for API keys:so
 
 **Key Features:**
 - **Async Subagent Execution**: Spawn subagents with `async_=True` for non-blocking parallel work while parent continues
-- **Automatic Result Injection**: Subagent results delivered via `SubagentCompleteHook` at next tool boundary
+- **Poll for Completion**: Check subagent status and retrieve results when ready
 - **Subagent Round Timeouts**: Per-round timeout control with `subagent_round_timeouts` config section
 - **Extended Subagent Config**: `subagent_default_timeout`, `subagent_min_timeout`, `subagent_max_timeout`, `subagent_max_concurrent`
 

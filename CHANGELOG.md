@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.41 (January 21, 2026)** - Async Subagent Execution
-Background subagent execution with `async_=True` parameter for non-blocking subagent spawning. Parent agents continue working while subagents run in background, with results automatically injected when complete. New subagent round timeouts for per-round timeout control. Extended subagent configuration parameters for fine-grained control over concurrency and timeouts.
+Background subagent execution with `async_=True` parameter for non-blocking subagent spawning. Parent agents continue working while subagents run in background, then poll for results when ready. New subagent round timeouts for per-round timeout control. Extended subagent configuration parameters for fine-grained control over concurrency and timeouts.
 
 **v0.1.40 (January 19, 2026)** - Textual TUI Interactive Mode (Experimental)
 Interactive terminal UI with `--display textual` for interactive MassGen sessions. Real-time agent output streaming, context path injection, human feedback integration, keyboard-driven navigation, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics/costs/votes/timeline. Enhanced plan execution with mode selection UI and improved final answer presentation.
@@ -26,13 +26,13 @@ Complete plan-then-execute workflow with `--plan-and-execute` for autonomous pla
 - **Async Subagent Execution**: Background subagent execution with `async_=True` parameter (MAS-214)
   - Parent agents continue working while subagents run in background
   - Non-blocking `spawn_subagents` returns immediately with running status
-  - Results automatically injected when subagents complete via `PostToolUse` hook
+  - Parent can poll for subagent completion and retrieve results
   - Configurable injection strategies: `tool_result` (default) or `user_message`
   - Batch injection when multiple subagents complete simultaneously
 
-- **Automatic Result Injection**: Seamless delivery of background results
-  - `SubagentCompleteHook` monitors for completed background subagents
-  - Results injected in structured XML format with metadata
+- **Result Polling**: Check subagent completion status and retrieve results
+  - Poll for completed background subagents when ready
+  - Results returned in structured XML format with metadata
   - Includes execution time, token usage, and workspace paths
 
 - **Subagent Round Timeouts**: Per-round timeout control for subagents

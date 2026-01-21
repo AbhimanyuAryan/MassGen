@@ -60,13 +60,13 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - **Async Subagent Execution**: Background subagent execution with `async_=True` parameter (MAS-214)
   - Parent agents continue working while subagents run in background
   - Non-blocking `spawn_subagents` returns immediately with running status
-  - Results automatically injected when subagents complete via `PostToolUse` hook
+  - Parent can poll for subagent completion and retrieve results
   - Configurable injection strategies: `tool_result` (default) or `user_message`
   - Batch injection when multiple subagents complete simultaneously
 
-- **Automatic Result Injection**: Seamless delivery of background results
-  - `SubagentCompleteHook` monitors for completed background subagents
-  - Results injected in structured XML format with metadata
+- **Result Polling**: Check subagent completion status and retrieve results
+  - Poll for completed background subagents when ready
+  - Results returned in structured XML format with metadata
   - Includes execution time, token usage, and workspace paths
 
 *See [Ongoing Work](#-ongoing-work--continuous-releases) section for detailed track information.*
@@ -492,7 +492,7 @@ These features are being actively developed on **separate parallel tracks** and 
 - PR: [#801](https://github.com/massgen/MassGen/pull/801)
 - Linear: MAS-214
 - Background subagent execution with `async_=True` parameter
-- Automatic result injection via `PostToolUse` hook when subagents complete
+- Poll for subagent completion and retrieve results
 - **Status:** ✅ Completed in v0.1.41
 
 ### Track: Tool Metrics Distribution Statistics (@ncrispino, nickcrispino)

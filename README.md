@@ -163,7 +163,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 **What's New in v0.1.41:**
 - **⚡ Async Subagent Execution** - Spawn subagents with `async_=True` for non-blocking parallel work
-- **🔄 Automatic Result Injection** - Subagent results delivered via PostToolUse hook at next tool boundary
+- **🔄 Poll for Completion** - Check subagent status and retrieve results when ready
 - **⏱️ Subagent Round Timeouts** - Per-round timeout control with `subagent_round_timeouts` config
 - **⚙️ Extended Subagent Config** - Fine-grained control over timeouts, concurrency limits
 
@@ -1215,7 +1215,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 #### Async Subagent Execution
 - **Non-Blocking Subagent Spawning**: Use `async_=True` parameter on `spawn_subagents` tool to run subagents in background while parent continues working
-- **Automatic Result Injection**: Completed subagent results delivered via `SubagentCompleteHook` at next tool boundary
+- **Poll for Completion**: Check subagent status and retrieve results when ready
 - **Configurable Injection Strategy**: Choose `tool_result` (append to tool response) or `user_message` (add as follow-up message)
 
 #### Subagent Round Timeouts & Configuration

@@ -159,7 +159,7 @@ Recent Releases
 
 **v0.1.41 (January 21, 2026)** - Async Subagent Execution
 
-Non-blocking subagent spawning with ``async_=True`` parameter on ``spawn_subagents`` tool. Parent agents continue working while subagents run in background. Automatic result injection via ``SubagentCompleteHook`` at next tool boundary. New subagent round timeouts (``subagent_round_timeouts``) for per-round timeout control. Extended subagent configuration parameters for fine-grained control over timeouts and concurrency.
+Non-blocking subagent spawning with ``async_=True`` parameter on ``spawn_subagents`` tool. Parent agents continue working while subagents run in background, then poll for completion when ready. New subagent round timeouts (``subagent_round_timeouts``) for per-round timeout control. Extended subagent configuration parameters for fine-grained control over timeouts and concurrency.
 
 **v0.1.40 (January 19, 2026)** - Textual TUI Interactive Mode (Experimental)
 

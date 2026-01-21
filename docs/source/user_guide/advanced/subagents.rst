@@ -567,14 +567,14 @@ The tool returns immediately with running status:
          "status_file": "/path/to/logs/oauth-research/full_logs/status.json"
        }
      ],
-    "note": "Results will be automatically injected when subagents complete."
+    "note": "Poll for subagent completion to retrieve results when ready."
    }
 
-Automatic Result Injection
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+Polling for Results
+~~~~~~~~~~~~~~~~~~~
 
-When an async subagent completes, its result is automatically injected into the parent agent's context
-on the next tool call. The parent doesn't need to poll or wait—results appear seamlessly:
+When an async subagent completes, the parent agent can poll for completion and retrieve results.
+Results are returned in structured XML format:
 
 .. code-block:: text
 
