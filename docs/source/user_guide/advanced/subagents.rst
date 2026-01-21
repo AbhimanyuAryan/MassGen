@@ -570,24 +570,6 @@ The tool returns immediately with running status:
     "note": "Results will be automatically injected when subagents complete."
    }
 
-Continuing Subagents
---------------------
-
-You can resume any subagent (completed, timed out, or failed) using ``continue_subagent``.
-The subagent's conversation is restored via its session ID and your new message is appended.
-
-.. code-block:: json
-
-   {
-     "tool": "continue_subagent",
-     "arguments": {
-       "subagent_id": "oauth-research",
-       "message": "Please continue and include OAuth 2.1 differences"
-     }
-   }
-
-To find continuable subagents, use ``list_subagents()`` and look for ``continuable: true``.
-
 Automatic Result Injection
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

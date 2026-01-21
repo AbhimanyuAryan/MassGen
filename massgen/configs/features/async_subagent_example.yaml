@@ -12,8 +12,8 @@
 # - Configurable injection strategy (tool_result or user_message)
 #
 # Usage:
-#   uv run massgen --config massgen/configs/features/async_subagent_example.yaml \
-#     "Research OAuth best practices and then implement authentication"
+#   uv run massgen --display textual --config massgen/configs/features/async_subagent_example.yaml \
+#     "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
 
 agent:
   id: async-demo

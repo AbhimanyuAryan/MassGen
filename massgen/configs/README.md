@@ -243,13 +243,9 @@ Most configurations use environment variables for API keys:so
 # Install or upgrade
 pip install --upgrade massgen
 
-# Async subagent execution - parent continues while subagent works
-uv run massgen --config massgen/configs/features/async_subagent_example.yaml \
-  "Research OAuth best practices and then implement authentication"
-
-# Subagent spawning with non-blocking execution
-# Parent agent calls spawn_subagents(async_=True) and continues working
-# Results injected automatically when subagent completes
+# Async subagent execution - parent continues while subagent works in background
+uv run massgen --display textual --config massgen/configs/features/async_subagent_example.yaml \
+  "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
 ```
 
 ### v0.1.40

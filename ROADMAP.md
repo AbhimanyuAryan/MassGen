@@ -64,11 +64,6 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
   - Configurable injection strategies: `tool_result` (default) or `user_message`
   - Batch injection when multiple subagents complete simultaneously
 
-- **Subagent Continuation**: Resume completed, timed-out, or failed subagents
-  - `continue_subagent` tool restores conversation via session ID
-  - Append new messages to continue subagent's work
-  - Use `list_subagents()` to find continuable subagents
-
 - **Automatic Result Injection**: Seamless delivery of background results
   - `SubagentCompleteHook` monitors for completed background subagents
   - Results injected in structured XML format with metadata
@@ -498,7 +493,6 @@ These features are being actively developed on **separate parallel tracks** and 
 - Linear: MAS-214
 - Background subagent execution with `async_=True` parameter
 - Automatic result injection via `PostToolUse` hook when subagents complete
-- Subagent continuation with `continue_subagent` tool
 - **Status:** ✅ Completed in v0.1.41
 
 ### Track: Tool Metrics Distribution Statistics (@ncrispino, nickcrispino)
