@@ -223,8 +223,7 @@ AgentTab.disabled:hover {
     height: 2;
     width: 100%;
     layout: horizontal;
-    background: #f6f8fa;
-    border-bottom: solid #d0d7de;
+    background: transparent;
     padding: 0 1;
     align: left middle;
 }
@@ -233,20 +232,26 @@ AgentTab.disabled:hover {
     display: none;
 }
 
-/* Mode Toggle buttons */
+/* Mode Toggle buttons - pill style with radio indicators */
 ModeToggle {
     width: auto;
     height: auto;
     margin: 0 1;
-    padding: 0 1;
+    padding: 0 2;
     background: #eaeef2;
     color: #656d76;
     border: none;
 }
 
 ModeToggle:hover {
-    background: #d0d7de;
+    background: #d8dee4;
     color: #24292f;
+}
+
+ModeToggle:focus {
+    background: #d8dee4;
+    color: #24292f;
+    text-style: bold;
 }
 
 ModeToggle.disabled {
@@ -255,28 +260,28 @@ ModeToggle.disabled {
     text-style: italic;
 }
 
-/* Plan mode states */
+/* Plan mode states - softer green tones */
 ModeToggle.state-plan {
-    background: #dafbe1;
-    color: #1a7f37;
+    background: #d4f4dc;
+    color: #238636;
 }
 
 ModeToggle.state-execute {
-    background: #dafbe1;
-    color: #1a7f37;
+    background: #d4f4dc;
+    color: #238636;
     text-style: bold;
 }
 
-/* Agent mode states */
+/* Agent mode states - softer warning tones */
 ModeToggle.state-single {
-    background: #fff8c5;
-    color: #9a6700;
+    background: #fef3cd;
+    color: #856d00;
 }
 
-/* Refinement mode states */
+/* Refinement mode states - softer muted tones */
 ModeToggle.state-off {
-    background: #ffebe9;
-    color: #cf222e;
+    background: #f0f0f0;
+    color: #656d76;
 }
 
 /* Override button in mode bar */
@@ -609,14 +614,14 @@ HeaderWidget.hidden {
 /* Note: HeaderWidget styling is handled by the class selector above.
    The #header_widget ID selector was removed to avoid CSS conflicts. */
 
-/* Input area container - docks to bottom */
+/* Input area container - docks to bottom, transparent for clean look */
 #input_area {
     dock: bottom;
     height: auto;
     min-height: 4;
     width: 100%;
     padding: 0 1;
-    background: #f5f5f5;
+    background: transparent;
 }
 
 /* Execution bar - hidden (keeping input area consistent in all states) */
@@ -710,18 +715,20 @@ SuggestionRow.selected {
     color: #ffffff;
 }
 
-/* Question input - multi-line TextArea */
+/* Question input - multi-line TextArea with rounded card style */
 #question_input {
-    background: #ffffff;
-    border: solid #0066cc;
+    background: transparent;
+    border: round #d0d7de;
     height: auto;
     min-height: 1;
     max-height: 10;
-    margin-left: 1;
+    margin: 0 1;
+    padding: 0 1;
 }
 
 #question_input:focus {
-    border: double #0066cc;
+    border: round #0066cc;
+    background: transparent;
 }
 
 /* Hide line numbers in the question input */

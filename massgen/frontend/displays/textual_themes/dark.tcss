@@ -354,8 +354,7 @@ AgentTab.disabled:hover {
     height: 2;
     width: 100%;
     layout: horizontal;
-    background: $bg-surface;
-    border-bottom: solid $border-default;
+    background: transparent;
     padding: 0 1;
     align: left middle;
 }
@@ -364,20 +363,26 @@ AgentTab.disabled:hover {
     display: none;
 }
 
-/* Mode Toggle buttons */
+/* Mode Toggle buttons - pill style with radio indicators */
 ModeToggle {
     width: auto;
     height: auto;
     margin: 0 1;
-    padding: 0 1;
+    padding: 0 2;
     background: $bg-surface-2;
     color: $fg-muted;
     border: none;
 }
 
 ModeToggle:hover {
-    background: $border-default;
+    background: #3a424d;
     color: $fg-primary;
+}
+
+ModeToggle:focus {
+    background: #3a424d;
+    color: $fg-primary;
+    text-style: bold;
 }
 
 ModeToggle.disabled {
@@ -386,28 +391,28 @@ ModeToggle.disabled {
     text-style: italic;
 }
 
-/* Plan mode states */
+/* Plan mode states - softer green tones */
 ModeToggle.state-plan {
-    background: #0d3a0d;
-    color: $accent-success;
+    background: #1a3a2a;
+    color: #7ee787;
 }
 
 ModeToggle.state-execute {
-    background: #0d3a0d;
-    color: $accent-success;
+    background: #1a3a2a;
+    color: #7ee787;
     text-style: bold;
 }
 
-/* Agent mode states */
+/* Agent mode states - softer warning tones */
 ModeToggle.state-single {
-    background: #3d2a0d;
-    color: $accent-warning;
+    background: #3d3520;
+    color: #e3b341;
 }
 
-/* Refinement mode states */
+/* Refinement mode states - softer muted tones */
 ModeToggle.state-off {
-    background: #3d0d0d;
-    color: $accent-error;
+    background: #2d2d2d;
+    color: #8b949e;
 }
 
 /* Override button in mode bar */
@@ -755,14 +760,14 @@ HeaderWidget.hidden {
     display: none;
 }
 
-/* Input area container - docks to bottom */
+/* Input area container - docks to bottom, transparent for clean look */
 #input_area {
     dock: bottom;
     height: auto;
     min-height: 4;
     width: 100%;
     padding: 0 1;
-    background: $bg-base;
+    background: transparent;
 }
 
 /* Execution bar - hidden (keeping input area consistent in all states) */
@@ -857,18 +862,20 @@ SuggestionRow.selected {
     color: $bg-base;
 }
 
-/* Question input - multi-line TextArea */
+/* Question input - multi-line TextArea with rounded card style */
 #question_input {
-    background: $bg-surface;
-    border: solid $border-default;
+    background: transparent;
+    border: round $border-default;
     height: auto;
     min-height: 1;
     max-height: 10;
-    margin-left: 1;
+    margin: 0 1;
+    padding: 0 1;
 }
 
 #question_input:focus {
-    border: solid $accent-primary;
+    border: round $accent-primary;
+    background: transparent;
 }
 
 /* Hide line numbers in the question input */

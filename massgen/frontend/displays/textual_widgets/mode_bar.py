@@ -77,18 +77,18 @@ class ModeToggle(Static):
 
     can_focus = True
 
-    # Icons for different modes
+    # Icons for different modes - using radio indicators for clean look
     ICONS = {
-        "plan": {"normal": "📋", "plan": "📝", "execute": "▶️"},
-        "agent": {"multi": "👥", "single": "👤"},
-        "refinement": {"on": "🔄", "off": "⏩"},
+        "plan": {"normal": "○", "plan": "◉", "execute": "◉"},
+        "agent": {"multi": "◉", "single": "○"},
+        "refinement": {"on": "◉", "off": "○"},
     }
 
-    # Labels for states
+    # Labels for states - concise without redundant ON/OFF
     LABELS = {
         "plan": {"normal": "Normal", "plan": "Planning", "execute": "Executing"},
         "agent": {"multi": "Multi-Agent", "single": "Single"},
-        "refinement": {"on": "Refine ON", "off": "Refine OFF"},
+        "refinement": {"on": "Refine", "off": "Refine OFF"},
     }
 
     def __init__(

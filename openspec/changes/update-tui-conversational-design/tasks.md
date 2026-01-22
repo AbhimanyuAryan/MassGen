@@ -13,26 +13,33 @@ Each phase section ends with a **CHECKPOINT** task to remind you to pause for ap
 
 ---
 
-## 1. Phase 1: Input Bar + Mode Toggles
+## 1. Phase 1: Input Bar + Mode Toggles ✓ COMPLETED
 
 ### 1.1 Mode Toggle Redesign
-- [ ] 1.1.1 Update `ModeToggle.ICONS` to use radio indicators (◉/○) instead of emoji
-- [ ] 1.1.2 Update `ModeToggle.LABELS` to remove ON/OFF suffixes
-- [ ] 1.1.3 Update `ModeToggle.render()` to display cleaner format
-- [ ] 1.1.4 Update CSS for `.state-*` classes with new styling
+- [x] 1.1.1 Update `ModeToggle.ICONS` to use radio indicators (◉/○) instead of emoji
+- [x] 1.1.2 Update `ModeToggle.LABELS` - kept "Refine OFF" per user preference
+- [x] 1.1.3 Update `ModeToggle.render()` to display cleaner format
+- [x] 1.1.4 Update CSS for `.state-*` classes with softer colors
 
 ### 1.2 Unified Input Card
-- [ ] 1.2.1 Create new `InputCard` container widget that wraps ModeBar + Input
-- [ ] 1.2.2 Update CSS to use rounded box-drawing characters (border-title-style)
-- [ ] 1.2.3 Integrate mode toggles into top of input card (not separate widget)
-- [ ] 1.2.4 Add submit hint integrated into bottom-right of card
-- [ ] 1.2.5 Increase vertical padding (min-height: 5)
+- [~] 1.2.1 SKIPPED: Keep existing ModeBar + Input structure (simpler)
+- [x] 1.2.2 Update CSS to use `border: round` for rounded corners
+- [~] 1.2.3 SKIPPED: Keep mode toggles as separate widget (cleaner separation)
+- [~] 1.2.4 SKIPPED: Keep existing hint layout
+- [~] 1.2.5 SKIPPED: Existing padding is adequate
 
 ### 1.3 Input Styling
-- [ ] 1.3.1 Update `#input_area` CSS for rounded corners effect
-- [ ] 1.3.2 Add focus glow/highlight styling
-- [ ] 1.3.3 Update placeholder text to be more inviting
-- [ ] **1.3.4 CHECKPOINT: User approval for input bar + mode toggles**
+- [x] 1.3.1 Update `#input_area` CSS - transparent background for clean look
+- [x] 1.3.2 Update `#question_input` CSS - rounded border, transparent background
+- [x] 1.3.3 Update `#mode_bar` CSS - transparent background
+- [~] 1.3.4 Placeholder text unchanged (existing is fine)
+- [x] **1.3.5 CHECKPOINT: User approval for input bar + mode toggles ✓**
+
+**Implementation Notes:**
+- Files modified: `mode_bar.py`, `dark.tcss`, `light.tcss`
+- Key change: Transparent backgrounds for `#input_area`, `#mode_bar`, and `#question_input`
+- Mode toggles use softer colors: #1a3a2a (green), #3d3520 (warning), #2d2d2d (off)
+- User preferred keeping "Refine OFF" label over "Skip"
 
 ## 2. Phase 2: Agent Tabs
 
