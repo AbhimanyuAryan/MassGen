@@ -57,12 +57,11 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ### Features
 
-- **TUI Visual Redesign**: Comprehensive 13-phase visual overhaul with modern "Conversational AI" aesthetic ([#806](https://github.com/massgen/MassGen/pull/806))
+- **TUI Visual Redesign**: Comprehensive visual overhaul with modern "Conversational AI" aesthetic ([#806](https://github.com/massgen/MassGen/pull/806))
   - Rounded corners and softer borders throughout
   - Professional desaturated color palette
   - Edge-to-edge layouts with proper spacing
   - Redesigned agent tabs, tool cards, and modals
-  - Collapsible reasoning blocks for cleaner output
   - Scroll indicators and progress bars
 
 - **Human Input Queue**: Inject messages to agents mid-stream during execution
@@ -500,7 +499,7 @@ These features are being actively developed on **separate parallel tracks** and 
 
 ### Track: TUI Visual Redesign (@ncrispino, @praneeth999, nickcrispino, ram2561)
 - PR: [#806](https://github.com/massgen/MassGen/pull/806)
-- Comprehensive 13-phase visual overhaul with modern "Conversational AI" aesthetic
+- Comprehensive visual overhaul with modern "Conversational AI" aesthetic
 - Rounded corners, desaturated colors, edge-to-edge layouts, polished modals
 - Human Input Queue for injecting messages to agents mid-stream
 - **Status:** ✅ Completed in v0.1.42

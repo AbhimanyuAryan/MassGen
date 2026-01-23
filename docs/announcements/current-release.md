@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.42, featuring a comprehensive TUI Visual Redesign! The Textual terminal UI has been completely refreshed with a modern "Conversational AI" aesthetic - rounded corners, professional color palette, edge-to-edge layouts, and polished modals. Plus, new Human Input Queue support lets you inject messages to agents mid-stream while they're working.
+We're excited to release MassGen v0.1.42, featuring Human Input Queue - inject messages to agents mid-stream while they're working! This release also includes a comprehensive TUI Visual Redesign with a modern "Conversational AI" aesthetic - rounded corners, professional color palette, edge-to-edge layouts, and polished modals.
 
 ## Install
 
@@ -29,22 +29,20 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.42, featuring a comprehensive TUI Visual Redesign!
-
-The Textual terminal UI has been completely refreshed with a modern "Conversational AI" aesthetic:
-
-**Visual Polish (13-Phase Redesign)**
-- Rounded corners and softer borders throughout
-- Professional desaturated color palette
-- Edge-to-edge layouts with proper spacing
-- Redesigned agent tabs, tool cards, and modals
-- Collapsible reasoning blocks for cleaner output
-- Scroll indicators and progress bars
+We're excited to release MassGen v0.1.42, featuring Human Input Queue!
 
 **Human Input Queue**
 - Inject messages to agents mid-stream while they work
 - Thread-safe queue with per-agent tracking
 - Visual indicators in TUI when input is pending
+
+**TUI Visual Redesign**
+The Textual terminal UI has been completely refreshed with a modern "Conversational AI" aesthetic:
+- Rounded corners and softer borders throughout
+- Professional desaturated color palette
+- Edge-to-edge layouts with proper spacing
+- Redesigned agent tabs, tool cards, and modals
+- Scroll indicators and progress bars
 
 **AG2 Single-Agent Fix**
 - Fixed coordination issues for single-agent AutoGen setups

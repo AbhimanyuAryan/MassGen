@@ -160,7 +160,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: January 23, 2026**
 
 **What's New in v0.1.42:**
-- **🎨 TUI Visual Redesign** - 13-phase overhaul with modern "Conversational AI" aesthetic, rounded corners, redesigned agent tabs, polished modals
+- **🎨 TUI Visual Redesign** - Modern "Conversational AI" aesthetic with rounded corners, redesigned agent tabs, polished modals
 - **💬 Human Input Queue** - Inject messages to agents mid-stream during execution
 - **🔧 AG2 Single-Agent Fix** - Single-agent AutoGen setups now coordinate correctly
 
@@ -1212,7 +1212,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 **🎉 Released: January 23, 2026**
 
 #### TUI Visual Redesign
-- **Modern Aesthetic**: 13-phase visual overhaul with "Conversational AI" design, rounded corners, professional desaturated colors
+- **Modern Aesthetic**: "Conversational AI" design with rounded corners, professional desaturated colors
 - **Agent Tabs Redesign**: Dot indicators (◉ active, ○ waiting, ✓ done), two-line display showing name and model
 - **Tool Cards**: Adaptive density - collapsed by default, expandable for parameters and results
 - **Modal Polish**: Rounded containers, consistent headers, unified button styling

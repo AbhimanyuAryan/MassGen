@@ -231,7 +231,7 @@ Most configurations use environment variables for API keys:so
 **New Features:** TUI Visual Redesign, Human Input Queue, AG2 Single-Agent Fix
 
 **Key Features:**
-- **TUI Visual Redesign**: 13-phase visual overhaul with modern "Conversational AI" aesthetic, rounded corners, redesigned agent tabs, polished modals
+- **TUI Visual Redesign**: Modern "Conversational AI" aesthetic with rounded corners, redesigned agent tabs, polished modals
 - **Human Input Queue**: Inject messages to agents mid-stream during execution with `HumanInputHook`
 - **AG2 Single-Agent Fix**: Single-agent AutoGen setups now vote and coordinate correctly
 

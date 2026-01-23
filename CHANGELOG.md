@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.42 (January 23, 2026)** - TUI Visual Redesign
-Comprehensive 13-phase visual redesign of the Textual TUI with modern "Conversational AI" aesthetic. Rounded corners, professional desaturated colors, edge-to-edge layouts, redesigned agent tabs and tool cards, polished modals, collapsible reasoning blocks, and scroll indicators. New Human Input Queue for injecting messages to agents mid-stream. AG2 single-agent coordination fixes.
+Comprehensive visual redesign of the Textual TUI with modern "Conversational AI" aesthetic. Rounded corners, professional desaturated colors, edge-to-edge layouts, redesigned agent tabs and tool cards, polished modals, and scroll indicators. New Human Input Queue for injecting messages to agents mid-stream. AG2 single-agent coordination fixes.
 
 **v0.1.41 (January 21, 2026)** - Async Subagent Execution
 Background subagent execution with `async_=True` parameter for non-blocking subagent spawning. Parent agents continue working while subagents run in background, then poll for results when ready. New subagent round timeouts for per-round timeout control. Extended subagent configuration parameters for fine-grained control over concurrency and timeouts.
@@ -23,7 +23,7 @@ Interactive terminal UI with `--display textual` for interactive MassGen session
 ## [0.1.42] - 2026-01-23
 
 ### Added
-- **TUI Visual Redesign**: Comprehensive 13-phase visual overhaul with modern "Conversational AI" aesthetic ([#806](https://github.com/massgen/MassGen/pull/806))
+- **TUI Visual Redesign**: Comprehensive visual overhaul with modern "Conversational AI" aesthetic ([#806](https://github.com/massgen/MassGen/pull/806))
   - **Phase 1**: Unified input card with integrated mode toggles, rounded corners (╭╮╰╯), simplified radio-style indicators
   - **Phase 2**: Agent tabs redesign with dot indicators (◉ active, ○ waiting, ✓ done), two-line display (name + model)
   - **Phase 3**: Tool cards with adaptive density - collapsed by default, click to expand parameters/results

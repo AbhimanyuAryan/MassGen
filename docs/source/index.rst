@@ -159,7 +159,7 @@ Recent Releases
 
 **v0.1.42 (January 23, 2026)** - TUI Visual Redesign
 
-Comprehensive 13-phase visual overhaul with modern "Conversational AI" aesthetic. Rounded corners, professional desaturated colors, redesigned agent tabs with dot indicators, polished modals, and collapsible reasoning blocks. New Human Input Queue for injecting messages to agents mid-stream. AG2 single-agent coordination fixes.
+Comprehensive visual overhaul with modern "Conversational AI" aesthetic. Rounded corners, professional desaturated colors, redesigned agent tabs with dot indicators, and polished modals. New Human Input Queue for injecting messages to agents mid-stream. AG2 single-agent coordination fixes.
 
 **v0.1.41 (January 21, 2026)** - Async Subagent Execution
 
