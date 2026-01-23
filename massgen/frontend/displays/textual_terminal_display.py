@@ -39,30 +39,48 @@ try:
     from textual.reactive import reactive
     from textual.screen import ModalScreen
     from textual.widget import Widget
-    from textual.widgets import (
-        Button,
-        Footer,
-        Input,
-        Label,
-        RichLog,
-        Select,
-        Static,
-        TextArea,
-    )
+    from textual.widgets import Button, Footer, Input, Label, RichLog, Static, TextArea
 
     from .content_handlers import ThinkingContentHandler, ToolContentHandler
     from .content_normalizer import ContentNormalizer
+
+    # Import extracted modals from the new textual/ package
+    from .textual import (  # Browser modals; Status modals; Coordination modals; Content modals; Input modals; Shortcuts modal; Workspace modals; Agent output modal
+        AgentOutputModal,
+        AgentSelectorModal,
+        AnswerBrowserModal,
+        BroadcastPromptModal,
+        BrowserTabsModal,
+        ContextModal,
+        ConversationHistoryModal,
+        CoordinationTableModal,
+        CostBreakdownModal,
+        FileInspectionModal,
+        KeyboardShortcutsModal,
+        MCPStatusModal,
+        MetricsModal,
+        OrchestratorEventsModal,
+        StructuredBroadcastPromptModal,
+        SystemStatusModal,
+        TextContentModal,
+        TimelineModal,
+        VoteResultsModal,
+        WorkspaceBrowserModal,
+    )
     from .textual_widgets import (
+        AgentStatusRibbon,
         AgentTabBar,
         AgentTabChanged,
-        BackgroundTasksModal,
         CompletionFooter,
+        ExecutionStatusLine,
         FinalPresentationCard,
         ModeBar,
         ModeChanged,
         MultiLineInput,
         OverrideRequested,
         PathSuggestionDropdown,
+        QueuedInputBanner,
+        SessionInfoClicked,
         SubagentCard,
         SubagentModal,
         TaskPlanCard,
@@ -71,6 +89,7 @@ try:
         ToolCallCard,
         ToolDetailModal,
         ToolSection,
+        ViewSelected,
     )
     from .tui_modes import TuiModeState
 
@@ -1126,6 +1145,22 @@ class TextualTerminalDisplay(TerminalDisplay):
             except Exception:
                 pass
 
+    def set_human_input_hook(self, hook) -> None:
+        """Set the human input hook for injecting user input during execution.
+
+        Args:
+            hook: HumanInputHook instance from orchestrator
+        """
+        logger.info(f"[Display] set_human_input_hook called, _app={self._app is not None}, hook={hook}")
+        if self._app and hasattr(self._app, "set_human_input_hook"):
+            try:
+                self._app.set_human_input_hook(hook)
+                logger.info("[Display] Successfully forwarded hook to app")
+            except Exception as e:
+                logger.warning(f"Failed to set human input hook on app: {e}")
+        else:
+            logger.warning(f"[Display] Cannot forward hook: _app={self._app}, has method={hasattr(self._app, 'set_human_input_hook') if self._app else 'N/A'}")
+
     def initialize(self, question: str, log_filename: Optional[str] = None):
         """Initialize display with file output."""
         self.question = question
@@ -1297,6 +1332,18 @@ class TextualTerminalDisplay(TerminalDisplay):
         """
         if self._app:
             self._call_app_method("update_hook_execution", agent_id, tool_call_id, hook_info)
+
+    def update_token_usage(self, agent_id: str, usage: Dict[str, Any]) -> None:
+        """Update token usage display for an agent.
+
+        Phase 13.1: Wire token/cost updates from backend to status ribbon.
+
+        Args:
+            agent_id: The agent whose token usage to update
+            usage: Token usage dict with input_tokens, output_tokens, estimated_cost
+        """
+        if self._app:
+            self._call_app_method("update_token_usage", agent_id, usage)
 
     def add_orchestrator_event(self, event: str):
         """Add an orchestrator coordination event."""
@@ -2212,13 +2259,15 @@ class TextualTerminalDisplay(TerminalDisplay):
 
             self._app.notify("Executing plan...", severity="information", timeout=3)
 
-            # Submit execution prompt to input
-            if hasattr(self._app, "_question_input") and self._app._question_input:
-                self._app._question_input.value = execution_prompt
-                # Use call_later to ensure UI is updated before submission
-                self._app.call_later(self._app._question_input.action_submit)
+            # Submit execution prompt directly using _submit_question
+            if hasattr(self._app, "_submit_question"):
+                # Set the input value first
+                if hasattr(self._app, "question_input") and self._app.question_input:
+                    self._app.question_input.value = execution_prompt
+                # Submit as a new turn
+                self._app.call_later(lambda: self._app._submit_question(execution_prompt))
             else:
-                logger.error("[PlanExecution] No question input found to submit execution prompt")
+                logger.error("[PlanExecution] No _submit_question method found to execute plan")
                 mode_state.reset_plan_state()
 
         except Exception as e:
@@ -2786,17 +2835,7 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
 
-    class BaseModal(ModalScreen):
-        """Base modal with common dismiss behavior for ESC and close buttons."""
-
-        def on_button_pressed(self, event: Button.Pressed):
-            if event.button.id and (event.button.id.startswith("close") or event.button.id == "cancel_button"):
-                self.dismiss()
-
-        def on_key(self, event: events.Key):
-            if event.key == "escape":
-                self.dismiss()
-                event.stop()
+    # BaseModal is now imported from .textual package
 
     class TextualApp(App):
         """Main Textual application for MassGen coordination."""
@@ -2817,11 +2856,15 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+c", "handle_ctrl_c", "Cancel/Quit", show=False),
             # CWD context toggle - priority so it works even when input focused
             Binding("ctrl+p", "toggle_cwd", "Toggle CWD", priority=True, show=False),
+            # Subagent quick access
+            Binding("ctrl+u", "show_subagents", "Subagents", priority=True, show=False),
             # Help - Ctrl+G for guide/help
             Binding("ctrl+g", "show_help", "Help", priority=True, show=False),
             # Mode toggles
             Binding("shift+tab", "toggle_plan_mode", "Plan Mode", priority=True),
             Binding("ctrl+o", "trigger_override", "Override", priority=True, show=False),
+            # Task plan toggle
+            Binding("ctrl+t", "toggle_task_plan", "Toggle Tasks", priority=True, show=False),
         ]
 
         def __init__(
@@ -2848,6 +2891,8 @@ if TEXTUAL_AVAILABLE:
             self.final_stream_panel = None
             self.safe_indicator = None
             self._tab_bar: Optional[AgentTabBar] = None
+            self._status_ribbon: Optional[AgentStatusRibbon] = None
+            self._execution_status_line: Optional[ExecutionStatusLine] = None
             self._active_agent_id: Optional[str] = None
             # Final presentation state (streams into winner's AgentPanel)
             self._final_presentation_agent: Optional[str] = None
@@ -2884,6 +2929,16 @@ if TEXTUAL_AVAILABLE:
             # Timer for updating execution status bar with spinner animation
             self._execution_status_timer = None
 
+            # Agent pulsing animation state
+            self._pulsing_agents: set = set()  # Set of agent_ids currently pulsing
+            self._pulse_frame: int = 0
+            self._pulse_timer = None
+
+            # Human input during execution state
+            self._queued_human_input: Optional[str] = None
+            self._human_input_hook = None  # Set by orchestrator via set_human_input_hook()
+            self._queued_input_banner: Optional[QueuedInputBanner] = None
+
             # TUI Mode State (plan mode, agent mode, refinement mode, override)
             self._mode_state = TuiModeState()
             self._mode_bar: Optional[ModeBar] = None
@@ -2897,7 +2952,7 @@ if TEXTUAL_AVAILABLE:
 
         def compose(self) -> ComposeResult:
             """Compose the UI layout with adaptive agent arrangement."""
-            num_agents = len(self.coordination_display.agent_ids)
+            len(self.coordination_display.agent_ids)
             agents_info_list = []
             # Use agent_models dict passed at display creation time
             agent_models = getattr(self.coordination_display, "agent_models", {})
@@ -2909,32 +2964,20 @@ if TEXTUAL_AVAILABLE:
                     agent_info = f"{agent_id} ({model})"
                 agents_info_list.append(agent_info)
 
-            session_id = getattr(self.coordination_display, "session_id", None)
             turn = getattr(self.coordination_display, "current_turn", 1)
-            mode = "Single Agent" if num_agents == 1 else "Multi-Agent"
             agent_ids = self.coordination_display.agent_ids
 
-            # === TOP DOCKED WIDGET ===
-            # Header - dock: top, ALWAYS visible
-            self.header_widget = HeaderWidget(
-                question=self.question,
-                session_id=session_id,
-                turn=turn,
-                agents_info=agents_info_list,
-                mode=mode,
-            )
-            yield self.header_widget
+            # Header removed - session info now in tab bar (right side)
 
             # === BOTTOM DOCKED WIDGETS (yield order: last yielded = very bottom) ===
             # Input area container - dock: bottom
             with Container(id="input_area"):
-                # Mode bar - toggles for plan/agent/refinement modes (above input header)
-                self._mode_bar = ModeBar(id="mode_bar")
-                yield self._mode_bar
-
-                # Input header with hint and vim mode indicator (above input)
+                # Input header with modes (left) and hint (right) on same line
                 with Horizontal(id="input_header"):
-                    # Hint for submission (updated dynamically for vim mode)
+                    # Mode bar - toggles for plan/agent/refinement modes (left side)
+                    self._mode_bar = ModeBar(id="mode_bar")
+                    yield self._mode_bar
+                    # Hint for submission (right side) - uses width: 1fr to take remaining space
                     self._input_hint = Static("Enter to submit • Shift+Enter for new line • Ctrl+G help", id="input_hint")
                     yield self._input_hint
                     # Vim mode indicator (hidden by default)
@@ -2952,6 +2995,10 @@ if TEXTUAL_AVAILABLE:
                     # Cancel button - on right
                     self._cancel_button = Button("Cancel [q]", id="cancel_button", variant="error")
                     yield self._cancel_button
+
+                # Queued input banner - mounted dynamically when needed (not in compose)
+                # to avoid blocking input bar clicks
+                self._queued_input_banner = None
 
                 # Multi-line input: Enter to submit, Shift+Enter for new line
                 # Type @ to trigger path autocomplete
@@ -2972,10 +3019,24 @@ if TEXTUAL_AVAILABLE:
             # === CONTENT WIDGETS (fill remaining space, in visual order top-to-bottom) ===
             # Tab bar for agent switching (flows below header, hidden during welcome)
             # NOTE: No dock:top - just flows naturally after docked widgets
-            self._tab_bar = AgentTabBar(agent_ids, id="agent_tab_bar")
+            agent_models = getattr(self.coordination_display, "agent_models", {})
+            self._tab_bar = AgentTabBar(
+                agent_ids,
+                agent_models=agent_models,
+                turn=turn,
+                question=self.question,
+                id="agent_tab_bar",
+            )
             if self._showing_welcome:
                 self._tab_bar.add_class("hidden")
             yield self._tab_bar
+
+            # Agent status ribbon - shows round, activity, timeout, tasks, tokens, cost
+            initial_agent = agent_ids[0] if agent_ids else ""
+            self._status_ribbon = AgentStatusRibbon(agent_id=initial_agent, id="agent_status_ribbon")
+            if self._showing_welcome:
+                self._status_ribbon.add_class("hidden")
+            yield self._status_ribbon
 
             # Set initial active agent
             self._active_agent_id = agent_ids[0] if agent_ids else None
@@ -2997,6 +3058,15 @@ if TEXTUAL_AVAILABLE:
                             agent_widget.add_class("hidden")
                         self.agent_widgets[agent_id] = agent_widget
                         yield agent_widget
+
+                # Phase 13.2: Execution status line - shows all agents' states at a glance
+                # Placed at bottom of main content area, above mode bar
+                self._execution_status_line = ExecutionStatusLine(
+                    agent_ids=agent_ids,
+                    focused_agent=initial_agent,
+                    id="execution_status_line",
+                )
+                yield self._execution_status_line
 
             self.post_eval_panel = PostEvaluationPanel()
             yield self.post_eval_panel
@@ -3236,11 +3306,13 @@ if TEXTUAL_AVAILABLE:
             if self._welcome_screen:
                 self._welcome_screen.add_class("hidden")
 
-            # Show header, tab bar, main container, and status bar
-            if self.header_widget:
-                self.header_widget.remove_class("hidden")
+            # Show tab bar, status ribbon, execution status line, main container, and status bar
             if self._tab_bar:
                 self._tab_bar.remove_class("hidden")
+            if self._status_ribbon:
+                self._status_ribbon.remove_class("hidden")
+            if self._execution_status_line:
+                self._execution_status_line.remove_class("hidden")
             if self._status_bar:
                 self._status_bar.remove_class("hidden")
                 self._status_bar.start_timer()
@@ -3341,8 +3413,92 @@ if TEXTUAL_AVAILABLE:
             if hasattr(self, "question_input"):
                 self.question_input.autocomplete_active = False
 
+        def _is_execution_in_progress(self) -> bool:
+            """Check if agents are currently executing.
+
+            Returns:
+                True if in an executing phase, False if idle/presentation.
+            """
+            if self._status_bar and hasattr(self._status_bar, "_current_phase"):
+                phase = self._status_bar._current_phase
+                # Idle and presentation phases mean execution is done
+                return phase not in ("idle", "presentation", "presenting")
+            return False
+
+        def _queue_human_input(self, text: str) -> None:
+            """Queue human input for injection during execution.
+
+            Args:
+                text: The human input text to queue
+            """
+            self._queued_human_input = text
+
+            # Send to hook if available
+            if self._human_input_hook:
+                self._human_input_hook.set_pending_input(text)
+
+            # Show visual indicator - mount banner dynamically if not present
+            try:
+                if self._queued_input_banner is None:
+                    self._queued_input_banner = QueuedInputBanner(id="queued_input_banner")
+                    # Mount in the input_area container, before question_input
+                    input_area = self.query_one("#input_area", Container)
+                    input_area.mount(self._queued_input_banner, before=self.question_input)
+                # Use add_message to stack multiple queued inputs
+                self._queued_input_banner.add_message(text)
+            except Exception as e:
+                tui_log(f"[HumanInput] Failed to show banner: {e}")
+
+            preview = text[:40] + "..." if len(text) > 40 else text
+            self.notify(f'📝 Queued: "{preview}" (Ctrl+C to cancel and start new turn)', timeout=4)
+            tui_log(f"[HumanInput] Queued input: {text[:50]}...")
+
+        def _clear_queued_input(self) -> None:
+            """Clear the queued human input after injection."""
+            self._queued_human_input = None
+
+            # Clear visual indicator
+            if self._queued_input_banner:
+                self._queued_input_banner.clear()
+
+            tui_log("[HumanInput] Cleared queued input")
+
+        def _on_human_input_injected(self, content: str) -> None:
+            """Called when human input is injected into tool result.
+
+            Clears the queued input banner and shows notification.
+            The hook framework handles displaying the injection content
+            on the tool card via hook_execution chunks.
+
+            Args:
+                content: The injected input content
+            """
+            # Clear the queued input banner
+            self._clear_queued_input()
+
+            # Show notification - the actual display on the tool card is handled
+            # by the hook framework via hook_execution chunks
+            preview = content[:40] + "..." if len(content) > 40 else content
+            self.notify(f'💬 Injected: "{preview}"', severity="information", timeout=3)
+            tui_log(f"[HumanInput] Input injected: {content[:50]}...")
+
+        def set_human_input_hook(self, hook) -> None:
+            """Set the human input hook reference from orchestrator.
+
+            Args:
+                hook: HumanInputHook instance to use for injection
+            """
+            self._human_input_hook = hook
+            # Set callback so we're notified when input is injected
+            if hook:
+                hook.set_inject_callback(lambda content: self.call_from_thread(self._on_human_input_injected, content))
+            tui_log(f"[HumanInput] Set human input hook: {hook}")
+
         def _submit_question(self, submitted_text: str | None = None) -> None:
             """Submit the current question text.
+
+            During execution, input is queued for injection into the next tool result.
+            Cancel execution first (Ctrl+C) if you want to start a new turn.
 
             Args:
                 submitted_text: Pre-processed text from Submitted event (with paste
@@ -3355,6 +3511,20 @@ if TEXTUAL_AVAILABLE:
                 return
 
             self.question_input.clear()
+
+            # During execution, queue input for injection (except slash commands)
+            # User must cancel (Ctrl+C) first if they want to start a new turn
+            is_executing = self._is_execution_in_progress()
+            has_hook = self._human_input_hook is not None
+            phase = self._status_bar._current_phase if self._status_bar else "unknown"
+            tui_log(f"  is_executing={is_executing}, has_hook={has_hook}, phase={phase}")
+
+            if not text.startswith("/") and is_executing and has_hook:
+                tui_log("  -> Queueing input for injection")
+                self._queue_human_input(text)
+                return
+
+            tui_log("  -> Submitting as new turn")
 
             # Auto-include CWD as context based on mode
             if self._cwd_context_mode != "off" and not text.startswith("/"):
@@ -3627,14 +3797,24 @@ SLASH COMMANDS:
 {command_help}
 
 KEYBOARD SHORTCUTS:
-  Tab/Shift+Tab   - Navigate agents
+  Tab/←/→         - Navigate between agents
+  Ctrl+G          - Show this help
+  Ctrl+T          - Toggle task plan (collapse/expand)
+  Ctrl+P          - Toggle CWD context auto-include
+  Ctrl+U          - Show subagents panel
+  Ctrl+C          - Cancel current turn (double to quit)
+  Ctrl+D          - Quit immediately
+
+MODAL SHORTCUTS (when not typing):
   s               - System status log
   o               - Orchestrator events
   i               - Agent selector
   c               - Coordination table
   v               - Vote results
-  Ctrl+Q          - Quit
-  Ctrl+K          - Toggle safe keyboard mode
+
+TOOL CARDS:
+  Click           - Expand/collapse tool card
+  Double-click    - Open full detail modal
 
 Type your question and press Enter to ask the agents.
 """
@@ -3725,6 +3905,7 @@ Type your question and press Enter to ask the agents.
             # Also update the tab bar status badge
             if self._tab_bar:
                 self._tab_bar.update_agent_status(agent_id, status)
+            # NOTE: Activity indicator removed from ribbon - see Phase 13.2 for ExecutionStatusLine
             # Update StatusBar activity indicator with granular phase icons
             if self._status_bar:
                 # Map status strings to activity types for phase icons
@@ -3763,6 +3944,34 @@ Type your question and press Enter to ask the agents.
                 # Also maintain backwards compatibility with set_agent_working
                 is_working = activity not in ("idle",)
                 self._status_bar.set_agent_working(agent_id, is_working)
+
+                # Trigger pulsing animation for active agents
+                from massgen.logger_config import logger
+
+                logger.info(f"[PULSE] update_agent_status: agent={agent_id}, status={status}, activity={activity}")
+                if activity in ("thinking", "tool", "streaming"):
+                    self._start_agent_pulse(agent_id)
+                else:
+                    self._stop_agent_pulse(agent_id)
+
+            # Phase 13.2: Update ExecutionStatusLine with agent state
+            if self._execution_status_line:
+                # Map to ExecutionStatusLine states
+                STATE_MAP = {
+                    "working": "working",
+                    "thinking": "thinking",
+                    "streaming": "streaming",
+                    "tool_call": "tool_use",
+                    "mcp_tool_called": "tool_use",
+                    "custom_tool_called": "tool_use",
+                    "voted": "voted",
+                    "completed": "done",
+                    "done": "done",
+                    "error": "error",
+                    "idle": "idle",
+                }
+                mapped_state = STATE_MAP.get(status, "idle")
+                self._execution_status_line.set_agent_state(agent_id, mapped_state)
             # Update execution status bar with new agent icons
             self._update_execution_status()
 
@@ -3775,6 +3984,11 @@ Type your question and press Enter to ask the agents.
             """
             if agent_id in self.agent_widgets:
                 self.agent_widgets[agent_id].update_timeout(timeout_state)
+
+            # Also update the status ribbon timeout display
+            if self._status_ribbon:
+                remaining = timeout_state.get("remaining_seconds")
+                self._status_ribbon.set_timeout(agent_id, remaining)
 
         def update_hook_execution(
             self,
@@ -3798,6 +4012,20 @@ Type your question and press Enter to ask the agents.
                 self.agent_widgets[agent_id].add_hook_to_tool(tool_call_id, hook_info)
             else:
                 logger.warning(f"[MassGenApp] Agent {agent_id} not in agent_widgets")
+
+        def update_token_usage(self, agent_id: str, usage: Dict[str, Any]):
+            """Update token usage display for an agent.
+
+            Phase 13.1: Wire token/cost updates to status ribbon.
+
+            Args:
+                agent_id: The agent whose token usage to update
+                usage: Token usage dict with input_tokens, output_tokens, estimated_cost
+            """
+            if self._status_ribbon:
+                total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                self._status_ribbon.set_tokens(agent_id, total_tokens)
+                self._status_ribbon.set_cost(agent_id, usage.get("estimated_cost", 0))
 
         def add_orchestrator_event(self, event: str):
             """Add orchestrator event to internal tracking."""
@@ -4015,6 +4243,7 @@ Type your question and press Enter to ask the agents.
             This finalizes the card by:
             1. Marking post-eval as verified (if not already set to restart)
             2. Calling complete() to show footer with Copy/Workspace buttons
+            3. Storing the final answer content for view-based navigation
             """
             # Finalize the FinalPresentationCard
             if self._final_presentation_card:
@@ -4025,9 +4254,29 @@ Type your question and press Enter to ask the agents.
                 # Mark the card as complete (shows footer with buttons)
                 self._final_presentation_card.complete()
 
-                # Scroll to show the complete card
+                # Phase 12.4: Store final answer for view-based navigation
                 if agent_id in self.agent_widgets:
                     panel = self.agent_widgets[agent_id]
+
+                    # Get the final answer content from the card
+                    final_content = getattr(self._final_presentation_card, "_answer_content", "")
+                    vote_results = getattr(self._final_presentation_card, "_vote_results", {})
+
+                    # Store for the FinalAnswerView
+                    final_metadata = {
+                        "winner": agent_id,
+                        "vote_counts": vote_results.get("vote_counts", {}),
+                        "total_rounds": panel.get_current_round(),
+                        "agreement": sum(1 for v in vote_results.get("vote_counts", {}).values() if v > 0),
+                        "total_agents": len(self.agent_widgets),
+                    }
+                    panel.set_final_answer(final_content, final_metadata)
+
+                    # Mark all agents' ribbons as having final answer available
+                    if self._status_ribbon:
+                        for aid in self.agent_widgets:
+                            self._status_ribbon.set_final_answer_available(aid, True)
+
                     try:
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         timeline._auto_scroll()
@@ -4264,6 +4513,13 @@ Type your question and press Enter to ask the agents.
 
                     # Scroll to show the card
                     timeline.scroll_to_widget("winner_selected_card")
+
+                    # Phase 12.4: Mark final answer as available for view-based navigation
+                    # Note: Final answer content will be set via set_final_answer() when streaming completes
+                    # For now, mark final answer as available in the ribbon
+                    if self._status_ribbon:
+                        self._status_ribbon.set_final_answer_available(winner_id, True)
+
                 except Exception as e:
                     logger.debug(f"Failed to add winner selected card: {e}")
 
@@ -4362,9 +4618,10 @@ Type your question and press Enter to ask the agents.
                 main_container.remove_class("hidden")
             except Exception:
                 pass
-            if self.header_widget:
-                self.header_widget.update_question(question)
-                self.header_widget.update_turn(turn)
+            # Update tab bar session info (turn + question)
+            if self._tab_bar:
+                self._tab_bar.update_turn(turn)
+                self._tab_bar.update_question(question)
             if turn > 1:
                 separator = f"\n{'='*50}\n   TURN {turn}\n{'='*50}\n"
                 for agent_id, widget in self.agent_widgets.items():
@@ -4372,15 +4629,17 @@ Type your question and press Enter to ask the agents.
                         widget.content_log.write(separator)
 
         def set_input_enabled(self, enabled: bool):
-            """Enable or disable the input widget and mode controls.
+            """Enable or disable mode controls during execution.
+
+            Note: The input field is NEVER disabled - users can always type.
+            During execution, input is queued for injection via HumanInputHook.
 
             Args:
-                enabled: True to enable input, False to disable.
+                enabled: True when idle (normal input), False during execution (input queued).
             """
-            if hasattr(self, "question_input") and self.question_input:
-                self.question_input.disabled = not enabled
-                if enabled:
-                    self.question_input.focus()
+            # NOTE: We intentionally do NOT disable question_input anymore.
+            # Users can type during execution and input gets queued for injection.
+            # The _submit_question method handles this queueing logic.
 
             # Lock/unlock mode controls during execution
             if enabled:
@@ -4490,6 +4749,32 @@ Type your question and press Enter to ask the agents.
                 if prev_agent:
                     self._switch_to_agent(prev_agent)
 
+        @keyboard_action
+        def action_show_subagents(self):
+            """Show subagent modal for first running subagent.
+
+            Searches all agent panels for subagent cards and opens the modal
+            for the first running subagent found (or first overall).
+            """
+            # Find subagent cards in all agent panels
+            for panel in self.agent_widgets.values():
+                try:
+                    subagent_cards = panel.query(SubagentCard)
+                    for card in subagent_cards:
+                        if card.subagents:
+                            # Find first running subagent
+                            running = [sa for sa in card.subagents if sa.status == "running"]
+                            if running:
+                                self.push_screen(SubagentModal(running[0], card.subagents))
+                                return
+                            # Fallback to first subagent
+                            self.push_screen(SubagentModal(card.subagents[0], card.subagents))
+                            return
+                except Exception:
+                    continue
+
+            self.notify("No active subagents", severity="information", timeout=2)
+
         def _switch_to_agent(self, agent_id: str) -> None:
             """Switch the visible agent tab.
 
@@ -4528,6 +4813,15 @@ Type your question and press Enter to ask the agents.
                     tui_log(f"  Updating tab bar active: {agent_id}")
                     self._tab_bar.set_active(agent_id)
 
+                # Update status ribbon to show this agent's status
+                if self._status_ribbon:
+                    tui_log(f"  Updating status ribbon for: {agent_id}")
+                    self._status_ribbon.set_agent(agent_id)
+
+                # Phase 13.2: Update execution status line focused agent
+                if self._execution_status_line:
+                    self._execution_status_line.set_focused_agent(agent_id)
+
                 self._active_agent_id = agent_id
                 tui_log(f"  Switch complete to: {agent_id}")
 
@@ -4562,6 +4856,49 @@ Type your question and press Enter to ask the agents.
                 self.notify(f"Single agent: {event.agent_id}", severity="information", timeout=2)
 
             self._switch_to_agent(event.agent_id)
+            event.stop()
+
+        def on_view_selected(self, event: ViewSelected) -> None:
+            """Handle view selection from AgentStatusRibbon dropdown.
+
+            Switches the agent panel to show either a specific round or the final answer.
+            """
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG: App.on_view_selected type={event.view_type} round={event.round_number} agent={event.agent_id}\n")
+
+            if event.agent_id not in self.agent_widgets:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG: App.on_view_selected agent not found, returning\n")
+                return
+
+            panel = self.agent_widgets[event.agent_id]
+
+            if event.view_type == "final_answer":
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG: App.on_view_selected calling switch_to_final_answer\n")
+                panel.switch_to_final_answer()
+            elif event.view_type == "round" and event.round_number is not None:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG: App.on_view_selected calling switch_to_round({event.round_number})\n")
+                panel.switch_to_round(event.round_number)
+                # Also exit final answer view if currently showing it
+                if panel._current_view == "final_answer":
+                    panel.switch_from_final_answer()
+
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write("DEBUG: App.on_view_selected done\n")
+            event.stop()
+
+        def on_session_info_clicked(self, event: SessionInfoClicked) -> None:
+            """Handle click on session info to show full prompt."""
+            tui_log(f"on_session_info_clicked: turn={event.turn}")
+            # Show the full prompt in a text modal
+            self.push_screen(
+                TextContentModal(
+                    title=f"Turn {event.turn} • Prompt",
+                    content=event.question or "(No prompt)",
+                ),
+            )
             event.stop()
 
         # ============================================================
@@ -4802,6 +5139,11 @@ Type your question and press Enter to ask the agents.
         def action_toggle_cwd(self) -> None:
             """Toggle CWD auto-include (Ctrl+P binding)."""
             self._toggle_cwd_auto_include()
+
+        def action_toggle_task_plan(self) -> None:
+            """Toggle task plan visibility (Ctrl+T binding)."""
+            if self._active_agent_id and self._active_agent_id in self.agent_widgets:
+                self.agent_widgets[self._active_agent_id].toggle_task_plan()
 
         def action_show_help(self) -> None:
             """Show help modal (Ctrl+/ binding)."""
@@ -5276,7 +5618,9 @@ Type your question and press Enter to ask the agents.
                     )
 
                     # Add tool card to timeline and mark as success immediately
-                    timeline.add_tool(tool_data)
+                    # Phase 12: Pass round_number for CSS visibility
+                    current_round = panel._current_round
+                    timeline.add_tool(tool_data, round_number=current_round)
                     tool_data.status = "success"
                     timeline.update_tool(tool_id, tool_data)
 
@@ -5292,15 +5636,15 @@ Type your question and press Enter to ask the agents.
 
                         if target_label:
                             # Convert from "agent1.1" format to "A1.1" format
-                            target_short = target_label.replace("agent", "A")
+                            target_label.replace("agent", "A")
                         else:
                             # Fallback to agent number if label not available
                             target_num = tracker._get_agent_number(voted_for)
-                            target_short = f"A{target_num}" if target_num else voted_for
+                            f"A{target_num}" if target_num else voted_for
 
-                        # Simple format: just show what was voted for
-                        sep_label = f"🗳️ VOTED → {target_short}"
-                        timeline.add_separator(sep_label)
+                        # NOTE: Vote separator banner disabled - clutters UI
+                        # sep_label = f"🗳️ VOTED → {target_short}"
+                        # timeline.add_separator(sep_label, round_number=current_round)
                 except Exception:
                     pass  # Silently ignore if panel not found
 
@@ -5397,17 +5741,16 @@ Type your question and press Enter to ask the agents.
                     )
 
                     # Add tool card directly to timeline
-                    timeline.add_tool(tool_data)
+                    # Phase 12: Pass round_number for CSS visibility
+                    timeline.add_tool(tool_data, round_number=panel._current_round)
                     # Mark as success immediately
                     tool_data.status = "success"
                     timeline.update_tool(tool_id, tool_data)
 
-                    # Add a restart separator AFTER the answer card
-                    # new_answer terminates a round, so separator marks end of this attempt
-                    sep_label = f"⚡ RESTART — ROUND {answer_count} COMPLETE"
-                    timeline.add_separator(sep_label)
+                    # Phase 12: No inline separator - view dropdown handles round navigation
+                    # The round will change when orchestrator calls _add_restart_content
 
-                    # Reset per-round state (badges) now that round is complete
+                    # Reset per-round state (badges) now that answer is submitted
                     # The background shells will be killed by orchestrator when new round starts
                     panel._reset_round_state()
                 except Exception as e:
@@ -5462,6 +5805,14 @@ Type your question and press Enter to ask the agents.
             if agent_id in self.agent_widgets:
                 panel = self.agent_widgets[agent_id]
                 panel.update_context_display(context_sources)
+
+                # If this is a new round for this panel, start the new round
+                if round_num > panel._current_round:
+                    panel.start_new_round(round_num, is_context_reset=False)
+
+            # Update status ribbon with round number
+            if self._status_ribbon:
+                self._status_ribbon.set_round(agent_id, round_num)
 
         def _celebrate_winner(self, winner_id: str, answer_preview: str) -> None:
             """Display prominent winner celebration effects.
@@ -5531,6 +5882,17 @@ Type your question and press Enter to ask the agents.
                     if hasattr(self, "_execution_status_timer") and self._execution_status_timer:
                         self._execution_status_timer.stop()
                         self._execution_status_timer = None
+
+                    # If there's queued input that wasn't injected, submit it as a new turn
+                    if self._queued_human_input:
+                        pending_input = self._queued_human_input
+                        self._clear_queued_input()
+                        # Clear hook's pending input too
+                        if self._human_input_hook:
+                            self._human_input_hook.clear_pending_input()
+                        tui_log(f"[HumanInput] Turn ended with queued input, submitting as new turn: {pending_input[:50]}...")
+                        # Submit as new question (use set_timer to avoid recursion issues)
+                        self.set_timer(0.1, lambda: self._submit_question(pending_input))
                 else:
                     # Executing (initial_answer, enforcement, coordinating) - show status
                     tui_log(f"  Phase '{phase}' -> adding execution-mode class")
@@ -5639,7 +6001,7 @@ Type your question and press Enter to ask the agents.
                 pass
 
         def _show_cancelled_status(self) -> None:
-            """Stop execution status updates and show cancelled state."""
+            """Stop execution status updates and show cancelled state with visual feedback."""
             try:
                 # Stop the execution status timer
                 if hasattr(self, "_execution_status_timer") and self._execution_status_timer:
@@ -5650,6 +6012,9 @@ Type your question and press Enter to ask the agents.
                 if hasattr(self, "_status_bar") and self._status_bar:
                     for agent_id in self._status_bar._agent_order:
                         self._status_bar.set_agent_activity(agent_id, "idle")
+
+                # Stop all pulsing animations
+                self._stop_all_pulses()
 
                 # Update execution status to show cancelled
                 if hasattr(self, "_execution_status"):
@@ -5667,8 +6032,103 @@ Type your question and press Enter to ask the agents.
                                 elapsed_text = f"  |  ⏱ {secs}s"
 
                     self._execution_status.update(f"❌ Cancelled{elapsed_text}")
+
+                # Add visual state change - red tint on main container
+                try:
+                    main = self.query_one("#main_container")
+                    main.add_class("cancelled-state")
+
+                    # Show notification
+                    self.notify("Execution cancelled", severity="warning", timeout=3)
+
+                    # Auto-dismiss the cancelled state after 3 seconds
+                    def remove_cancelled_state():
+                        try:
+                            main.remove_class("cancelled-state")
+                        except Exception:
+                            pass
+
+                    self.set_timer(3.0, remove_cancelled_state)
+                except Exception:
+                    pass
             except Exception:
                 pass
+
+        # =====================================================================
+        # Agent Pulsing Animation
+        # =====================================================================
+
+        _PULSE_FRAMES = ["pulse-bright", "pulse-bright", "pulse-normal", "pulse-normal"]
+
+        def _start_agent_pulse(self, agent_id: str) -> None:
+            """Start pulsing animation for an active agent."""
+            from massgen.logger_config import logger
+
+            logger.info(f"[PULSE] _start_agent_pulse called for {agent_id}")
+
+            if agent_id in self._pulsing_agents:
+                logger.info(f"[PULSE] {agent_id} already pulsing, skipping")
+                return  # Already pulsing
+
+            self._pulsing_agents.add(agent_id)
+            logger.info(f"[PULSE] Added {agent_id} to pulsing_agents: {self._pulsing_agents}")
+
+            # Start the timer if not already running
+            if not self._pulse_timer:
+                self._pulse_frame = 0
+                self._pulse_timer = self.set_interval(0.25, self._animate_agent_pulse)
+                logger.info("[PULSE] Started pulse timer")
+
+        def _stop_agent_pulse(self, agent_id: str) -> None:
+            """Stop pulsing animation for an agent."""
+            if agent_id not in self._pulsing_agents:
+                return
+
+            self._pulsing_agents.discard(agent_id)
+
+            # Remove pulse classes from the panel
+            try:
+                panel = self.agent_widgets.get(agent_id)
+                if panel:
+                    panel.remove_class("pulse-bright", "pulse-normal")
+            except Exception:
+                pass
+
+            # Stop the timer if no agents are pulsing
+            if not self._pulsing_agents and self._pulse_timer:
+                self._pulse_timer.stop()
+                self._pulse_timer = None
+
+        def _stop_all_pulses(self) -> None:
+            """Stop all agent pulsing animations."""
+            for agent_id in list(self._pulsing_agents):
+                self._stop_agent_pulse(agent_id)
+
+        def _animate_agent_pulse(self) -> None:
+            """Animate the pulsing effect on active agent panels."""
+            from massgen.logger_config import logger
+
+            if not self._pulsing_agents:
+                return
+
+            # Advance frame
+            self._pulse_frame = (self._pulse_frame + 1) % len(self._PULSE_FRAMES)
+            frame_class = self._PULSE_FRAMES[self._pulse_frame]
+            prev_frame_class = self._PULSE_FRAMES[(self._pulse_frame - 1) % len(self._PULSE_FRAMES)]
+
+            for agent_id in self._pulsing_agents:
+                try:
+                    panel = self.agent_widgets.get(agent_id)
+                    if panel:
+                        # Remove previous frame class, add current
+                        if prev_frame_class != frame_class:
+                            panel.remove_class(prev_frame_class)
+                        panel.add_class(frame_class)
+                        logger.debug(f"[PULSE] Applied {frame_class} to {agent_id}, classes={panel.classes}")
+                    else:
+                        logger.warning(f"[PULSE] Panel not found for {agent_id}, available: {list(self.agent_widgets.keys())}")
+                except Exception as e:
+                    logger.error(f"[PULSE] Error animating {agent_id}: {e}")
 
         def _handle_agent_shortcuts(self, event: events.Key) -> bool:
             """Handle agent shortcuts. Returns True if event was handled.
@@ -5858,8 +6318,8 @@ Type your question and press Enter to ask the agents.
             self._show_modal_async(CostBreakdownModal(self.coordination_display))
 
         def _show_workspace_files_modal(self):
-            """Display workspace files in a modal."""
-            self._show_modal_async(WorkspaceFilesModal(self.coordination_display, self))
+            """Display workspace files in a modal (uses WorkspaceBrowserModal)."""
+            self._show_workspace_browser()
 
         def _show_context_modal(self):
             """Display context paths modal."""
@@ -5956,7 +6416,7 @@ Type your question and press Enter to ask the agents.
 
         def compose(self) -> ComposeResult:
             yield Label(self.MASSGEN_LOGO, id="welcome_logo")
-            yield Label("🤖 Multi-Agent Collaboration System", id="welcome_tagline")
+            yield Label("Multi-Agent Collaboration System", id="welcome_tagline")
             # Show agent list
             if self.agents_info:
                 agents_list = "  •  ".join(self.agents_info)
@@ -5968,7 +6428,7 @@ Type your question and press Enter to ask the agents.
             cwd = Path.cwd()
             cwd_short = f"~/{cwd.name}" if len(str(cwd)) > 30 else str(cwd)
             # Use fixed-width format: ○/● indicator + consistent text
-            yield Static(f"[dim]○ Ctrl+P: File access to {cwd_short}  •  @ for other paths[/]", id="cwd_hint")
+            yield Static(f"[dim]Ctrl+P file access to {cwd_short}  •  @ for other paths[/]", id="cwd_hint")
             yield Static("[dim]Ctrl+G help  •  Ctrl+C quit[/]", id="shortcuts_hint")
 
     class HeaderWidget(Static):
@@ -5994,14 +6454,14 @@ Type your question and press Enter to ask the agents.
         def _build_status_line(self) -> str:
             """Build compact status line with optional question preview."""
             num_agents = len(self.agents_info)
-            base = f"🤖 MassGen | {num_agents} agents | Turn {self.turn}"
+            base = f"MassGen • {num_agents} agents • Turn {self.turn}"
 
             # Add truncated question if available
             if self.question and self.question != "Welcome! Type your question below...":
                 # Truncate question to fit in header (max ~100 chars for better visibility)
                 q = self.question.replace("\n", " ").strip()
                 q = q[:100] + "..." if len(q) > 100 else q
-                return f"{base} | 💬 {q}"
+                return f"{base} • {q}"
             return base
 
         def update_question(self, question: str) -> None:
@@ -6022,7 +6482,7 @@ Type your question and press Enter to ask the agents.
             max_attempts: int,
         ):
             """Show restart banner."""
-            banner_text = f"⚠️ RESTART ({attempt}/{max_attempts}): {reason}"
+            banner_text = f"RESTART ({attempt}/{max_attempts}): {reason}"
             self.update(banner_text)
 
         def show_restart_context(self, reason: str, instructions: str):
@@ -6101,27 +6561,21 @@ Type your question and press Enter to ask the agents.
             self._task_plan_toggle_id = f"task_plan_toggle_{self._dom_safe_id}"
             self._task_plan_display_id = f"task_plan_display_{self._dom_safe_id}"
 
+            # Phase 12: CSS-based round navigation (no storage needed - widgets stay in DOM)
+            self._current_round: int = 1  # which round content is being received
+            self._current_view: str = "round"  # "round" or "final_answer"
+            self._viewed_round: int = 1  # which round is currently displayed
+
+            # Final answer storage
+            self._final_answer_content: Optional[str] = None
+            self._final_answer_metadata: Optional[Dict[str, Any]] = None
+
         def compose(self) -> ComposeResult:
             with Vertical():
-                # Header row with main info on left, clickable badges on right
-                with Horizontal(id=self._header_dom_id, classes="agent-header-row"):
-                    yield Label(
-                        self._header_text_left(),
-                        id=f"{self._header_dom_id}_left",
-                        classes="agent-header-left",
-                    )
-                    # Background tasks badge (clickable, hidden when no bg tasks)
-                    yield Label(
-                        self._format_bg_badge(),
-                        id=f"{self._header_dom_id}_bg",
-                        classes="agent-header-badge header-badge-bg hidden",
-                    )
-                    # Task plan badge (clickable, hidden when no task plan)
-                    yield Label(
-                        self._format_tasks_badge(),
-                        id=f"{self._header_dom_id}_tasks",
-                        classes="agent-header-badge header-badge-tasks hidden",
-                    )
+                # NOTE: Agent header row removed in Phase 8c/10 - redundant with tab bar + status ribbon
+                # Agent ID shown in tabs, round number shown in ribbon
+                # Background tasks can be viewed via tool cards in timeline
+
                 # Context sources label (hidden by default, shown when context is injected)
                 yield Label(
                     "",
@@ -6140,32 +6594,31 @@ Type your question and press Enter to ask the agents.
                     yield Label("👤 Not in use", classes="not-in-use-label")
                     yield Label("Single-agent mode active", classes="not-in-use-sublabel")
 
+                # Pinned task plan - stays at top, collapsible (hidden until task plan created)
+                self._pinned_task_plan_id = f"pinned_task_plan_{self._dom_safe_id}"
+                yield Container(id=self._pinned_task_plan_id, classes="pinned-task-plan hidden")
+
                 # Chronological timeline layout - tools and text interleaved
                 yield TimelineSection(id=self._timeline_section_id)
+
+                # Final Answer view (hidden by default, shown via view dropdown)
+                from .textual_widgets import FinalAnswerView
+
+                self._final_answer_view_id = f"final_answer_view_{self._dom_safe_id}"
+                yield FinalAnswerView(
+                    agent_id=self.agent_id,
+                    id=self._final_answer_view_id,
+                )
+
                 yield CompletionFooter(id=self._completion_footer_id)
 
                 # Legacy RichLog kept for fallback/compatibility
                 yield self.content_log
                 yield self.current_line_label
 
-        def on_click(self, event: events.Click) -> None:
-            """Handle click on header badges to open respective modals."""
-            widget = getattr(event, "widget", None)
-            if widget and hasattr(widget, "id"):
-                bg_badge_id = f"{self._header_dom_id}_bg"
-                tasks_badge_id = f"{self._header_dom_id}_tasks"
-
-                if widget.id == bg_badge_id:
-                    # Clicked on background tasks badge
-                    bg_tasks = self._get_background_tools()
-                    if bg_tasks:
-                        self.app.push_screen(BackgroundTasksModal(bg_tasks, self.agent_id))
-                        event.stop()
-                elif widget.id == tasks_badge_id:
-                    # Clicked on task plan badge
-                    if self._active_task_plan_tasks:
-                        self.post_message(TaskPlanCard.OpenModal(self._active_task_plan_tasks))
-                        event.stop()
+        # NOTE: on_click handler removed in Phase 8c/10 - header badges no longer exist
+        # Background tasks can be viewed via tool cards in timeline
+        # Task plan is shown in collapsible TaskPlanCard
 
         def _hide_loading(self):
             """Hide the loading indicator when content arrives."""
@@ -6200,6 +6653,14 @@ Type your question and press Enter to ask the agents.
         def on_mount(self) -> None:
             """Start the loading spinner when the panel is mounted."""
             self._start_loading_spinner("Ready")
+
+            # Add initial "Round 1" banner
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                timeline.add_separator("Round 1", round_number=1)
+                logger.debug(f"AgentPanel.on_mount: Added Round 1 banner to timeline {self._timeline_section_id}")
+            except Exception as e:
+                logger.debug(f"AgentPanel.on_mount: Failed to add Round 1 banner: {e}")
 
         def set_in_use(self, in_use: bool) -> None:
             """Set whether this panel is in use (for single-agent mode).
@@ -6269,83 +6730,101 @@ Type your question and press Enter to ask the agents.
 
             # Debug: log task statuses
             if tasks:
-                completed = sum(1 for t in tasks if t.get("status") == "completed")
+                completed = sum(1 for t in tasks if t.get("status") in ("completed", "verified"))
                 verified = sum(1 for t in tasks if t.get("status") == "verified")
                 in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
                 tui_log(f"update_task_plan: {completed} completed, {verified} verified, {in_progress} in_progress (of {len(tasks)} total)")
 
-            # Refresh the header to show task plan info
-            self._refresh_header()
-
         def _refresh_header(self) -> None:
-            """Refresh the header display (used when task plan or bg tasks change)."""
-            try:
-                left_label = self.query_one(f"#{self._header_dom_id}_left", Label)
-                left_label.update(self._header_text_left())
-            except Exception:
-                pass
+            """Refresh the header display.
 
-            # Update background tasks badge
-            try:
-                bg_label = self.query_one(f"#{self._header_dom_id}_bg", Label)
-                bg_text = self._format_bg_badge()
-                bg_label.update(bg_text)
-                if bg_text:
-                    bg_label.remove_class("hidden")
-                else:
-                    bg_label.add_class("hidden")
-            except Exception:
-                pass
-
-            # Update task plan badge
-            try:
-                tasks_label = self.query_one(f"#{self._header_dom_id}_tasks", Label)
-                tasks_text = self._format_tasks_badge()
-                tasks_label.update(tasks_text)
-                if tasks_text:
-                    tasks_label.remove_class("hidden")
-                else:
-                    tasks_label.add_class("hidden")
-            except Exception:
-                pass
+            NOTE: Agent header row removed in Phase 8c/10 - now a no-op.
+            Round number shown in status ribbon, agent ID in tabs.
+            Background tasks visible via tool cards in timeline.
+            """
+            # Header row was removed - ribbon and tabs show this info now
 
         def toggle_task_plan(self) -> None:
-            """Toggle the visibility of the task plan display (for future use with keybindings)."""
+            """Toggle the visibility of the pinned task plan."""
             if not self._active_task_plan_tasks:
                 return
 
             self._task_plan_visible = not self._task_plan_visible
 
-            # Show or hide the task plan in the timeline
             try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-
+                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
                 if self._task_plan_visible:
-                    # Add a TaskPlanCard to the beginning of timeline
-                    from massgen.frontend.displays.textual_widgets import TaskPlanCard
-
-                    # Check if a toggle card already exists
-                    existing = timeline.query(f"#{self._task_plan_display_id}")
-                    if existing:
-                        for card in existing:
-                            card.remove()
-
-                    card = TaskPlanCard(
-                        tasks=self._active_task_plan_tasks,
-                        operation="get",  # Use "get" to show full view
-                        id=self._task_plan_display_id,
-                    )
-                    card.expanded = True  # Start expanded
-                    timeline.mount(card, before=0)
+                    pinned_container.remove_class("collapsed")
                 else:
-                    # Remove the toggle card
-                    try:
-                        card = timeline.query_one(f"#{self._task_plan_display_id}")
-                        card.remove()
-                    except Exception:
-                        pass
+                    pinned_container.add_class("collapsed")
             except Exception:
                 pass
+
+        def _update_pinned_task_plan(
+            self,
+            tasks: List[Dict[str, Any]],
+            focused_task_id: Optional[str] = None,
+            operation: str = "update",
+            show_notification: bool = True,
+        ) -> None:
+            """Update the pinned task plan widget.
+
+            Args:
+                tasks: List of task dictionaries
+                focused_task_id: Task to highlight
+                operation: Type of operation
+                show_notification: Whether to show update notification in timeline
+            """
+            from massgen.frontend.displays.textual_widgets import TaskPlanCard
+
+            try:
+                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
+
+                # Find existing card or create new one
+                existing_card = None
+                try:
+                    existing_card = pinned_container.query_one(TaskPlanCard)
+                except Exception:
+                    pass
+
+                if existing_card:
+                    # Update existing card
+                    existing_card.update_tasks(tasks, focused_task_id=focused_task_id, operation=operation)
+                    # Brief highlight animation
+                    existing_card.add_class("updated")
+                    self.set_timer(0.5, lambda: existing_card.remove_class("updated"))
+                else:
+                    # Create new card
+                    card = TaskPlanCard(
+                        tasks=tasks,
+                        focused_task_id=focused_task_id,
+                        operation=operation,
+                        id=f"pinned_card_{self._dom_safe_id}",
+                    )
+                    pinned_container.mount(card)
+
+                # Show the pinned area
+                pinned_container.remove_class("hidden")
+                self._task_plan_visible = True
+
+                # Add a brief notification to timeline for updates (not creates)
+                if show_notification and operation != "create":
+                    try:
+                        timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                        completed = sum(1 for t in tasks if t.get("status") == "completed")
+                        total = len(tasks)
+                        # Phase 12: Pass round_number for CSS visibility
+                        timeline.add_text(
+                            f"📋 Task updated ({completed}/{total} done)",
+                            style="dim italic",
+                            text_class="status",
+                            round_number=self._current_round,
+                        )
+                    except Exception:
+                        pass
+
+            except Exception as e:
+                tui_log(f"_update_pinned_task_plan error: {e}")
 
         def _make_full_width_bar(self, content: str, style: str) -> Text:
             """Create a full-width bar with background color spanning the entire display.
@@ -6559,33 +7038,26 @@ Type your question and press Enter to ask the agents.
             self.content_log.write(formatted)
 
         def show_restart_separator(self, attempt: int = 1, reason: str = ""):
-            """Show a highly visible restart separator in the TimelineSection."""
-            # Reset tool row count for fresh alternation after restart
+            """Handle restart - start new round with view-based navigation.
+
+            With Phase 12 view-based navigation, restarts create a new round that
+            users can switch to via the dropdown. This clears the timeline for fresh
+            content and updates the round tracking.
+            """
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG: show_restart_separator called! attempt={attempt}\n")
+
+            # Determine if this was a context reset
+            is_context_reset = "context" in reason.lower() or "reset" in reason.lower()
+
+            # Start the new round (clears timeline, updates ribbon, stores content)
+            self.start_new_round(attempt, is_context_reset)
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write("DEBUG: show_restart_separator done, called start_new_round\n")
+
+            # Reset per-attempt UI state
             self._tool_row_count = 0
             self._reasoning_header_shown = False
-
-            # Build banner text
-            banner_label = f"⚡ RESTART — ATTEMPT {attempt}"
-            if reason and reason != "New attempt":
-                short_reason = reason[:40] + "..." if len(reason) > 40 else reason
-                banner_label += f" — {short_reason}"
-
-            # Add to timeline using the RestartBanner widget
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                timeline.add_separator(banner_label)
-
-                # Clear the timeline for fresh content after restart
-                # (optional - comment out if you want to keep history)
-                # timeline.clear()
-
-                # Hide completion footer for new attempt
-                self._hide_completion_footer()
-            except Exception as e:
-                # Log error for debugging
-                import sys
-
-                print(f"[ERROR] show_restart_separator failed: {e}", file=sys.stderr)
 
         def add_content(self, content: str, content_type: str, tool_call_id: Optional[str] = None):
             """Add content to agent panel using section-based routing.
@@ -6639,7 +7111,9 @@ Type your question and press Enter to ask the agents.
                 self._presentation_shown = False
                 self._session_completed = False
                 self._tool_handler.reset()
-                self._clear_timeline()
+                # Phase 12: Don't clear timeline - CSS visibility handles round separation
+                # Just reset per-round state (task plans, bg tools badge)
+                self._reset_round_state()
 
             # Process through handler
             tool_data = self._tool_handler.process(normalized)
@@ -6647,6 +7121,7 @@ Type your question and press Enter to ask the agents.
             if not tool_data:
                 return
 
+            # Phase 12: No viewing_current check needed - CSS visibility handles it
             # Add or update tool card in TimelineSection (chronologically)
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
@@ -6668,10 +7143,13 @@ Type your question and press Enter to ask the agents.
                         self._show_subagent_card_from_args(tool_data, timeline)
                     elif not is_planning_tool:
                         # New tool started - add card to timeline (skip planning tools)
-                        timeline.add_tool(tool_data)
+                        # Phase 12: Pass round_number for CSS visibility
+                        timeline.add_tool(tool_data, round_number=self._current_round)
                 else:
-                    # Tool completed/failed - update existing card (if it exists)
+                    # Tool completed/failed - update the card in timeline
+                    # Phase 12: No storage needed - widgets stay in DOM with round tags
                     if not is_planning_tool and not is_subagent_tool:
+                        # Update tool card with result/error
                         timeline.update_tool(tool_data.tool_id, tool_data)
 
                     # Check if this is a Planning MCP tool and display TaskPlanCard
@@ -6704,12 +7182,14 @@ Type your question and press Enter to ask the agents.
             # Detect session completion for restart tracking
             if "completed" in normalized.cleaned_content.lower():
                 self._session_completed = True
-                self._show_completion_footer()
+                # NOTE: Completion footer disabled - clutters UI
+                # self._show_completion_footer()
 
             # Add status to timeline as a subtle line
+            # Phase 12: Pass round_number for CSS visibility
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                timeline.add_text(f"● {normalized.cleaned_content}", style="dim cyan", text_class="status")
+                timeline.add_text(f"● {normalized.cleaned_content}", style="dim cyan", text_class="status", round_number=self._current_round)
             except Exception:
                 # Fallback
                 status_bar = self._make_full_width_bar(f"  📊  {normalized.cleaned_content}", "bold yellow on #2d333b")
@@ -6736,12 +7216,14 @@ Type your question and press Enter to ask the agents.
             # Mark presentation shown for restart detection
             if "Providing answer" in normalized.original:
                 self._presentation_shown = True
-                self._show_completion_footer()
+                # NOTE: Completion footer disabled - clutters UI
+                # self._show_completion_footer()
 
             # Add to timeline with response styling
+            # Phase 12: Pass round_number for CSS visibility
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                timeline.add_text(normalized.cleaned_content, style="bold #4ec9b0", text_class="response")
+                timeline.add_text(normalized.cleaned_content, style="bold #4ec9b0", text_class="response", round_number=self._current_round)
             except Exception:
                 # Fallback
                 self.content_log.write(Text(f"🎤 {normalized.cleaned_content}", style="magenta"))
@@ -6750,34 +7232,30 @@ Type your question and press Enter to ask the agents.
             self.current_line_label.update(Text(""))
 
         def _add_restart_content(self, content: str):
-            """Handle restart separator."""
+            """Handle round transition - start a new round with view-based navigation.
+
+            With Phase 12 view-based navigation, rounds are separated by the dropdown
+            selector rather than inline banners. This method:
+            1. Parses the round number
+            2. Starts the new round (which clears the timeline)
+            3. Does NOT add inline separators (use dropdown to switch views)
+            """
             # Parse attempt number
             attempt = 1
-            reason = content
+            is_context_reset = "context" in content.lower() or "reset" in content.lower()
+
             if "attempt:" in content:
                 try:
                     parts = content.split("attempt:")
                     if len(parts) > 1:
                         attempt_part = parts[1].split()[0]
                         attempt = int(attempt_part)
-                        reason = content.replace(f"attempt:{attempt}", "").strip()
                 except (ValueError, IndexError):
                     pass
 
-            # Add to timeline as separator
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                label = f"⚡ RESTART — ATTEMPT {attempt}"
-                if reason and reason != "New attempt":
-                    short_reason = reason[:30] + "..." if len(reason) > 30 else reason
-                    label += f" — {short_reason}"
-                timeline.add_separator(label)
-
-                # Hide completion footer for new attempt
-                self._hide_completion_footer()
-            except Exception:
-                # Fallback to legacy method
-                self.show_restart_separator(attempt, reason)
+            # Start the new round (clears timeline, updates ribbon)
+            # No inline separator - view dropdown handles round navigation
+            self.start_new_round(attempt, is_context_reset)
 
             self._line_buffer = ""
             self.current_line_label.update(Text(""))
@@ -6785,8 +7263,9 @@ Type your question and press Enter to ask the agents.
         def _add_thinking_content(self, normalized, raw_type: str):
             """Route thinking/text content to TimelineSection.
 
-            Coordination content (voting, reasoning about other agents) is
-            routed to a collapsible ReasoningSection within the timeline.
+            Phase 15.5: Only display thinking/reasoning content, skip plain text.
+            Tool cards (answer, vote, etc.) already show meaningful output,
+            so raw text is redundant and clutters the UI.
             """
             # Process through handler for extra filtering
             cleaned = self._thinking_handler.process(normalized)
@@ -6796,19 +7275,22 @@ Type your question and press Enter to ask the agents.
             # Check if this is coordination content
             is_coordination = getattr(normalized, "is_coordination", False)
 
+            # Phase 15.5: Only display thinking/reasoning content, skip plain text
+            if not is_coordination and raw_type != "thinking":
+                return  # Skip plain text content - tool cards show meaningful output
+
             # Add to timeline
+            # Phase 12: No storage needed - widgets stay in DOM with round tags
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
 
                 # Handle line buffering for streaming
+                # Capture current_round in closure for CSS visibility tagging
+                current_round = self._current_round
+
                 def write_line(line: str):
-                    if is_coordination:
-                        # Route to collapsible reasoning section
-                        timeline.add_reasoning(line)
-                    elif raw_type == "thinking":
-                        timeline.add_text(line, style="dim", text_class="thinking")
-                    else:
-                        timeline.add_text(line)
+                    # Phase 12: Pass round_number for CSS visibility
+                    timeline.add_text(line, style="dim italic", text_class="thinking-inline", round_number=current_round)
 
                 self._line_buffer = _process_line_buffer(
                     self._line_buffer,
@@ -6849,10 +7331,12 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 # Add as styled text with injection class
+                # Phase 12: Pass round_number for CSS visibility
                 timeline.add_text(
                     f"📥 Context Update: {preview}",
                     style="bold",
                     text_class="injection",
+                    round_number=self._current_round,
                 )
             except Exception:
                 # Fallback to legacy RichLog
@@ -6909,10 +7393,12 @@ Type your question and press Enter to ask the agents.
                 # Fallback: display as standalone text in timeline
                 preview = content[:100] + "..." if len(content) > 100 else content
                 preview = preview.replace("\n", " ")
+                # Phase 12: Pass round_number for CSS visibility
                 timeline.add_text(
                     f"💡 Reminder: {preview}",
                     style="bold",
                     text_class="reminder",
+                    round_number=self._current_round,
                 )
             except Exception:
                 # Fallback to legacy RichLog
@@ -7269,7 +7755,11 @@ Type your question and press Enter to ask the agents.
             tui_log(f"_check_and_display_subagent_card: added SubagentCard with {len(subagents)} subagents")
 
         def _check_and_display_task_plan(self, tool_data, timeline) -> None:
-            """Check if tool result is from Planning MCP and display TaskPlanCard.
+            """Check if tool result is from Planning MCP and display/update TaskPlanCard.
+
+            Instead of adding a new card each time, this method:
+            - Creates a single persistent TaskPlanCard on first create_task_plan
+            - Updates that same card in place for subsequent updates
 
             Planning MCP tools include:
             - create_task_plan
@@ -7353,19 +7843,17 @@ Type your question and press Enter to ask the agents.
                 tui_log("_check_and_display_task_plan: no tasks found in result")
                 return
 
-            tui_log(f"_check_and_display_task_plan: found {len(tasks)} tasks, adding TaskPlanCard")
-            # Create and add TaskPlanCard to timeline
-            from massgen.frontend.displays.textual_widgets import TaskPlanCard
+            tui_log(f"_check_and_display_task_plan: found {len(tasks)} tasks, updating pinned area")
 
-            card = TaskPlanCard(
+            # Update the pinned task plan area (shows notification for updates)
+            self._update_pinned_task_plan(
                 tasks=tasks,
                 focused_task_id=focused_task_id,
                 operation=operation,
-                id=f"task_plan_{tool_data.tool_id}",
+                show_notification=(operation != "create"),  # Only show notification for updates
             )
-            timeline.add_widget(card)
 
-            # Update the agent panel's task plan tracking for toggle feature
+            # Update the agent panel's task plan tracking
             self.update_task_plan(tasks, plan_id=tool_data.tool_id, operation=operation)
 
         def _clear_timeline(self):
@@ -7381,9 +7869,19 @@ Type your question and press Enter to ask the agents.
 
         def _reset_round_state(self):
             """Reset per-round state (task plan, background tools indicator, etc.)."""
-            # Clear task plan
+            # Clear task plan tracking
             self._active_task_plan_id = None
             self._active_task_plan_tasks = None
+
+            # Clear pinned task plan UI container
+            try:
+                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
+                pinned_container.remove_children()
+                pinned_container.add_class("hidden")
+                pinned_container.remove_class("collapsed")
+                self._task_plan_visible = True  # Reset visibility state for next round
+            except Exception:
+                pass
 
             # Clear tools tracking (resets bg count) but keep visual timeline
             try:
@@ -7419,6 +7917,181 @@ Type your question and press Enter to ask the agents.
                 footer.hide()
             except Exception:
                 pass
+
+        # ========================================================================
+        # Phase 12: CSS-based round navigation
+        # ========================================================================
+        # Storage methods removed - widgets stay in DOM with round-N tags
+
+        def start_new_round(self, round_number: int, is_context_reset: bool = False) -> None:
+            """Start a new round - update tracking and switch visibility.
+
+            Phase 12: With CSS-based visibility, all round content stays in the DOM.
+            We switch visibility to show the new round and hide old round content.
+
+            Args:
+                round_number: The new round number
+                is_context_reset: Whether this round started with a context reset
+            """
+            # Update round tracking
+            self._current_round = round_number
+            self._viewed_round = round_number  # Auto-follow to new round
+            self._current_view = "round"
+
+            # Switch timeline visibility to new round (hides old round content)
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                timeline.switch_to_round(round_number)
+
+                # Add "Round X" banner at the top of each new round
+                if round_number > 1:
+                    timeline.add_separator(f"Round {round_number}", round_number=round_number)
+            except Exception:
+                pass
+
+            # Reset per-round UI state
+            self._hide_completion_footer()
+            self._tool_handler.reset()
+            self._reasoning_header_shown = False
+
+            # Notify the status ribbon about the new round
+            self._update_ribbon_round(round_number, is_context_reset)
+
+        def _update_ribbon_round(self, round_number: int, is_context_reset: bool = False) -> None:
+            """Update the status ribbon with the current round info."""
+            try:
+                # Find the ribbon in the parent hierarchy
+                app = self.app
+                if hasattr(app, "_status_ribbon") and app._status_ribbon:
+                    app._status_ribbon.set_round(self.agent_id, round_number, is_context_reset)
+            except Exception:
+                pass
+
+        def switch_to_round(self, round_number: int) -> None:
+            """Switch view to a specific round using CSS visibility.
+
+            Phase 12: CSS-based visibility switching. All round content stays in DOM,
+            we just toggle the 'hidden' class based on round tags.
+
+            Args:
+                round_number: The round number to display
+            """
+            self._viewed_round = round_number
+            self._current_view = "round"
+
+            # Use TimelineSection's CSS-based switching
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                timeline.switch_to_round(round_number)
+            except Exception:
+                pass
+
+            # Update ribbon to show we're viewing this round
+            try:
+                app = self.app
+                if hasattr(app, "_status_ribbon") and app._status_ribbon:
+                    app._status_ribbon.set_viewed_round(self.agent_id, round_number)
+            except Exception:
+                pass
+
+        def switch_to_final_answer(self) -> None:
+            """Switch the view to display the final answer."""
+            from .textual_widgets import FinalAnswerView
+
+            self._current_view = "final_answer"
+
+            # Hide timeline, show final answer view
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                timeline.add_class("hidden")
+            except Exception:
+                pass
+
+            # Show the final answer view and update its content
+            try:
+                final_view = self.query_one(f"#{self._final_answer_view_id}", FinalAnswerView)
+                if self._final_answer_content:
+                    final_view.set_content(self._final_answer_content)
+                if self._final_answer_metadata:
+                    final_view.set_metadata(self._final_answer_metadata)
+                final_view.show()
+            except Exception as e:
+                tui_log(f"switch_to_final_answer error showing view: {e}")
+
+            # Update ribbon
+            try:
+                app = self.app
+                if hasattr(app, "_status_ribbon") and app._status_ribbon:
+                    app._status_ribbon.set_viewing_final_answer(self.agent_id, True)
+            except Exception:
+                pass
+
+        def switch_from_final_answer(self) -> None:
+            """Switch back from final answer view to round view."""
+            from .textual_widgets import FinalAnswerView
+
+            self._current_view = "round"
+
+            # Show timeline, hide final answer view
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                timeline.remove_class("hidden")
+            except Exception:
+                pass
+
+            try:
+                final_view = self.query_one(f"#{self._final_answer_view_id}", FinalAnswerView)
+                final_view.hide()
+            except Exception:
+                pass
+
+            # Update ribbon
+            try:
+                app = self.app
+                if hasattr(app, "_status_ribbon") and app._status_ribbon:
+                    app._status_ribbon.set_viewing_final_answer(self.agent_id, False)
+            except Exception:
+                pass
+
+        def set_final_answer(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+            """Store the final answer content for this agent.
+
+            Args:
+                content: The final answer text
+                metadata: Optional metadata (votes, presenting agent, rounds, etc.)
+            """
+            self._final_answer_content = content
+            self._final_answer_metadata = metadata or {}
+
+            # Mark final answer as available in the ribbon
+            try:
+                app = self.app
+                if hasattr(app, "_status_ribbon") and app._status_ribbon:
+                    app._status_ribbon.set_final_answer_available(self.agent_id, True)
+            except Exception:
+                pass
+
+        def get_current_round(self) -> int:
+            """Get the current round number being received."""
+            return self._current_round
+
+        def get_viewed_round(self) -> int:
+            """Get the round number currently being viewed."""
+            return self._viewed_round
+
+        def get_view_state(self) -> Tuple[str, Optional[int]]:
+            """Get the current view state.
+
+            Returns:
+                Tuple of (view_type, round_number) where view_type is "round" or "final_answer"
+            """
+            if self._current_view == "final_answer":
+                return ("final_answer", None)
+            return ("round", self._viewed_round)
+
+        # ========================================================================
+        # End Phase 12.2
+        # ========================================================================
 
         def update_status(self, status: str):
             """Update agent status."""
@@ -7552,8 +8225,11 @@ Type your question and press Enter to ask the agents.
             return ""
 
         def _format_tasks_badge(self) -> str:
-            """Format task plan badge text."""
-            return self._format_task_plan_header() or ""
+            """Format task plan badge text.
+
+            Note: Disabled - task info now shown in collapsible TaskPlanCard.
+            """
+            return ""
 
         def _header_text_right(self) -> str:
             """Compose right side of header (for compatibility)."""
@@ -7718,2483 +8394,18 @@ Type your question and press Enter to ask the agents.
 
             return safe
 
-    class KeyboardShortcutsModal(BaseModal):
-        """Modal showing commands available during coordination."""
-
-        def compose(self) -> ComposeResult:
-            from textual.widgets import Static
-
-            with Container(id="shortcuts_modal_container"):
-                yield Label("📖  Commands & Shortcuts", id="shortcuts_modal_header")
-                yield Label("Press Esc to unfocus input, then use single keys", id="shortcuts_hint")
-                # Two-column layout for wide terminals
-                with Horizontal(id="shortcuts_columns"):
-                    # Left column - Quick keys and navigation
-                    with Container(id="shortcuts_col_left", classes="shortcuts-column"):
-                        yield Static(
-                            "[bold cyan]Quick Keys[/] [dim](when not typing)[/]\n"
-                            "  [yellow]q[/]        Cancel/stop execution\n"
-                            "  [yellow]w[/]        Workspace browser\n"
-                            "  [yellow]v[/]        Vote results\n"
-                            "  [yellow]a[/]        Answer browser\n"
-                            "  [yellow]t[/]        Timeline\n"
-                            "  [yellow]h[/]        Conversation history\n"
-                            "  [yellow]c[/]        Cost breakdown\n"
-                            "  [yellow]m[/]        MCP status / metrics\n"
-                            "  [yellow]s[/]        System status\n"
-                            "  [yellow]o[/]        Agent output (full)\n"
-                            "  [yellow]?[/]        This help\n"
-                            "  [yellow]1-9[/]      Switch to agent N\n"
-                            "\n"
-                            "[bold cyan]Focus[/]\n"
-                            "  [yellow]Esc[/]      Unfocus input\n"
-                            "  [yellow]i[/] or [yellow]/[/]  Focus input",
-                            markup=True,
-                        )
-                    # Right column - Input and commands
-                    with Container(id="shortcuts_col_right", classes="shortcuts-column"):
-                        yield Static(
-                            "[bold cyan]Input[/]\n"
-                            "  [yellow]Enter[/]       Submit question\n"
-                            "  [yellow]Shift+Enter[/] New line\n"
-                            "  [yellow]Ctrl+P[/]      File access (off→read→write)\n"
-                            "  [yellow]Tab[/]         Next agent\n"
-                            "  [yellow]Shift+Tab[/]   Previous agent\n"
-                            "\n"
-                            "[bold cyan]Quit[/]\n"
-                            "  [yellow]Ctrl+C[/]      Exit MassGen\n"
-                            "  [yellow]q[/]           Cancel current turn\n"
-                            "\n"
-                            "[bold cyan]Slash Commands[/]\n"
-                            "  [yellow]/history[/]    Conversation history\n"
-                            "  [yellow]/context[/]    Manage context paths\n"
-                            "  [yellow]/vim[/]        Toggle vim mode\n"
-                            "\n"
-                            "[bold cyan]Tips[/]\n"
-                            "  [dim]Click tool cards for details[/]\n"
-                            "  [dim]Type /help for more commands[/]",
-                            markup=True,
-                        )
-                yield Button("Close (ESC)", id="close_shortcuts_button")
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            if event.button.id == "close_shortcuts_button":
-                self.dismiss()
-
-        def key_escape(self) -> None:
-            self.dismiss()
-
-    class MCPStatusModal(BaseModal):
-        """Modal showing MCP server connection status and available tools."""
-
-        def __init__(self, mcp_status: Dict[str, Any]):
-            super().__init__()
-            self.mcp_status = mcp_status
-
-        def compose(self) -> ComposeResult:
-            from textual.widgets import Static
-
-            with Container(id="mcp_status_container"):
-                yield Label("🔌 MCP Server Status", id="mcp_status_header")
-                total_servers = len(self.mcp_status.get("servers", []))
-                total_tools = self.mcp_status.get("total_tools", 0)
-                yield Label(
-                    f"{total_servers} server(s) connected • {total_tools} tools available",
-                    id="mcp_status_summary",
-                )
-                with VerticalScroll(id="mcp_servers_list"):
-                    servers = self.mcp_status.get("servers", [])
-                    if servers:
-                        for server in servers:
-                            status_icon = "✅" if server.get("connected", False) else "❌"
-                            name = server.get("name", "Unknown")
-                            tool_count = len(server.get("tools", []))
-                            state = server.get("state", "unknown")
-                            tools_preview = ", ".join(server.get("tools", [])[:5])
-                            if len(server.get("tools", [])) > 5:
-                                tools_preview += "..."
-
-                            yield Static(
-                                f"{status_icon} [bold]{name}[/]\n" f"   Tools: {tool_count} available\n" f"   State: {state}\n" f"   [dim]{tools_preview}[/]",
-                                classes="mcp-server-item",
-                                markup=True,
-                            )
-                    else:
-                        yield Static(
-                            "[dim]No MCP servers connected[/]",
-                            markup=True,
-                        )
-                yield Button("Close (ESC)", id="close_mcp_button")
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            if event.button.id == "close_mcp_button":
-                self.dismiss()
-
-        def key_escape(self) -> None:
-            self.dismiss()
-
-    class AnswerBrowserModal(BaseModal):
-        """Modal for browsing all answers with filtering and details."""
-
-        def __init__(
-            self,
-            answers: List[Dict[str, Any]],
-            votes: List[Dict[str, Any]],
-            agent_ids: List[str],
-            winner_agent_id: Optional[str] = None,
-        ):
-            super().__init__()
-            self.answers = answers
-            self.votes = votes
-            self.agent_ids = agent_ids
-            self.winner_agent_id = winner_agent_id
-            self._current_filter: Optional[str] = None  # None = all agents
-            self._selected_answer_idx: int = 0  # Start with first (most recent after sorting)
-            self._filtered_answers: List[Dict[str, Any]] = []
-            self._selected_content: str = ""  # Store selected answer content for copy
-            self._render_count: int = 0  # Counter for unique widget IDs to avoid DuplicateIds
-
-        def compose(self) -> ComposeResult:
-            with Container(id="answer_browser_container"):
-                yield Label("📋 Answer Browser", id="answer_browser_header")
-
-                # Summary stats
-                total_answers = len(self.answers)
-                total_votes = len(self.votes)
-                yield Label(
-                    f"{total_answers} answers • {total_votes} votes",
-                    id="answer_browser_summary",
-                )
-
-                # Agent filter
-                with Horizontal(id="answer_filter_row"):
-                    yield Label("Filter: ", id="filter_label")
-                    options = [("All Agents", None)] + [(aid, aid) for aid in self.agent_ids]
-                    yield Select(options, id="agent_filter", value=None)
-
-                # Main content area with answer list and detail panel
-                with Horizontal(id="answer_browser_content"):
-                    # Answer list (left side - 40%)
-                    yield VerticalScroll(id="answer_list")
-
-                    # Answer detail panel (right side - 60%)
-                    with Container(id="answer_detail_panel"):
-                        yield Label("📄 Answer Details", id="answer_detail_header")
-                        yield ScrollableContainer(id="answer_detail_scroll")
-                        with Horizontal(id="answer_detail_buttons"):
-                            yield Button("📋 Copy", id="copy_answer_button", classes="action-primary")
-                            yield Button("💾 Save to File", id="save_answer_button")
-
-                # Close button
-                with Horizontal(id="answer_browser_buttons"):
-                    yield Button("Close (ESC)", id="close_browser_button")
-
-        def on_mount(self) -> None:
-            """Called when modal is mounted - populate the answer list."""
-            self._render_answers()
-            # Auto-select most recent answer (now first in sorted list)
-            if self._filtered_answers:
-                self._show_answer_detail(0)
-
-        def _render_answers(self) -> None:
-            """Render the answer list based on current filter."""
-            from textual.widgets import Static
-
-            # Increment render counter to ensure unique IDs
-            self._render_count += 1
-
-            answer_list = self.query_one("#answer_list", VerticalScroll)
-            answer_list.remove_children()
-
-            self._filtered_answers = self.answers.copy()
-            if self._current_filter:
-                self._filtered_answers = [a for a in self.answers if a["agent_id"] == self._current_filter]
-
-            # Sort by timestamp descending (most recent first)
-            self._filtered_answers.sort(key=lambda a: a.get("timestamp", 0), reverse=True)
-
-            if not self._filtered_answers:
-                answer_list.mount(Static("[dim]No answers yet[/]", markup=True))
-                return
-
-            for idx, answer in enumerate(self._filtered_answers):
-                agent_id = answer["agent_id"]
-                model = answer.get("model", "")
-                answer_label = answer.get("answer_label", f"{agent_id}.{answer.get('answer_number', 1)}")
-                timestamp = answer.get("timestamp", 0)
-                is_winner = answer.get("is_winner", False) or agent_id == self.winner_agent_id
-
-                # Format timestamp
-                import datetime as dt_module
-
-                time_str = dt_module.datetime.fromtimestamp(timestamp).strftime("%H:%M:%S") if timestamp else ""
-
-                # Build display
-                badge = ""
-                if is_winner:
-                    badge = " [bold yellow]🏆[/]"
-                elif answer.get("is_final"):
-                    badge = " [bold green]✓[/]"
-
-                agent_display = f"{agent_id}" + (f" ({model})" if model else "")
-
-                # Count votes for this agent
-                vote_count = len([v for v in self.votes if v["voted_for"] == agent_id])
-
-                # Build content preview (shorter for list view)
-                content = answer.get("content", "")
-                content_preview = content[:60] + "..." if len(content) > 60 else content
-                content_preview = content_preview.replace("\n", " ")
-
-                # Determine if this is selected
-                is_selected = idx == self._selected_answer_idx
-                selected_class = "answer-item-selected" if is_selected else ""
-
-                # Assign color class based on agent index (1-8 to match AgentPanel colors)
-                agent_idx = self.agent_ids.index(agent_id) + 1 if agent_id in self.agent_ids else 1
-                agent_color_class = f"agent-color-{((agent_idx - 1) % 8) + 1}"  # Cycle through colors 1-8
-
-                # Use render_count in ID to ensure uniqueness across re-renders
-                item = Static(
-                    f"[bold]{answer_label}[/] - {agent_display}{badge}\n" f"   [dim]{time_str} • {vote_count} votes[/]\n" f"   {content_preview}",
-                    classes=f"answer-item clickable {selected_class} {agent_color_class}",
-                    markup=True,
-                    id=f"answer_item_{self._render_count}_{idx}",
-                )
-                answer_list.mount(item)
-
-        def _show_answer_detail(self, idx: int) -> None:
-            """Show full content of selected answer in detail panel."""
-            if idx < 0 or idx >= len(self._filtered_answers):
-                return
-
-            self._selected_answer_idx = idx
-            answer = self._filtered_answers[idx]
-
-            agent_id = answer["agent_id"]
-            model = answer.get("model", "")
-            answer_label = answer.get("answer_label", f"{agent_id}.{answer.get('answer_number', 1)}")
-            timestamp = answer.get("timestamp", 0)
-            is_winner = answer.get("is_winner", False) or agent_id == self.winner_agent_id
-            content = answer.get("content", "")
-
-            # Store for copy
-            self._selected_content = content
-
-            # Format timestamp
-            import datetime as dt_module
-
-            time_str = dt_module.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S") if timestamp else ""
-
-            # Build header
-            badge = ""
-            if is_winner:
-                badge = " 🏆 WINNER"
-            elif answer.get("is_final"):
-                badge = " ✓ FINAL"
-
-            vote_count = len([v for v in self.votes if v["voted_for"] == agent_id])
-
-            # Update header
-            header = self.query_one("#answer_detail_header", Label)
-            header.update(f"📄 {answer_label} - {agent_id} ({model}){badge}")
-
-            # Update content in scroll container
-            detail_scroll = self.query_one("#answer_detail_scroll", ScrollableContainer)
-            detail_scroll.remove_children()
-
-            # Add metadata
-            meta_text = f"[dim]Time: {time_str} | Votes: {vote_count}[/]\n\n"
-
-            # Add full content with proper formatting
-            from textual.widgets import Static
-
-            # Use render_count in ID to ensure uniqueness across re-renders
-            detail_scroll.mount(Static(meta_text + content, markup=True, id=f"answer_content_{self._render_count}"))
-
-            # Re-render answer list to update selection highlighting
-            self._render_answers()
-
-        def on_click(self, event) -> None:
-            """Handle click on answer items."""
-            # Use event.widget (Textual) not event.target
-            target = getattr(event, "widget", None)
-            if target is None:
-                return
-            # Walk up to find answer-item
-            while target and not (hasattr(target, "classes") and "answer-item" in target.classes):
-                target = target.parent
-
-            if target and hasattr(target, "id") and target.id and target.id.startswith("answer_item_"):
-                # ID format is "answer_item_{render_count}_{idx}", extract idx from last part
-                parts = target.id.split("_")
-                idx = int(parts[-1]) if parts else 0
-                self._show_answer_detail(idx)
-
-        def on_select_changed(self, event: Select.Changed) -> None:
-            """Handle agent filter change."""
-            self._current_filter = event.value
-            self._selected_answer_idx = 0
-            self._render_answers()
-            if self._filtered_answers:
-                self._show_answer_detail(len(self._filtered_answers) - 1)
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            if event.button.id == "close_browser_button":
-                self.dismiss()
-            elif event.button.id == "copy_answer_button":
-                self._copy_to_clipboard()
-            elif event.button.id == "save_answer_button":
-                self._save_to_file()
-
-        def _copy_to_clipboard(self) -> None:
-            """Copy selected answer content to clipboard."""
-            import platform
-            import subprocess
-
-            if not self._selected_content:
-                self.notify("No answer selected", severity="warning")
-                return
-
-            try:
-                system = platform.system()
-                if system == "Darwin":
-                    subprocess.run(["pbcopy"], input=self._selected_content.encode(), check=True)
-                elif system == "Windows":
-                    subprocess.run(["clip"], input=self._selected_content.encode(), check=True)
-                else:
-                    subprocess.run(["xclip", "-selection", "clipboard"], input=self._selected_content.encode(), check=True)
-                self.notify("Copied to clipboard!", severity="information")
-            except Exception as e:
-                self.notify(f"Copy failed: {e}", severity="error")
-
-        def _save_to_file(self) -> None:
-            """Save selected answer to file."""
-            if not self._selected_content:
-                self.notify("No answer selected", severity="warning")
-                return
-
-            try:
-                import datetime as dt_module
-
-                timestamp = dt_module.datetime.now().strftime("%Y%m%d_%H%M%S")
-                answer = self._filtered_answers[self._selected_answer_idx]
-                label = answer.get("answer_label", "answer")
-                filename = f"answer_{label}_{timestamp}.txt"
-
-                with open(filename, "w") as f:
-                    f.write(self._selected_content)
-                self.notify(f"Saved to {filename}", severity="information")
-            except Exception as e:
-                self.notify(f"Save failed: {e}", severity="error")
-
-        def key_escape(self) -> None:
-            self.dismiss()
-
-        def key_up(self) -> None:
-            """Navigate to previous answer."""
-            if self._selected_answer_idx > 0:
-                self._show_answer_detail(self._selected_answer_idx - 1)
-
-        def key_down(self) -> None:
-            """Navigate to next answer."""
-            if self._selected_answer_idx < len(self._filtered_answers) - 1:
-                self._show_answer_detail(self._selected_answer_idx + 1)
-
-    class TimelineModal(BaseModal):
-        """Modal showing ASCII timeline visualization of answers and votes with swimlane layout."""
-
-        def __init__(
-            self,
-            answers: List[Dict[str, Any]],
-            votes: List[Dict[str, Any]],
-            agent_ids: List[str],
-            winner_agent_id: Optional[str] = None,
-            restart_history: Optional[List[Dict[str, Any]]] = None,
-        ):
-            super().__init__()
-            self.answers = answers
-            self.votes = votes
-            self.agent_ids = agent_ids
-            self.winner_agent_id = winner_agent_id
-            self.restart_history = restart_history or []
-
-        def compose(self) -> ComposeResult:
-            from textual.widgets import Static
-
-            with Container(id="timeline_modal_container"):
-                yield Label("📊 Timeline - Answer & Vote Flow", id="timeline_header")
-                yield Label(
-                    "○ answer  ◇ vote  ★ winner  ⟿ context  🔄 restart",
-                    id="timeline_legend",
-                )
-                with VerticalScroll(id="timeline_content"):
-                    yield Static(self._render_swimlane_timeline(), id="timeline_diagram", markup=True)
-                yield Button("Close (ESC)", id="close_timeline_button")
-
-        def _render_swimlane_timeline(self) -> str:
-            """Render swimlane-style ASCII timeline visualization."""
-            # Get unique agents from answers and votes
-            seen = set()
-            all_agents = []
-            for aid in self.agent_ids:
-                if aid not in seen:
-                    seen.add(aid)
-                    all_agents.append(aid)
-            for a in self.answers:
-                if a["agent_id"] not in seen:
-                    seen.add(a["agent_id"])
-                    all_agents.append(a["agent_id"])
-
-            if not all_agents:
-                return "[dim]No activity yet[/]"
-
-            # Calculate column widths (min 12 chars per agent)
-            col_width = 14
-            num_agents = len(all_agents)
-
-            # Collect all events with timestamps
-            events = []
-
-            # Add restart events
-            for restart in self.restart_history:
-                events.append(
-                    {
-                        "type": "restart",
-                        "timestamp": restart.get("timestamp", 0),
-                        "attempt": restart.get("attempt", 1),
-                        "max_attempts": restart.get("max_attempts", 3),
-                        "reason": restart.get("reason", ""),
-                    },
-                )
-
-            for answer in self.answers:
-                events.append(
-                    {
-                        "type": "answer",
-                        "agent_id": answer["agent_id"],
-                        "label": answer.get("answer_label", ""),
-                        "timestamp": answer.get("timestamp", 0),
-                        "is_winner": answer.get("is_winner", False) or answer["agent_id"] == self.winner_agent_id,
-                        "is_final": answer.get("is_final", False),
-                        "context_sources": answer.get("context_sources", []),
-                    },
-                )
-
-            for vote in self.votes:
-                # Use voted_for_label (e.g., "1.2") if available, otherwise fall back to agent number
-                target_label = vote.get("voted_for_label")
-                if target_label:
-                    # Convert "agent1.2" format to shorter "1.2" format
-                    target_display = target_label.replace("agent", "")
-                else:
-                    # Fallback: try to get agent number from voted_for
-                    voted_for = vote["voted_for"]
-                    if voted_for in all_agents:
-                        agent_num = all_agents.index(voted_for) + 1
-                        target_display = str(agent_num)
-                    else:
-                        target_display = voted_for[:6]
-                events.append(
-                    {
-                        "type": "vote",
-                        "agent_id": vote["voter"],
-                        "target": target_display,
-                        "timestamp": vote.get("timestamp", 0),
-                    },
-                )
-
-            # Sort by timestamp (most recent first for display)
-            events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
-
-            if not events:
-                return "[dim]No activity yet[/]"
-
-            # Build swimlane visualization
-            lines = []
-
-            # Header row with agent names
-            header = ""
-            for agent in all_agents:
-                short_name = agent[: col_width - 2].center(col_width)
-                header += f"[bold cyan]{short_name}[/]"
-            lines.append(header)
-
-            # Separator
-            lines.append("─" * (col_width * num_agents))
-
-            # Event rows
-            for event in events:
-                import datetime as dt_module
-
-                ts = event.get("timestamp", 0)
-                time_str = dt_module.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "??:??"
-
-                if event["type"] == "restart":
-                    # Full-width restart indicator
-                    attempt = event.get("attempt", 1)
-                    max_att = event.get("max_attempts", 3)
-                    reason = event.get("reason", "")[:30]
-                    restart_line = f"[bold yellow]{'─' * 10} 🔄 RESTART {attempt}/{max_att}: {reason} {'─' * 10}[/]"
-                    lines.append(restart_line)
-                    continue
-
-                # Build row with proper placement
-                row = ""
-                for agent in all_agents:
-                    cell = " " * col_width
-
-                    if event["type"] == "answer" and event["agent_id"] == agent:
-                        label = event.get("label", "?")[:6]
-                        # Format context sources if present
-                        ctx = event.get("context_sources", [])
-                        ctx_str = ""
-                        if ctx:
-                            # Show which answers this agent saw (e.g., ←A1.1)
-                            short_ctx = [c.replace("agent", "A")[:4] for c in ctx[:1]]
-                            ctx_str = f"[dim cyan]←{','.join(short_ctx)}[/]"
-
-                        if event.get("is_winner"):
-                            cell = f" [bold yellow]★{label}[/]{ctx_str}"
-                        elif event.get("is_final"):
-                            cell = f" [yellow]★{label}[/]{ctx_str}"
-                        else:
-                            cell = f" [green]○{label}[/]{ctx_str}"
-
-                    elif event["type"] == "vote" and event["agent_id"] == agent:
-                        target = event.get("target", "?")[:6]
-                        cell = f" [magenta]◇→{target}[/]"
-
-                    # Pad cell to column width (Rich markup doesn't count toward visible width)
-                    # Just add trailing spaces - the markup handling will work
-                    row += cell.ljust(col_width + 20)[: col_width + 20]  # Extra for markup
-
-                # Add timestamp at end
-                lines.append(f"{row} [dim]{time_str}[/]")
-
-            # Separator
-            lines.append("─" * (col_width * num_agents))
-
-            # Summary
-            answer_count = len([e for e in events if e["type"] == "answer"])
-            vote_count = len([e for e in events if e["type"] == "vote"])
-            restart_count = len([e for e in events if e["type"] == "restart"])
-
-            summary_parts = [f"{answer_count} answers", f"{vote_count} votes"]
-            if restart_count:
-                summary_parts.append(f"{restart_count} restarts")
-            if self.winner_agent_id:
-                summary_parts.append(f"Winner: {self.winner_agent_id}")
-
-            lines.append(f"[dim]{' • '.join(summary_parts)}[/]")
-
-            return "\n".join(lines)
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            if event.button.id == "close_timeline_button":
-                self.dismiss()
-
-        def key_escape(self) -> None:
-            self.dismiss()
-
-    class BrowserTabsModal(BaseModal):
-        """Unified browser modal with tabs for Answers, Votes, Workspace, and Timeline."""
-
-        BINDINGS = [
-            Binding("1", "tab_answers", "Answers"),
-            Binding("2", "tab_votes", "Votes"),
-            Binding("3", "tab_workspace", "Workspace"),
-            Binding("4", "tab_timeline", "Timeline"),
-            Binding("escape", "close", "Close"),
-        ]
-
-        def __init__(
-            self,
-            answers: List[Dict[str, Any]],
-            votes: List[Dict[str, Any]],
-            vote_counts: Dict[str, int],
-            agent_ids: List[str],
-            winner_agent_id: Optional[str] = None,
-            initial_tab: str = "timeline",
-        ):
-            super().__init__()
-            self.answers = answers
-            self.votes = votes
-            self.vote_counts = vote_counts
-            self.agent_ids = agent_ids
-            self.winner_agent_id = winner_agent_id
-            self._current_tab = initial_tab
-
-        def compose(self) -> ComposeResult:
-            with Container(id="browser_tabs_container"):
-                yield Label(
-                    self._build_tab_bar_text(),
-                    id="browser_tab_bar",
-                )
-                with VerticalScroll(id="browser_content"):
-                    yield Static(self._render_current_tab(), id="browser_content_text", markup=True)
-                yield Button("Close (ESC)", id="close_browser_button")
-
-        def _build_tab_bar_text(self) -> str:
-            """Build tab bar text with correct highlight for current tab."""
-            tabs = ["answers", "votes", "workspace", "timeline"]
-            tab_labels = ["Answers", "Votes", "Workspace", "Timeline"]
-            parts = []
-            for i, (t, label) in enumerate(zip(tabs, tab_labels), 1):
-                if t == self._current_tab:
-                    parts.append(f"[bold reverse] {i} {label} [/]")
-                else:
-                    parts.append(f"[bold]{i}[/] {label}")
-            return "  ".join(parts)
-
-        def _render_current_tab(self) -> str:
-            """Render content for the current tab."""
-            if self._current_tab == "answers":
-                return self._render_answers_tab()
-            elif self._current_tab == "votes":
-                return self._render_votes_tab()
-            elif self._current_tab == "workspace":
-                return self._render_workspace_tab()
-            elif self._current_tab == "timeline":
-                return self._render_timeline_tab()
-            return ""
-
-        def _format_duration(self, timestamp: float) -> str:
-            """Format elapsed time since timestamp."""
-            elapsed = time.time() - timestamp
-            if elapsed < 60:
-                return f"{int(elapsed)}s"
-            elif elapsed < 3600:
-                return f"{elapsed/60:.1f}m"
-            else:
-                return f"{elapsed/3600:.1f}h"
-
-        def _render_answers_tab(self) -> str:
-            """Render answers list."""
-            if not self.answers:
-                return "[dim]No answers yet[/]"
-
-            lines = ["[bold cyan]📝 Answers[/]", "─" * 50]
-
-            for i, answer in enumerate(self.answers, 1):
-                agent = answer.get("agent_id", "?")[:12]
-                model = answer.get("model", "")[:15]
-                label = answer.get("answer_label", f"#{i}")
-                is_winner = answer.get("is_winner", False) or answer.get("agent_id") == self.winner_agent_id
-
-                badge = " [bold yellow]🏆[/]" if is_winner else ""
-                model_info = f" ({model})" if model else ""
-
-                # Duration since answer was submitted
-                timestamp = answer.get("timestamp")
-                duration_info = f" [dim]({self._format_duration(timestamp)} ago)[/]" if timestamp else ""
-
-                # Content preview
-                content = answer.get("content", "")[:60].replace("\n", " ")
-                if len(answer.get("content", "")) > 60:
-                    content += "..."
-
-                lines.append(f"  {i}. [bold]{agent}[/]{model_info} - {label}{badge}{duration_info}")
-                lines.append(f"     [dim]{content}[/]")
-
-            return "\n".join(lines)
-
-        def _render_votes_tab(self) -> str:
-            """Render vote distribution and individual votes."""
-            lines = ["[bold cyan]🗳️ Votes[/]", "─" * 50]
-
-            # Vote distribution
-            if self.vote_counts:
-                non_zero = {k: v for k, v in self.vote_counts.items() if v > 0}
-                if non_zero:
-                    max_votes = max(non_zero.values())
-                    total = sum(non_zero.values())
-                    lines.append("\n[bold]Distribution:[/]")
-                    for agent, count in sorted(non_zero.items(), key=lambda x: -x[1]):
-                        bar_width = int((count / max_votes) * 15) if max_votes > 0 else 0
-                        bar = "█" * bar_width + "░" * (15 - bar_width)
-                        prefix = "🏆 " if count == max_votes else "   "
-                        pct = (count / total * 100) if total > 0 else 0
-                        lines.append(f"{prefix}{agent[:10]:10} {bar} {count} ({pct:.0f}%)")
-
-            # Individual votes
-            if self.votes:
-                lines.append("\n[bold]Vote History:[/]")
-                for i, vote in enumerate(self.votes, 1):
-                    voter = vote.get("voter", "?")[:10]
-                    target = vote.get("voted_for", "?")[:10]
-                    timestamp = vote.get("timestamp")
-                    duration_info = f" [dim]({self._format_duration(timestamp)} ago)[/]" if timestamp else ""
-                    lines.append(f"  {i}. [dim]{voter}[/] → [bold]{target}[/]{duration_info}")
-            elif not self.vote_counts:
-                lines.append("[dim]No votes yet[/]")
-
-            return "\n".join(lines)
-
-        def _render_workspace_tab(self) -> str:
-            """Render workspace info summary."""
-            if not self.answers:
-                return "[dim]No workspaces available yet[/]\n\n[dim]Tip: Press 'w' to browse current workspace[/]"
-
-            lines = ["[bold cyan]📁 Workspaces[/]", "─" * 50]
-            lines.append("[dim]Press 'w' for full workspace browser with file preview[/]\n")
-
-            for i, answer in enumerate(self.answers, 1):
-                agent = answer.get("agent_id", "?")[:12]
-                workspace = answer.get("workspace_path", "")
-
-                if workspace:
-                    import os
-
-                    if os.path.isdir(workspace):
-                        try:
-                            file_count = sum(1 for f in os.listdir(workspace) if os.path.isfile(os.path.join(workspace, f)))
-                            lines.append(f"  {i}. [bold]{agent}[/]: {file_count} files")
-                        except Exception:
-                            lines.append(f"  {i}. [bold]{agent}[/]: [dim]path unavailable[/]")
-                    else:
-                        lines.append(f"  {i}. [bold]{agent}[/]: [dim]no workspace[/]")
-                else:
-                    lines.append(f"  {i}. [bold]{agent}[/]: [dim]no workspace[/]")
-
-            return "\n".join(lines)
-
-        def _render_timeline_tab(self) -> str:
-            """Render swimlane-style timeline visualization (like WebUI)."""
-            import datetime as dt_module
-            import re
-
-            # Get unique agents
-            seen = set()
-            all_agents = []
-            for aid in self.agent_ids:
-                if aid not in seen:
-                    seen.add(aid)
-                    all_agents.append(aid)
-            for a in self.answers:
-                if a["agent_id"] not in seen:
-                    seen.add(a["agent_id"])
-                    all_agents.append(a["agent_id"])
-
-            if not all_agents:
-                return "[dim]No activity yet[/dim]"
-
-            # Collect all events with timestamps
-            events = []
-
-            for answer in self.answers:
-                events.append(
-                    {
-                        "type": "answer",
-                        "agent_id": answer["agent_id"],
-                        "label": answer.get("answer_label", ""),
-                        "timestamp": answer.get("timestamp", 0),
-                        "is_winner": answer.get("is_winner", False) or answer["agent_id"] == self.winner_agent_id,
-                        "context_sources": answer.get("context_sources", []),
-                    },
-                )
-
-            for vote in self.votes:
-                # Use voted_for_label (e.g., "1.2") if available, otherwise fall back to agent number
-                target_label = vote.get("voted_for_label")
-                if target_label:
-                    # Convert "agent1.2" format to shorter "1.2" format
-                    target_display = target_label.replace("agent", "")
-                else:
-                    # Fallback: try to get agent number from voted_for
-                    voted_for = vote["voted_for"]
-                    if voted_for in all_agents:
-                        agent_num = all_agents.index(voted_for) + 1
-                        target_display = str(agent_num)
-                    else:
-                        target_display = voted_for[:6]
-                events.append(
-                    {
-                        "type": "vote",
-                        "agent_id": vote["voter"],
-                        "target": target_display,
-                        "timestamp": vote.get("timestamp", 0),
-                    },
-                )
-
-            # Sort by timestamp (most recent first)
-            events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
-
-            if not events:
-                return "[dim]No activity yet[/dim]"
-
-            # Build swimlane visualization
-            col_width = 16
-            num_agents = len(all_agents)
-            lines = ["[bold cyan]📊 Timeline - Swimlane View[/bold cyan]", ""]
-
-            # Header row with agent names
-            header_parts = []
-            for i, _agent in enumerate(all_agents, 1):
-                header_parts.append(f"[bold cyan]{f'Agent {i}':^{col_width}}[/bold cyan]")
-            lines.append("".join(header_parts))
-            lines.append("─" * (col_width * num_agents))
-
-            # Helper to calculate visible length (without Rich markup)
-            def visible_len(s: str) -> int:
-                return len(re.sub(r"\[/?[^\]]*\]", "", s))
-
-            # Event rows
-            for event in events:
-                ts = event.get("timestamp", 0)
-                time_str = dt_module.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "??:??"
-
-                # Build cells for each agent column
-                cells = []
-                for agent in all_agents:
-                    if event["type"] == "answer" and event["agent_id"] == agent:
-                        # Format label like "agent1.5" -> "1.5"
-                        raw_label = event.get("label", "?")
-                        if raw_label.lower().startswith("agent"):
-                            label = raw_label[5:]  # Strip "agent" prefix
-                        else:
-                            label = raw_label[:6]
-
-                        if event.get("is_winner"):
-                            cells.append(f"[bold yellow]★{label}[/bold yellow]")
-                        else:
-                            cells.append(f"[green]○{label}[/green]")
-                    elif event["type"] == "vote" and event["agent_id"] == agent:
-                        # Show vote target more clearly
-                        target = event.get("target", "?")
-                        if "agent" in target.lower():
-                            target_num = "".join(c for c in target if c.isdigit())[:1]
-                            target = f"A{target_num}" if target_num else target[:6]
-                        else:
-                            target = target[:6]
-                        cells.append(f"[magenta]◇→{target}[/magenta]")
-                    else:
-                        cells.append("")
-
-                # Format row with padding after markup (not slicing through it)
-                row_parts = []
-                for cell in cells:
-                    vis_len = visible_len(cell)
-                    padding = " " * max(0, col_width - vis_len)
-                    row_parts.append(cell + padding)
-
-                lines.append(f"{''.join(row_parts)}[dim]{time_str}[/dim]")
-
-            # Footer
-            lines.append("─" * (col_width * num_agents))
-            lines.append("")
-            lines.append("[dim]○ answer  ◇ vote  ★ winner[/dim]")
-
-            answer_count = len([e for e in events if e["type"] == "answer"])
-            vote_count = len([e for e in events if e["type"] == "vote"])
-            summary_parts = [f"{answer_count} answers", f"{vote_count} votes"]
-            if self.winner_agent_id:
-                summary_parts.append(f"Winner: {self.winner_agent_id}")
-            lines.append(f"[dim]{' • '.join(summary_parts)}[/dim]")
-
-            return "\n".join(lines)
-
-        def _switch_tab(self, tab: str) -> None:
-            """Switch to a different tab."""
-            self._current_tab = tab
-            try:
-                content = self.query_one("#browser_content_text", Static)
-                content.update(self._render_current_tab())
-
-                # Update tab bar to show active tab
-                tab_bar = self.query_one("#browser_tab_bar", Label)
-                tab_bar.update(self._build_tab_bar_text())
-            except Exception:
-                pass
-
-        def action_tab_answers(self) -> None:
-            """Switch to answers tab."""
-            self._switch_tab("answers")
-
-        def action_tab_votes(self) -> None:
-            """Switch to votes tab."""
-            self._switch_tab("votes")
-
-        def action_tab_workspace(self) -> None:
-            """Switch to workspace tab."""
-            self._switch_tab("workspace")
-
-        def action_tab_timeline(self) -> None:
-            """Switch to timeline tab."""
-            self._switch_tab("timeline")
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            if event.button.id == "close_browser_button":
-                self.dismiss()
-
-        def key_escape(self) -> None:
-            self.dismiss()
-
-    class WorkspaceBrowserModal(BaseModal):
-        """Modal for browsing workspace files from answer snapshots."""
-
-        # Special indices for workspace types
-        CURRENT_WORKSPACE_IDX = -100
-        FINAL_WORKSPACE_IDX = -200  # Final workspace (after consensus)
-
-        def __init__(
-            self,
-            answers: List[Dict[str, Any]],
-            agent_ids: List[str],
-            agent_workspace_paths: Optional[Dict[str, str]] = None,
-            agent_final_paths: Optional[Dict[str, str]] = None,
-            default_agent: Optional[str] = None,
-            default_to_final: bool = False,
-        ):
-            super().__init__()
-            self.answers = answers
-            self.agent_ids = agent_ids
-            self.agent_workspace_paths = agent_workspace_paths or {}
-            self.agent_final_paths = agent_final_paths or {}
-
-            # Auto-default to final if final workspaces exist (unless explicitly disabled)
-            # Final workspace is the most useful view after a turn completes
-            self._default_to_final = default_to_final or bool(self.agent_final_paths)
-
-            # Default to specified agent or first agent
-            selected_agent = default_agent if default_agent and default_agent in agent_ids else (agent_ids[0] if agent_ids else None)
-
-            # Determine default selection based on preferences
-            # Priority: Final workspace > Current workspace > Most recent answer
-            if self._default_to_final and selected_agent and selected_agent in self.agent_final_paths:
-                self._selected_answer_idx: int = self.FINAL_WORKSPACE_IDX
-            elif selected_agent and selected_agent in self.agent_workspace_paths:
-                self._selected_answer_idx: int = self.CURRENT_WORKSPACE_IDX
-            else:
-                self._selected_answer_idx: int = len(answers) - 1 if answers else 0
-
-            self._current_files: List[Dict[str, Any]] = []
-            self._selected_file_idx: int = 0
-            self._load_counter: int = 0  # Counter to ensure unique widget IDs
-            self._current_workspace_path: Optional[str] = None  # Track currently displayed workspace
-            # Default to specified agent or first agent
-            self._current_agent_filter: Optional[str] = selected_agent  # None = all agents
-
-        def compose(self) -> ComposeResult:
-            with Container(id="workspace_browser_container"):
-                yield Label("📁 Workspace Browser", id="workspace_browser_header")
-
-                # Selector row with agent filter and answer selector
-                with Horizontal(id="workspace_selector_row"):
-                    # Agent filter (no "All Agents" - must pick one)
-                    with Horizontal(id="workspace_agent_filter_container"):
-                        yield Label("Agent: ", id="workspace_agent_label")
-                        # Default to first agent
-                        default_agent = self.agent_ids[0] if self.agent_ids else None
-                        agent_options = [(aid, aid) for aid in self.agent_ids]
-                        if not agent_options:
-                            agent_options = [("No agents", None)]
-                        yield Select(agent_options, id="agent_filter_selector", value=default_agent)
-
-                    # Answer selector
-                    with Horizontal(id="workspace_answer_container"):
-                        yield Label("Answer: ", id="workspace_answer_label")
-                        yield Select([], id="answer_selector")  # Populated in on_mount
-
-                # Split view: file list on left, preview on right
-                with Horizontal(id="workspace_split"):
-                    # File list
-                    with Container(id="workspace_file_list_container"):
-                        yield Label("[bold]Files[/]", id="file_list_header", markup=True)
-                        yield VerticalScroll(id="workspace_file_list")
-
-                    # File preview
-                    with Container(id="workspace_preview_container"):
-                        yield Label("[bold]Preview[/]", id="preview_header", markup=True)
-                        yield VerticalScroll(id="workspace_preview")
-
-                # Footer buttons
-                with Horizontal(id="workspace_browser_footer"):
-                    yield Button("📂 Open in Finder", id="open_workspace_finder_button")
-                    yield Button("Close (ESC)", id="close_workspace_browser_button")
-
-        def on_mount(self) -> None:
-            """Called when modal is mounted - populate the answer selector and files."""
-            self._update_answer_selector()
-            # Load files for the default selection (final, current, or most recent answer)
-            if self._default_to_final and self._current_agent_filter and self._current_agent_filter in self.agent_final_paths:
-                self._load_workspace_files(self.FINAL_WORKSPACE_IDX)
-            elif self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
-                self._load_workspace_files(self.CURRENT_WORKSPACE_IDX)
-            elif self.answers:
-                self._load_workspace_files(len(self.answers) - 1)
-
-        def _update_answer_selector(self) -> None:
-            """Update answer selector options based on current agent filter."""
-            answer_selector = self.query_one("#answer_selector", Select)
-
-            # Build answer options
-            options = []
-
-            # Add "🏆 Final Workspace" option FIRST if the selected agent has a final workspace
-            if self._current_agent_filter and self._current_agent_filter in self.agent_final_paths:
-                options.append(("🏆 Final Workspace", self.FINAL_WORKSPACE_IDX))
-
-            # Add "Current Workspace" option if the selected agent has a current workspace
-            if self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
-                options.append(("📂 Current Workspace", self.CURRENT_WORKSPACE_IDX))
-
-            # Filter answers by agent
-            if self._current_agent_filter:
-                for i, a in enumerate(self.answers):
-                    if a["agent_id"] == self._current_agent_filter:
-                        label = a.get("answer_label", f"Answer {i+1}")
-                        options.append((f"{label}", i))
-
-            if not options:
-                options = [("No workspace available", -1)]
-
-            # Determine default value - prefer final workspace if requested, else current
-            if self._default_to_final and self._current_agent_filter and self._current_agent_filter in self.agent_final_paths:
-                default_value = self.FINAL_WORKSPACE_IDX
-            elif self._current_agent_filter and self._current_agent_filter in self.agent_workspace_paths:
-                default_value = self.CURRENT_WORKSPACE_IDX
-            elif options and options[0][1] != -1:
-                # Pick the most recent answer for this agent
-                default_value = options[-1][1] if len(options) > 1 else options[0][1]
-            else:
-                default_value = -1
-
-            # Update selector
-            answer_selector.set_options(options)
-            if default_value in [opt[1] for opt in options]:
-                answer_selector.value = default_value
-            elif options:
-                answer_selector.value = options[0][1]
-
-        def _load_workspace_files(self, answer_idx: int) -> None:
-            """Load files from the workspace path of the selected answer, current, or final workspace."""
-            import os
-
-            from textual.widgets import Static
-
-            file_list = self.query_one("#workspace_file_list", VerticalScroll)
-            file_list.remove_children()
-            self._current_files = []
-            self._load_counter += 1  # Increment to ensure unique IDs
-
-            # Determine workspace path based on selection
-            workspace_path = None
-            if answer_idx == self.FINAL_WORKSPACE_IDX:
-                # Final workspace (after consensus)
-                workspace_path = self.agent_final_paths.get(self._current_agent_filter)
-            elif answer_idx == self.CURRENT_WORKSPACE_IDX:
-                # Current workspace (live)
-                workspace_path = self.agent_workspace_paths.get(self._current_agent_filter)
-            elif answer_idx >= 0 and answer_idx < len(self.answers):
-                # Answer snapshot
-                answer = self.answers[answer_idx]
-                workspace_path = answer.get("workspace_path")
-            else:
-                self._current_workspace_path = None
-                file_list.mount(Static("[dim]No workspace selected[/]", markup=True))
-                return
-
-            # Store current workspace path for "Open in Finder" functionality
-            self._current_workspace_path = workspace_path
-
-            if not workspace_path or not os.path.isdir(workspace_path):
-                file_list.mount(Static(f"[dim]No workspace available[/]\n[dim]{workspace_path or 'N/A'}[/]", markup=True))
-                return
-
-            # List files in workspace
-            try:
-                files = []
-                for root, dirs, filenames in os.walk(workspace_path):
-                    # Skip hidden directories
-                    dirs[:] = [d for d in dirs if not d.startswith(".")]
-                    for fname in filenames:
-                        if not fname.startswith("."):
-                            full_path = os.path.join(root, fname)
-                            rel_path = os.path.relpath(full_path, workspace_path)
-                            try:
-                                stat = os.stat(full_path)
-                                files.append(
-                                    {
-                                        "name": fname,
-                                        "rel_path": rel_path,
-                                        "full_path": full_path,
-                                        "size": stat.st_size,
-                                        "mtime": stat.st_mtime,
-                                    },
-                                )
-                            except OSError:
-                                pass
-
-                self._current_files = sorted(files, key=lambda f: f["rel_path"])
-
-                if not self._current_files:
-                    file_list.mount(Static("[dim]Workspace is empty[/]", markup=True))
-                    return
-
-                for idx, f in enumerate(self._current_files):
-                    size_str = self._format_size(f["size"])
-                    file_list.mount(
-                        Static(
-                            f"[cyan]{f['rel_path']}[/] [dim]({size_str})[/]",
-                            id=f"file_item_{self._load_counter}_{idx}",
-                            classes="workspace-file-item",
-                            markup=True,
-                        ),
-                    )
-
-                # Auto-select first file
-                if self._current_files:
-                    self._preview_file(0)
-
-            except Exception as e:
-                file_list.mount(Static(f"[red]Error: {e}[/]", markup=True))
-
-        def _format_size(self, size: int) -> str:
-            """Format file size in human-readable format."""
-            if size < 1024:
-                return f"{size}B"
-            elif size < 1024 * 1024:
-                return f"{size // 1024}KB"
-            else:
-                return f"{size // (1024 * 1024)}MB"
-
-        def _preview_file(self, file_idx: int) -> None:
-            """Preview the selected file with syntax highlighting."""
-            from textual.widgets import Static
-
-            preview = self.query_one("#workspace_preview", VerticalScroll)
-            preview.remove_children()
-
-            if file_idx < 0 or file_idx >= len(self._current_files):
-                preview.mount(Static("[dim]Select a file to preview[/]", markup=True))
-                return
-
-            f = self._current_files[file_idx]
-            full_path = Path(f["full_path"])
-
-            # Add file header
-            header = Static(
-                f"[bold cyan]{f['rel_path']}[/]\n[dim]{'─' * 40}[/]",
-                markup=True,
-            )
-            preview.mount(header)
-
-            # Use render_file_preview for syntax highlighting
-            renderable, is_rich = render_file_preview(full_path)
-
-            if is_rich:
-                # Rich object (Syntax or Markdown)
-                preview.mount(Static(renderable))
-            else:
-                # Plain text or error message
-                preview.mount(Static(str(renderable), markup=True))
-
-        def on_select_changed(self, event: Select.Changed) -> None:
-            """Handle agent filter or answer selection change."""
-            if event.select.id == "agent_filter_selector":
-                # Agent filter changed - update answer selector options
-                self._current_agent_filter = event.value
-                self._update_answer_selector()
-                # Auto-load files for the new default answer (current workspace or most recent)
-                answer_selector = self.query_one("#answer_selector", Select)
-                if answer_selector.value is not None and isinstance(answer_selector.value, int):
-                    self._load_workspace_files(answer_selector.value)
-            elif event.select.id == "answer_selector":
-                # Answer selection changed - load files
-                answer_idx = event.value
-                if isinstance(answer_idx, int):
-                    self._selected_answer_idx = answer_idx
-                    self._load_workspace_files(answer_idx)
-
-        def on_click(self, event) -> None:
-            """Handle click on file items."""
-            # Check if clicked on a file item
-            if hasattr(event, "widget") and event.widget:
-                widget_id = getattr(event.widget, "id", "")
-                # ID format is now: file_item_{load_counter}_{idx}
-                if widget_id and widget_id.startswith("file_item_"):
-                    try:
-                        # Get the last part which is the file index
-                        idx = int(widget_id.split("_")[-1])
-                        self._selected_file_idx = idx
-                        self._preview_file(idx)
-                    except (ValueError, IndexError):
-                        pass
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            if event.button.id == "close_workspace_browser_button":
-                self.dismiss()
-            elif event.button.id == "open_workspace_finder_button":
-                self._open_workspace_in_explorer()
-
-        def _open_workspace_in_explorer(self) -> None:
-            """Open the current workspace directory in the system file explorer."""
-            import platform
-            import subprocess
-
-            if not self._current_workspace_path:
-                self.notify("No workspace selected", severity="warning", timeout=2)
-                return
-
-            try:
-                system = platform.system()
-                if system == "Darwin":  # macOS
-                    subprocess.run(["open", str(self._current_workspace_path)])
-                elif system == "Windows":
-                    subprocess.run(["explorer", str(self._current_workspace_path)])
-                else:  # Linux
-                    subprocess.run(["xdg-open", str(self._current_workspace_path)])
-            except Exception as e:
-                self.notify(f"Error opening workspace: {e}", severity="error", timeout=3)
-
-        def key_escape(self) -> None:
-            self.dismiss()
-
-    class OrchestratorEventsModal(BaseModal):
-        """Modal to display orchestrator events."""
-
-        def __init__(self, events_text: str):
-            super().__init__()
-            self.events_text = events_text
-
-        def compose(self) -> ComposeResult:
-            with Container(id="orchestrator_modal_container"):
-                yield Label("📋 Orchestrator Events", id="orchestrator_modal_header")
-                yield Label("Press 'o' anytime to view events", id="orchestrator_hint")
-                yield TextArea(self.events_text, id="orchestrator_events_content", read_only=True)
-                yield Button("Close (ESC)", id="close_orchestrator_button")
-
-    class AgentSelectorModal(BaseModal):
-        """Interactive agent selection menu."""
-
-        def __init__(self, agent_ids: List[str], display: TextualTerminalDisplay, app: "TextualApp"):
-            super().__init__()
-            self.agent_ids = agent_ids
-            self.coordination_display = display
-            self.app_ref = app
-
-        def compose(self) -> ComposeResult:
-            from textual.widgets import ListItem, ListView
-
-            with Container(id="selector_container"):
-                yield Label("Select an option:", id="selector_header")
-
-                items = [ListItem(Label(f"📄 View {agent_id}")) for agent_id in self.agent_ids]
-                items.append(ListItem(Label("🎤 View Final Presentation Transcript")))
-                items.append(ListItem(Label("📊 View System Status")))
-                items.append(ListItem(Label("📋 View Coordination Table")))
-                items.append(ListItem(Label("💰 View Cost Breakdown")))
-                items.append(ListItem(Label("📁 View Workspace Files")))
-                items.append(ListItem(Label("📈 View Tool Metrics")))
-
-                yield ListView(*items, id="agent_list")
-                yield Button("Cancel (ESC)", id="cancel_button")
-
-        def on_list_view_selected(self, event):
-            """Handle selection from list."""
-
-            index = event.list_view.index
-            num_agents = len(self.agent_ids)
-
-            if index < num_agents:
-                agent_id = self.agent_ids[index]
-                path = self.coordination_display.agent_files.get(agent_id)
-                if path:
-                    self.app_ref._show_text_modal(Path(path), f"{agent_id} Output")
-            elif index == num_agents:  # Final Presentation
-                path = self.coordination_display.final_presentation_file
-                if path:
-                    self.app_ref._show_text_modal(Path(path), "Final Presentation")
-            elif index == num_agents + 1:  # System Status
-                self.app_ref._show_system_status_modal()
-            elif index == num_agents + 2:  # Coordination Table
-                self.app_ref._show_coordination_table_modal()
-            elif index == num_agents + 3:  # Cost Breakdown
-                self.app_ref._show_cost_breakdown_modal()
-            elif index == num_agents + 4:  # Workspace Files
-                self.app_ref._show_workspace_files_modal()
-            elif index == num_agents + 5:  # Tool Metrics
-                self.app_ref._show_metrics_modal()
-
-            self.dismiss()
-
-    class CoordinationTableModal(BaseModal):
-        """Modal to display coordination table."""
-
-        def __init__(self, table_content: str):
-            super().__init__()
-            self.table_content = table_content
-
-        def compose(self) -> ComposeResult:
-            with Container(id="table_container"):
-                yield Label("📋 Coordination Table", id="table_header")
-                yield Label("Use the mouse wheel or scrollbar to navigate", id="table_hint")
-                yield TextArea(
-                    self.table_content,
-                    id="table_content",
-                    read_only=True,
-                )
-                yield Button("Close (ESC)", id="close_button")
-
-    class VoteResultsModal(BaseModal):
-        """Modal for detailed vote results with distribution visualization."""
-
-        def __init__(
-            self,
-            results_text: str,
-            vote_counts: Optional[Dict[str, int]] = None,
-            votes: Optional[List[Dict[str, Any]]] = None,
-        ):
-            super().__init__()
-            self.results_text = results_text
-            self.vote_counts = vote_counts or {}
-            self.votes = votes or []
-
-        def _render_vote_distribution(self) -> str:
-            """Render ASCII bar chart of vote distribution."""
-            if not self.vote_counts:
-                return ""
-
-            # Filter out zero votes
-            non_zero = {k: v for k, v in self.vote_counts.items() if v > 0}
-            if not non_zero:
-                return ""
-
-            max_votes = max(non_zero.values())
-            total_votes = sum(non_zero.values())
-            lines = []
-            lines.append("[bold cyan]Vote Distribution[/]")
-            lines.append("─" * 45)
-
-            # Sort by vote count (descending)
-            for agent_id, count in sorted(non_zero.items(), key=lambda x: -x[1]):
-                short_id = agent_id[:12]
-                bar_width = int((count / max_votes) * 20) if max_votes > 0 else 0
-                bar = "█" * bar_width + "░" * (20 - bar_width)
-                pct = (count / total_votes * 100) if total_votes > 0 else 0
-
-                # Winner gets trophy
-                prefix = "🏆 " if count == max_votes else "   "
-                lines.append(f"{prefix}[bold]{short_id:12}[/] {bar} {count}/{total_votes} ({pct:.0f}%)")
-
-            lines.append("")
-            return "\n".join(lines)
-
-        def _render_vote_details(self) -> str:
-            """Render individual vote details."""
-            if not self.votes:
-                return ""
-
-            lines = []
-            lines.append("[bold cyan]Individual Votes[/]")
-            lines.append("─" * 45)
-
-            for i, vote in enumerate(self.votes, 1):
-                voter = vote.get("voter", "?")[:10]
-                target = vote.get("voted_for", "?")[:10]
-                reason = vote.get("reason", "")[:40]
-                lines.append(f"  {i}. [dim]{voter}[/] → [bold]{target}[/]")
-                if reason:
-                    lines.append(f"     [italic dim]{reason}[/]")
-
-            lines.append("")
-            return "\n".join(lines)
-
-        def compose(self) -> ComposeResult:
-            # Build combined content
-            distribution = self._render_vote_distribution()
-            details = self._render_vote_details()
-
-            # Combine distribution, details, and original text
-            combined_parts = []
-            if distribution:
-                combined_parts.append(distribution)
-            if details:
-                combined_parts.append(details)
-            if self.results_text:
-                combined_parts.append("[bold cyan]Vote Summary[/]\n" + "─" * 45 + "\n" + self.results_text)
-
-            full_content = "\n".join(combined_parts) if combined_parts else "No votes recorded."
-
-            with Container(id="vote_results_container"):
-                yield Label("🗳️ Voting Results", id="vote_header")
-                yield Static(full_content, id="vote_results_content")
-                yield Button("Close (ESC)", id="close_vote_button")
-
-    class SystemStatusModal(BaseModal):
-        """Modal to display system status log."""
-
-        def __init__(self, content: str):
-            super().__init__()
-            self.content = content
-
-        def compose(self) -> ComposeResult:
-            with Container(id="system_status_container"):
-                yield Label("📋 System Status Log", id="system_status_header")
-                yield TextArea(self.content, id="system_status_content", read_only=True)
-                yield Button("Close (ESC)", id="close_system_status_button")
-
-    class TextContentModal(BaseModal):
-        """Generic modal to display text content from a file or buffer."""
-
-        def __init__(self, title: str, content: str):
-            super().__init__()
-            self.title = title
-            self.content = content
-
-        def compose(self) -> ComposeResult:
-            with Container(id="text_content_container"):
-                yield Label(self.title, id="text_content_header")
-                yield TextArea(self.content, id="text_content_body", read_only=True)
-                yield Button("Close (ESC)", id="close_text_content_button")
-
-    class CostBreakdownModal(BaseModal):
-        """Modal to display token usage and cost breakdown per agent."""
-
-        def __init__(self, display: TextualTerminalDisplay):
-            super().__init__()
-            self.coordination_display = display
-
-        def compose(self) -> ComposeResult:
-            with Container(id="cost_breakdown_container"):
-                yield Label("💰 Cost Breakdown", id="cost_header")
-                yield TextArea(self._build_cost_table(), id="cost_content", read_only=True)
-                yield Button("Close (ESC)", id="close_cost_button")
-
-        def _build_cost_table(self) -> str:
-            """Build a formatted cost breakdown table."""
-            orchestrator = getattr(self.coordination_display, "orchestrator", None)
-            if not orchestrator:
-                return "No orchestrator available. Complete a turn first."
-
-            agents = getattr(orchestrator, "agents", {})
-            if not agents:
-                return "No agents available."
-
-            lines = []
-            lines.append("Agent         │ Input   │ Output  │ Reason  │ Cached  │ Total   │ Cost")
-            lines.append("──────────────┼─────────┼─────────┼─────────┼─────────┼─────────┼────────")
-
-            total_input = 0
-            total_output = 0
-            total_reasoning = 0
-            total_cached = 0
-            total_all = 0
-            total_cost = 0.0
-
-            for agent_id, agent in agents.items():
-                backend = getattr(agent, "backend", None)
-                if not backend:
-                    continue
-
-                usage = backend.get_token_usage()
-                input_tok = usage.input_tokens
-                output_tok = usage.output_tokens
-                reasoning_tok = usage.reasoning_tokens
-                cached_tok = usage.cached_input_tokens
-                total_tok = input_tok + output_tok + reasoning_tok
-                cost = usage.estimated_cost
-
-                total_input += input_tok
-                total_output += output_tok
-                total_reasoning += reasoning_tok
-                total_cached += cached_tok
-                total_all += total_tok
-                total_cost += cost
-
-                agent_name = agent_id[:12].ljust(12)
-                lines.append(
-                    f"{agent_name}  │ {input_tok:>7,} │ {output_tok:>7,} │ " f"{reasoning_tok:>7,} │ {cached_tok:>7,} │ {total_tok:>7,} │ ${cost:>6.4f}",
-                )
-
-            lines.append("──────────────┼─────────┼─────────┼─────────┼─────────┼─────────┼────────")
-            lines.append(
-                f"TOTAL         │ {total_input:>7,} │ {total_output:>7,} │ " f"{total_reasoning:>7,} │ {total_cached:>7,} │ {total_all:>7,} │ ${total_cost:>6.4f}",
-            )
-
-            return "\n".join(lines)
-
-    class WorkspaceFilesModal(BaseModal):
-        """Modal to display workspace files and open workspace directory."""
-
-        def __init__(self, display: TextualTerminalDisplay, app: "TextualApp"):
-            super().__init__()
-            self.coordination_display = display
-            self.app_ref = app
-            self.workspace_path = self._get_workspace_path()
-
-        def _get_workspace_path(self) -> Optional[Path]:
-            """Get the workspace directory path."""
-            orchestrator = getattr(self.coordination_display, "orchestrator", None)
-            if not orchestrator:
-                return None
-            workspace_dir = getattr(orchestrator, "workspace_dir", None)
-            if workspace_dir:
-                return Path(workspace_dir)
-            return None
-
-        def compose(self) -> ComposeResult:
-            with Container(id="workspace_container"):
-                yield Label("📁 Workspace Files", id="workspace_header")
-                yield TextArea(self._build_file_list(), id="workspace_content", read_only=True)
-                with Horizontal(id="workspace_buttons"):
-                    yield Button("Open Workspace", id="open_workspace_button")
-                    yield Button("Close (ESC)", id="close_workspace_button")
-
-        def _build_file_list(self) -> str:
-            """Build a list of files in the workspace."""
-            if not self.workspace_path or not self.workspace_path.exists():
-                return "No workspace directory available."
-
-            lines = [f"Workspace: {self.workspace_path}", ""]
-
-            try:
-                files = list(self.workspace_path.rglob("*"))
-                files = [f for f in files if f.is_file()]
-
-                if not files:
-                    lines.append("No files in workspace.")
-                else:
-                    lines.append(f"Files ({len(files)} total):")
-                    lines.append("-" * 50)
-
-                    # Show first 20 files
-                    for f in sorted(files)[:20]:
-                        rel_path = f.relative_to(self.workspace_path)
-                        size = f.stat().st_size
-                        size_str = self._format_size(size)
-                        lines.append(f"  {rel_path} ({size_str})")
-
-                    if len(files) > 20:
-                        lines.append(f"  ... and {len(files) - 20} more files")
-
-            except Exception as e:
-                lines.append(f"Error reading workspace: {e}")
-
-            return "\n".join(lines)
-
-        def _format_size(self, size: int) -> str:
-            """Format file size in human-readable form."""
-            for unit in ["B", "KB", "MB", "GB"]:
-                if size < 1024:
-                    return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
-                size /= 1024
-            return f"{size:.1f} TB"
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "open_workspace_button":
-                self._open_workspace()
-            elif event.button.id == "close_workspace_button":
-                self.dismiss()
-
-        def _open_workspace(self) -> None:
-            """Open the workspace directory in the system file browser."""
-            import platform
-            import subprocess
-
-            if not self.workspace_path or not self.workspace_path.exists():
-                self.app_ref.notify("No workspace directory available", severity="warning")
-                return
-
-            try:
-                system = platform.system()
-                if system == "Darwin":  # macOS
-                    subprocess.run(["open", str(self.workspace_path)])
-                elif system == "Windows":
-                    subprocess.run(["explorer", str(self.workspace_path)])
-                else:  # Linux
-                    subprocess.run(["xdg-open", str(self.workspace_path)])
-                self.app_ref.notify(f"Opened: {self.workspace_path}", severity="information")
-            except Exception as e:
-                self.app_ref.notify(f"Error opening workspace: {e}", severity="error")
-
-    class ContextModal(BaseModal):
-        """Modal for managing context paths."""
-
-        def __init__(self, display: TextualTerminalDisplay, app: "TextualApp"):
-            super().__init__()
-            self.coordination_display = display
-            self.app_ref = app
-            self.current_paths = self._get_current_paths()
-
-        def _get_current_paths(self) -> List[str]:
-            """Get current context paths from orchestrator config."""
-            orchestrator = getattr(self.coordination_display, "orchestrator", None)
-            if not orchestrator:
-                return []
-            orchestrator_cfg = getattr(orchestrator, "config", {})
-            return orchestrator_cfg.get("context_paths", [])
-
-        def compose(self) -> ComposeResult:
-            with Container(id="context_container"):
-                yield Label("📂 Context Paths", id="context_header")
-                yield Label("Current paths that agents can access:", id="context_hint")
-                yield TextArea(
-                    self._format_paths(),
-                    id="context_current_paths",
-                    read_only=True,
-                )
-                yield Label("Add new path:", id="add_path_label")
-                yield Input(placeholder="Enter path to add...", id="new_path_input")
-                with Horizontal(id="context_buttons"):
-                    yield Button("Add Path", id="add_path_button")
-                    yield Button("Close (ESC)", id="close_context_button")
-
-        def _format_paths(self) -> str:
-            """Format current paths for display."""
-            if not self.current_paths:
-                return "No context paths configured."
-            return "\n".join(f"  • {path}" for path in self.current_paths)
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "add_path_button":
-                self._add_path()
-            elif event.button.id == "close_context_button":
-                self.dismiss()
-
-        def _add_path(self) -> None:
-            """Add a new context path."""
-            input_widget = self.query_one("#new_path_input", Input)
-            new_path = input_widget.value.strip()
-
-            if not new_path:
-                self.app_ref.notify("Please enter a path", severity="warning")
-                return
-
-            path = Path(new_path).expanduser().resolve()
-            if not path.exists():
-                self.app_ref.notify(f"Path does not exist: {new_path}", severity="warning")
-                return
-
-            if str(path) in self.current_paths:
-                self.app_ref.notify("Path already in context", severity="warning")
-                return
-
-            self.current_paths.append(str(path))
-            self._update_orchestrator_paths()
-            input_widget.value = ""
-
-            # Refresh the display
-            paths_area = self.query_one("#context_current_paths", TextArea)
-            paths_area.load_text(self._format_paths())
-            self.app_ref.notify(f"Added: {path}", severity="information")
-
-        def _update_orchestrator_paths(self) -> None:
-            """Update the orchestrator config with new paths."""
-            orchestrator = getattr(self.coordination_display, "orchestrator", None)
-            if orchestrator:
-                if hasattr(orchestrator, "config"):
-                    orchestrator.config["context_paths"] = self.current_paths.copy()
-
-    class ConversationHistoryModal(BaseModal):
-        """Modal showing conversation history and current prompt."""
-
-        def __init__(
-            self,
-            conversation_history: List[Dict[str, Any]],
-            current_question: str,
-            agent_ids: List[str],
-        ):
-            super().__init__()
-            self._history = conversation_history
-            self._current_question = current_question
-            self._agent_ids = agent_ids
-
-        def compose(self) -> ComposeResult:
-            with Container(id="history_container"):
-                yield Label("📜 Conversation History", id="history_header")
-
-                # Show current prompt if any
-                if self._current_question:
-                    yield Label(f"[bold]Current:[/] {self._current_question}", id="current_prompt")
-
-                # Scrollable history container
-                with ScrollableContainer(id="history_scroll"):
-                    if self._history:
-                        for idx, entry in enumerate(reversed(self._history)):  # Most recent first
-                            yield self._create_turn_widget(entry, idx)
-                    else:
-                        yield Label("[dim]No conversation history yet.[/]", id="no_history")
-
-                yield Button("Close (ESC)", id="close_history_button")
-
-        def _get_agent_color_class(self, agent_id: str) -> str:
-            """Get the agent color class for an agent ID."""
-            if agent_id in self._agent_ids:
-                agent_idx = self._agent_ids.index(agent_id) + 1
-                return f"agent-color-{((agent_idx - 1) % 8) + 1}"
-            return "agent-color-1"
-
-        def _create_turn_widget(self, entry: Dict[str, Any], idx: int) -> Widget:
-            """Create a clickable widget for a conversation turn with agent color."""
-            from datetime import datetime
-
-            turn = entry.get("turn", "?")
-            question = entry.get("question", "")
-            answer = entry.get("answer", "")
-            agent_id = entry.get("agent_id", "")
-            model = entry.get("model", "")
-            timestamp = entry.get("timestamp", 0)
-            workspace_path = entry.get("workspace_path")
-
-            # Format timestamp
-            time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S") if timestamp else ""
-
-            # Truncate answer for display
-            answer_preview = answer[:200] + "..." if len(answer) > 200 else answer
-
-            agent_info = f"{agent_id} ({model})" if model else agent_id
-            agent_color_class = self._get_agent_color_class(agent_id)
-
-            # Build content - workspace indicator if available
-            workspace_indicator = " 📂" if workspace_path else ""
-
-            content = f"""[bold cyan]Turn {turn}[/] - {time_str}{workspace_indicator}
-[bold]Q:[/] {question}
-[dim]Winner: {agent_info}[/]
-[bold]A:[/] {answer_preview}
-"""
-            # Return a container with turn index in ID for click handling
-            # The actual_idx is the original index in _history (before reversal)
-            actual_idx = len(self._history) - 1 - idx
-            return Static(
-                content,
-                id=f"history_turn_{actual_idx}",
-                classes=f"history-turn turn-entry {agent_color_class}",
-                markup=True,
-            )
-
-        def on_click(self, event) -> None:
-            """Handle clicks on turn entries to show full details."""
-            # Walk up to find the turn widget
-            target = event.widget
-            while target and not (hasattr(target, "id") and target.id and target.id.startswith("history_turn_")):
-                target = getattr(target, "parent", None)
-
-            if target and target.id:
-                try:
-                    idx = int(target.id.split("_")[-1])
-                    if 0 <= idx < len(self._history):
-                        entry = self._history[idx]
-                        agent_id = entry.get("agent_id", "")
-                        agent_color_class = self._get_agent_color_class(agent_id)
-                        self.app.push_screen(TurnDetailModal(entry, agent_color_class))
-                except (ValueError, IndexError):
-                    pass
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "close_history_button":
-                self.dismiss()
-
-        def key_escape(self) -> None:
-            """Close on escape."""
-            self.dismiss()
-
-    class TurnDetailModal(BaseModal):
-        """Modal showing full details of a conversation turn."""
-
-        def __init__(
-            self,
-            turn_data: Dict[str, Any],
-            agent_color_class: str,
-        ):
-            super().__init__()
-            self._turn_data = turn_data
-            self._agent_color_class = agent_color_class
-
-        def compose(self) -> ComposeResult:
-            from datetime import datetime
-
-            turn = self._turn_data.get("turn", "?")
-            question = self._turn_data.get("question", "")
-            answer = self._turn_data.get("answer", "")
-            agent_id = self._turn_data.get("agent_id", "")
-            model = self._turn_data.get("model", "")
-            timestamp = self._turn_data.get("timestamp", 0)
-            workspace_path = self._turn_data.get("workspace_path")
-
-            # Format timestamp
-            time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S") if timestamp else ""
-            agent_info = f"{agent_id} ({model})" if model else agent_id
-
-            with Container(id="turn_detail_container", classes=self._agent_color_class):
-                # Header with turn info
-                yield Label(
-                    f"[bold cyan]Turn {turn}[/] - {time_str}",
-                    id="turn_detail_header",
-                    markup=True,
-                )
-                yield Label(f"[dim]Winner: {agent_info}[/]", id="turn_detail_agent", markup=True)
-
-                # Question
-                yield Label("[bold]Question:[/]", markup=True)
-                yield Static(question, id="turn_detail_question")
-
-                # Full answer in scrollable container
-                yield Label("[bold]Answer:[/]", markup=True)
-                with ScrollableContainer(id="turn_detail_answer_scroll"):
-                    yield Static(answer, id="turn_detail_answer")
-
-                # Footer buttons
-                with Horizontal(id="turn_detail_footer"):
-                    if workspace_path:
-                        yield Button("📂 Open Workspace", id="turn_detail_workspace_button")
-                    yield Button("Close (ESC)", id="turn_detail_close_button")
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "turn_detail_close_button":
-                self.dismiss()
-            elif event.button.id == "turn_detail_workspace_button":
-                self._open_workspace_in_explorer()
-
-        def _open_workspace_in_explorer(self) -> None:
-            """Open the turn's workspace directory in the system file explorer."""
-            import platform
-            import subprocess
-
-            workspace_path = self._turn_data.get("workspace_path")
-            if not workspace_path:
-                self.notify("No workspace available for this turn", severity="warning", timeout=2)
-                return
-
-            try:
-                system = platform.system()
-                if system == "Darwin":  # macOS
-                    subprocess.run(["open", str(workspace_path)])
-                elif system == "Windows":
-                    subprocess.run(["explorer", str(workspace_path)])
-                else:  # Linux
-                    subprocess.run(["xdg-open", str(workspace_path)])
-            except Exception as e:
-                self.notify(f"Error opening workspace: {e}", severity="error", timeout=3)
-
-        def key_escape(self) -> None:
-            """Close on escape."""
-            self.dismiss()
-
-    class MetricsModal(BaseModal):
-        """Modal to display tool execution metrics."""
-
-        def __init__(self, display: TextualTerminalDisplay):
-            super().__init__()
-            self.coordination_display = display
-
-        def compose(self) -> ComposeResult:
-            with Container(id="metrics_container"):
-                yield Label("📊 Tool Metrics", id="metrics_header")
-                yield TextArea(self._build_metrics_table(), id="metrics_content", read_only=True)
-                yield Button("Close (ESC)", id="close_metrics_button")
-
-        def _build_metrics_table(self) -> str:
-            """Build a formatted metrics table."""
-            orchestrator = getattr(self.coordination_display, "orchestrator", None)
-            if not orchestrator:
-                return "No orchestrator available. Complete a turn first."
-
-            # Try to get tool metrics from orchestrator or agents
-            tool_metrics = self._collect_tool_metrics(orchestrator)
-
-            if not tool_metrics:
-                return "No tool execution metrics available yet."
-
-            lines = []
-            lines.append("Tool Name                │ Calls │ Success │ Failed │ Avg Time")
-            lines.append("─────────────────────────┼───────┼─────────┼────────┼──────────")
-
-            for tool_name, metrics in sorted(tool_metrics.items()):
-                calls = metrics.get("calls", 0)
-                success = metrics.get("success", 0)
-                failed = metrics.get("failed", 0)
-                avg_time = metrics.get("avg_time", 0.0)
-
-                tool_display = tool_name[:23].ljust(23)
-                lines.append(
-                    f"{tool_display}  │ {calls:>5} │ {success:>7} │ {failed:>6} │ {avg_time:>7.2f}s",
-                )
-
-            return "\n".join(lines)
-
-        def _collect_tool_metrics(self, orchestrator) -> Dict[str, Dict[str, Any]]:
-            """Collect tool metrics from the orchestrator or agents."""
-            metrics = {}
-
-            # Try to get metrics from orchestrator's tool tracker if available
-            tool_tracker = getattr(orchestrator, "tool_tracker", None)
-            if tool_tracker:
-                raw_metrics = getattr(tool_tracker, "metrics", {})
-                for tool_name, data in raw_metrics.items():
-                    metrics[tool_name] = {
-                        "calls": data.get("call_count", 0),
-                        "success": data.get("success_count", 0),
-                        "failed": data.get("call_count", 0) - data.get("success_count", 0),
-                        "avg_time": data.get("avg_duration", 0.0),
-                    }
-                return metrics
-
-            # Fallback: try to collect from agents
-            agents = getattr(orchestrator, "agents", {})
-            for agent_id, agent in agents.items():
-                backend = getattr(agent, "backend", None)
-                if not backend:
-                    continue
-                tool_stats = getattr(backend, "tool_execution_stats", {})
-                for tool_name, stats in tool_stats.items():
-                    if tool_name not in metrics:
-                        metrics[tool_name] = {
-                            "calls": 0,
-                            "success": 0,
-                            "failed": 0,
-                            "total_time": 0.0,
-                        }
-                    metrics[tool_name]["calls"] += stats.get("calls", 0)
-                    metrics[tool_name]["success"] += stats.get("success", 0)
-                    metrics[tool_name]["failed"] += stats.get("failed", 0)
-                    metrics[tool_name]["total_time"] += stats.get("total_time", 0.0)
-
-            # Calculate averages
-            for tool_name in metrics:
-                calls = metrics[tool_name]["calls"]
-                if calls > 0:
-                    metrics[tool_name]["avg_time"] = metrics[tool_name].get("total_time", 0.0) / calls
-                else:
-                    metrics[tool_name]["avg_time"] = 0.0
-
-            return metrics
-
-    class BroadcastPromptModal(BaseModal):
-        """Modal for handling human input requests from agents during broadcast."""
-
-        def __init__(self, sender_agent_id: str, question: str, timeout: int, app: "TextualApp"):
-            super().__init__()
-            self.sender_agent_id = sender_agent_id
-            self.question = question
-            self.timeout = timeout
-            self.app_ref = app
-            self.response: Optional[str] = None
-            self._start_time = time.time()
-
-        def compose(self) -> ComposeResult:
-            with Container(id="broadcast_container"):
-                yield Label("⏸ ALL AGENTS PAUSED — HUMAN INPUT NEEDED ⏸", id="broadcast_banner")
-                yield Label(f"From: {self.sender_agent_id}", id="broadcast_sender")
-                yield Label("Question:", id="broadcast_question_label")
-                yield TextArea(self.question, id="broadcast_question", read_only=True)
-                yield Label(f"Timeout: {self.timeout}s", id="broadcast_timeout")
-                yield Label("Your response:", id="response_label")
-                yield Input(placeholder="Type your response here...", id="broadcast_input")
-                with Horizontal(id="broadcast_buttons"):
-                    yield Button("Submit", id="submit_broadcast_button", variant="primary")
-                    yield Button("Skip", id="skip_broadcast_button")
-
-        def on_mount(self) -> None:
-            """Focus the input when mounted."""
-            try:
-                input_widget = self.query_one("#broadcast_input", Input)
-                input_widget.focus()
-            except Exception:
-                pass
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "submit_broadcast_button":
-                input_widget = self.query_one("#broadcast_input", Input)
-                self.response = input_widget.value.strip() or None
-                self.dismiss(self.response)
-            elif event.button.id == "skip_broadcast_button":
-                self.response = None
-                self.dismiss(None)
-
-        def on_input_submitted(self, event: Input.Submitted) -> None:
-            """Handle Enter key in input."""
-            if event.input.id == "broadcast_input":
-                self.response = event.value.strip() or None
-                self.dismiss(self.response)
-
-    class StructuredBroadcastPromptModal(BaseModal):
-        """Modal for handling structured questions with options from agents during broadcast."""
-
-        BINDINGS = [
-            ("escape", "close", "Skip"),
-        ]
-
-        def __init__(
-            self,
-            sender_agent_id: str,
-            structured_questions: List[Any],
-            timeout: int,
-            app: "TextualApp",
-        ):
-            super().__init__()
-            self.sender_agent_id = sender_agent_id
-            self.structured_questions = structured_questions
-            self.timeout = timeout
-            self.app_ref = app
-            self._start_time = time.time()
-            self._current_question_idx = 0
-            self._responses: List[Dict[str, Any]] = []
-            # Track selections per question
-            self._selections: Dict[int, set] = {i: set() for i in range(len(structured_questions))}
-            self._other_texts: Dict[int, str] = {i: "" for i in range(len(structured_questions))}
-
-        def compose(self) -> ComposeResult:
-            with Container(id="structured_broadcast_container"):
-                yield Label("⏸ ALL AGENTS PAUSED — HUMAN INPUT NEEDED ⏸", id="broadcast_banner")
-                yield Label(f"From: {self.sender_agent_id}", id="broadcast_sender")
-                yield Label(f"Timeout: {self.timeout}s", id="broadcast_timeout")
-
-                # Question progress indicator
-                total_qs = len(self.structured_questions)
-                yield Label(
-                    f"Question 1 of {total_qs}",
-                    id="question_progress",
-                )
-
-                # Question container (will be populated in on_mount)
-                yield Container(id="question_container")
-
-                # Navigation buttons
-                with Horizontal(id="broadcast_buttons"):
-                    yield Button("Previous", id="prev_question_button", disabled=True)
-                    yield Button("Next", id="next_question_button", variant="primary")
-                    yield Button("Skip All", id="skip_broadcast_button")
-
-        def _render_current_question(self) -> None:
-            """Render the current question's UI elements."""
-            from textual.containers import VerticalScroll
-            from textual.widgets import Checkbox, RadioButton, RadioSet
-
-            q = self.structured_questions[self._current_question_idx]
-            q_idx = self._current_question_idx
-
-            # Get question attributes
-            text = q.text if hasattr(q, "text") else q.get("text", "")
-            options = q.options if hasattr(q, "options") else q.get("options", [])
-            multi_select = q.multi_select if hasattr(q, "multi_select") else q.get("multiSelect", False)
-            q.allow_other if hasattr(q, "allow_other") else q.get("allowOther", True)
-
-            container = self.query_one("#question_container", Container)
-            container.remove_children()
-
-            # Question text - use unique ID per question to avoid duplicates
-            container.mount(Label(text, id=f"question_text_{q_idx}", classes="question_text"))
-
-            # Only show options section if there are options to display
-            if options:
-                if multi_select:
-                    container.mount(Label("Select all that apply:", classes="options_hint"))
-                    scroll = VerticalScroll(id=f"options_scroll_{q_idx}")
-                    container.mount(scroll)
-                    for opt in options:
-                        opt_id = opt.id if hasattr(opt, "id") else opt.get("id", "")
-                        opt_label = opt.label if hasattr(opt, "label") else opt.get("label", "")
-                        opt_desc = opt.description if hasattr(opt, "description") else opt.get("description", "")
-                        display_text = f"{opt_label}" + (f" - {opt_desc}" if opt_desc else "")
-                        cb = Checkbox(
-                            display_text,
-                            id=f"opt_{q_idx}_{opt_id}",
-                            value=opt_id in self._selections[q_idx],
-                        )
-                        scroll.mount(cb)
-                else:
-                    container.mount(Label("Select one:", classes="options_hint"))
-                    radio_set = RadioSet(id=f"radioset_{q_idx}")
-                    container.mount(radio_set)
-                    for opt in options:
-                        opt_id = opt.id if hasattr(opt, "id") else opt.get("id", "")
-                        opt_label = opt.label if hasattr(opt, "label") else opt.get("label", "")
-                        opt_desc = opt.description if hasattr(opt, "description") else opt.get("description", "")
-                        display_text = f"{opt_label}" + (f" - {opt_desc}" if opt_desc else "")
-                        rb = RadioButton(display_text, id=f"opt_{q_idx}_{opt_id}")
-                        radio_set.mount(rb)
-
-            # Always show text input for additional comments/response
-            if options:
-                container.mount(Label("Additional comments (optional):", classes="other_label"))
-            else:
-                container.mount(Label("Your response:", classes="other_label"))
-            other_input = Input(
-                placeholder="Type your response here...",
-                id=f"other_input_{q_idx}",
-                value=self._other_texts.get(q_idx, ""),
-            )
-            container.mount(other_input)
-
-        def on_mount(self) -> None:
-            """Initial setup when modal is mounted."""
-            # Render the first question now that widgets are mounted
-            self._render_current_question()
-            self._update_navigation_buttons()
-
-        def _update_navigation_buttons(self) -> None:
-            """Update button states based on current question."""
-            prev_btn = self.query_one("#prev_question_button", Button)
-            next_btn = self.query_one("#next_question_button", Button)
-            progress = self.query_one("#question_progress", Label)
-
-            prev_btn.disabled = self._current_question_idx == 0
-
-            is_last = self._current_question_idx == len(self.structured_questions) - 1
-            next_btn.label = "Submit" if is_last else "Next"
-            next_btn.variant = "success" if is_last else "primary"
-
-            progress.update(f"Question {self._current_question_idx + 1} of {len(self.structured_questions)}")
-
-        def _save_current_selections(self) -> None:
-            """Save selections from current question before navigating."""
-            q_idx = self._current_question_idx
-            q = self.structured_questions[q_idx]
-            multi_select = q.multi_select if hasattr(q, "multi_select") else q.get("multiSelect", False)
-
-            # Save checkbox/radio selections
-            if multi_select:
-                # Get all checkboxes for this question
-                try:
-                    scroll = self.query_one("#options_scroll", VerticalScroll)
-                    self._selections[q_idx] = set()
-                    for child in scroll.children:
-                        if hasattr(child, "value") and child.value:
-                            # Extract option ID from widget ID: opt_{q_idx}_{opt_id}
-                            widget_id = child.id or ""
-                            parts = widget_id.split("_", 2)
-                            if len(parts) >= 3:
-                                self._selections[q_idx].add(parts[2])
-                except Exception:
-                    pass
-            else:
-                # Get selected radio button
-                try:
-                    from textual.widgets import RadioSet
-
-                    radio_set = self.query_one(f"#radioset_{q_idx}", RadioSet)
-                    self._selections[q_idx] = set()
-                    if radio_set.pressed_button:
-                        widget_id = radio_set.pressed_button.id or ""
-                        parts = widget_id.split("_", 2)
-                        if len(parts) >= 3:
-                            self._selections[q_idx].add(parts[2])
-                except Exception:
-                    pass
-
-            # Save other text
-            try:
-                other_input = self.query_one(f"#other_input_{q_idx}", Input)
-                self._other_texts[q_idx] = other_input.value
-            except Exception:
-                pass
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "prev_question_button":
-                self._save_current_selections()
-                if self._current_question_idx > 0:
-                    self._current_question_idx -= 1
-                    self._render_current_question()
-                    self._update_navigation_buttons()
-
-            elif event.button.id == "next_question_button":
-                self._save_current_selections()
-                if self._current_question_idx < len(self.structured_questions) - 1:
-                    # Move to next question
-                    self._current_question_idx += 1
-                    self._render_current_question()
-                    self._update_navigation_buttons()
-                else:
-                    # Submit all responses
-                    self._submit_all()
-
-            elif event.button.id == "skip_broadcast_button":
-                self.dismiss(None)
-
-        def _submit_all(self) -> None:
-            """Collect all responses and dismiss modal."""
-            responses = []
-            for q_idx in range(len(self.structured_questions)):
-                selected = list(self._selections.get(q_idx, set()))
-                other_text = self._other_texts.get(q_idx, "").strip() or None
-                responses.append(
-                    {
-                        "questionIndex": q_idx,
-                        "selectedOptions": selected,
-                        "otherText": other_text,
-                    },
-                )
-            self.dismiss(responses)
-
-        def action_close(self) -> None:
-            """Handle escape key."""
-            self.dismiss(None)
-
-    class FileInspectionModal(BaseModal):
-        """Modal for inspecting files in the workspace with tree view and preview."""
-
-        def __init__(self, workspace_path: Path, app: "TextualApp"):
-            super().__init__()
-            self.workspace_path = workspace_path
-            self.app_ref = app
-            self.selected_file: Optional[Path] = None
-
-        def compose(self) -> ComposeResult:
-            from textual.widgets import DirectoryTree
-
-            with Container(id="file_inspection_container"):
-                yield Label("📁 File Inspection", id="file_inspection_header")
-                with Horizontal(id="file_inspection_content"):
-                    # Left panel: Directory tree
-                    with Container(id="file_tree_panel"):
-                        yield Label("Workspace Files:", id="tree_label")
-                        if self.workspace_path and self.workspace_path.exists():
-                            yield DirectoryTree(str(self.workspace_path), id="workspace_tree")
-                        else:
-                            yield Label("No workspace available", id="no_workspace_label")
-                    # Right panel: File preview
-                    with Container(id="file_preview_panel"):
-                        yield Label("File Preview:", id="preview_label")
-                        yield TextArea("Select a file to preview", id="file_preview", read_only=True)
-                with Horizontal(id="file_inspection_buttons"):
-                    yield Button("Open in Editor", id="open_editor_button")
-                    yield Button("Close (ESC)", id="close_inspection_button")
-
-        def on_directory_tree_file_selected(self, event) -> None:
-            """Handle file selection in the tree."""
-            self.selected_file = Path(event.path)
-            self._update_preview()
-
-        def _update_preview(self) -> None:
-            """Update the file preview panel."""
-            preview = self.query_one("#file_preview", TextArea)
-
-            if not self.selected_file or not self.selected_file.exists():
-                preview.load_text("Select a file to preview")
-                return
-
-            if self.selected_file.is_dir():
-                preview.load_text(f"Directory: {self.selected_file.name}\n\nSelect a file to view its contents.")
-                return
-
-            # Check file size - limit preview to reasonable size
-            try:
-                file_size = self.selected_file.stat().st_size
-                if file_size > 100000:  # 100KB limit
-                    preview.load_text(f"File too large to preview ({file_size:,} bytes)\n\nUse 'Open in Editor' to view.")
-                    return
-
-                # Try to read as text
-                content = self.selected_file.read_text(encoding="utf-8", errors="replace")
-                # Limit lines for preview
-                lines = content.split("\n")
-                if len(lines) > 200:
-                    content = "\n".join(lines[:200]) + f"\n\n... ({len(lines) - 200} more lines)"
-                preview.load_text(content)
-            except Exception as e:
-                preview.load_text(f"Cannot preview file: {e}")
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "open_editor_button":
-                self._open_in_editor()
-            elif event.button.id == "close_inspection_button":
-                self.dismiss()
-
-        def _open_in_editor(self) -> None:
-            """Open the selected file in the system editor."""
-            import platform
-            import subprocess
-
-            if not self.selected_file or not self.selected_file.exists():
-                self.app_ref.notify("No file selected", severity="warning")
-                return
-
-            if self.selected_file.is_dir():
-                self.app_ref.notify("Cannot open directory in editor", severity="warning")
-                return
-
-            try:
-                system = platform.system()
-                if system == "Darwin":  # macOS
-                    subprocess.run(["open", str(self.selected_file)])
-                elif system == "Windows":
-                    subprocess.run(["start", str(self.selected_file)], shell=True)
-                else:  # Linux
-                    subprocess.run(["xdg-open", str(self.selected_file)])
-                self.app_ref.notify(f"Opened: {self.selected_file.name}", severity="information")
-            except Exception as e:
-                self.app_ref.notify(f"Error opening file: {e}", severity="error")
-
-    class AgentOutputModal(BaseModal):
-        """Modal for viewing full agent output with syntax highlighting."""
-
-        def __init__(
-            self,
-            agent_id: str,
-            agent_outputs: List[str],
-            model_name: Optional[str] = None,
-            all_agents: Optional[Dict[str, Dict]] = None,
-            current_prompt: Optional[str] = None,
-        ):
-            super().__init__()
-            self.current_agent_id = agent_id
-            self.agent_outputs = agent_outputs
-            self.model_name = model_name or "Unknown"
-            self.all_agents = all_agents or {}
-            self.current_prompt = current_prompt or ""
-
-        def compose(self) -> ComposeResult:
-            with Container(id="agent_output_container"):
-                yield Label(
-                    f"📄 Full Output: {self.current_agent_id} ({self.model_name})",
-                    id="agent_output_header",
-                )
-                # Show prompt preview if available
-                if self.current_prompt:
-                    # Truncate long prompts with ellipsis
-                    prompt_preview = self.current_prompt[:200] + "..." if len(self.current_prompt) > 200 else self.current_prompt
-                    # Replace newlines for single-line display
-                    prompt_preview = prompt_preview.replace("\n", " ").strip()
-                    yield Label(
-                        f"💬 Prompt: {prompt_preview}",
-                        id="agent_output_prompt",
-                    )
-                # Agent toggle buttons if multiple agents
-                if len(self.all_agents) > 1:
-                    with Horizontal(id="agent_toggle_buttons"):
-                        for aid in sorted(self.all_agents.keys()):
-                            agent_model = self.all_agents[aid].get("model", "")
-                            # Shorten model name for button label
-                            short_model = agent_model.split("/")[-1] if agent_model else ""
-                            if short_model and len(short_model) > 20:
-                                short_model = short_model[:17] + "..."
-                            label = f"{aid}" + (f" ({short_model})" if short_model else "")
-                            btn = Button(label, id=f"agent_btn_{aid}", classes="agent-toggle-btn")
-                            if aid == self.current_agent_id:
-                                btn.add_class("selected")
-                            yield btn
-                yield Label(
-                    f"Total lines: {len(self.agent_outputs)}",
-                    id="agent_output_stats",
-                )
-                # Join all outputs and display in scrollable text area
-                full_content = "\n".join(self.agent_outputs) if self.agent_outputs else "(No output recorded)"
-                yield TextArea(full_content, id="agent_output_text", read_only=True)
-                with Horizontal(id="agent_output_buttons"):
-                    yield Button("Copy to Clipboard", id="copy_output_button")
-                    yield Button("Save to File", id="save_output_button")
-                    yield Button("Close (ESC)", id="close_output_button")
-
-        def on_mount(self) -> None:
-            """Scroll to bottom when modal opens."""
-            try:
-                text_area = self.query_one("#agent_output_text", TextArea)
-                # Move cursor to end of document
-                text_area.move_cursor_relative(rows=999999, columns=0)
-            except Exception:
-                pass
-
-        def on_button_pressed(self, event: Button.Pressed) -> None:
-            """Handle button presses."""
-            if event.button.id == "close_output_button":
-                self.dismiss()
-            elif event.button.id == "copy_output_button":
-                self._copy_to_clipboard()
-            elif event.button.id == "save_output_button":
-                self._save_to_file()
-            elif event.button.id and event.button.id.startswith("agent_btn_"):
-                # Switch to different agent
-                new_agent_id = event.button.id.replace("agent_btn_", "")
-                self._switch_agent(new_agent_id)
-
-        def _switch_agent(self, agent_id: str) -> None:
-            """Switch to viewing a different agent's output."""
-            if agent_id not in self.all_agents:
-                return
-            self.current_agent_id = agent_id
-            agent_data = self.all_agents[agent_id]
-            self.agent_outputs = agent_data.get("outputs", [])
-            self.model_name = agent_data.get("model") or "Unknown"
-
-            # Update header
-            try:
-                header = self.query_one("#agent_output_header", Label)
-                header.update(f"📄 Full Output: {self.current_agent_id} ({self.model_name})")
-            except Exception:
-                pass
-
-            # Update stats
-            try:
-                stats = self.query_one("#agent_output_stats", Label)
-                stats.update(f"Total lines: {len(self.agent_outputs)}")
-            except Exception:
-                pass
-
-            # Update content
-            try:
-                text_area = self.query_one("#agent_output_text", TextArea)
-                full_content = "\n".join(self.agent_outputs) if self.agent_outputs else "(No output recorded)"
-                text_area.load_text(full_content)
-                # Scroll to bottom
-                text_area.move_cursor_relative(rows=999999, columns=0)
-            except Exception:
-                pass
-
-            # Update button selection states
-            try:
-                for btn in self.query(".agent-toggle-btn"):
-                    if btn.id == f"agent_btn_{agent_id}":
-                        btn.add_class("selected")
-                    else:
-                        btn.remove_class("selected")
-            except Exception:
-                pass
-
-        def _copy_to_clipboard(self) -> None:
-            """Copy output to system clipboard."""
-            import platform
-            import subprocess
-
-            full_content = "\n".join(self.agent_outputs)
-            try:
-                system = platform.system()
-                if system == "Darwin":  # macOS
-                    process = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-                    process.communicate(full_content.encode("utf-8"))
-                elif system == "Windows":
-                    process = subprocess.Popen(["clip"], stdin=subprocess.PIPE, shell=True)
-                    process.communicate(full_content.encode("utf-8"))
-                else:  # Linux
-                    process = subprocess.Popen(["xclip", "-selection", "clipboard"], stdin=subprocess.PIPE)
-                    process.communicate(full_content.encode("utf-8"))
-                self.app.notify(f"Copied {len(self.agent_outputs)} lines to clipboard", severity="information")
-            except Exception as e:
-                self.app.notify(f"Failed to copy: {e}", severity="error")
-
-        def _save_to_file(self) -> None:
-            """Save output to a file in the log directory."""
-            from datetime import datetime
-
-            from massgen.logging.log_directory import get_log_session_dir
-
-            try:
-                output_dir = get_log_session_dir() / "agent_outputs"
-                output_dir.mkdir(parents=True, exist_ok=True)
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{self.agent_id}_{timestamp}.txt"
-                output_path = output_dir / filename
-
-                full_content = "\n".join(self.agent_outputs)
-                output_path.write_text(full_content, encoding="utf-8")
-
-                self.app.notify(f"Saved to: {output_path.name}", severity="information")
-            except Exception as e:
-                self.app.notify(f"Failed to save: {e}", severity="error")
-
-        def key_escape(self) -> None:
-            """Close on Escape."""
-            self.dismiss()
+    # =============================================================================
+    # Modal classes have been extracted to massgen/frontend/displays/textual/widgets/modals/
+    # They are now imported at module level:
+    # - KeyboardShortcutsModal, MCPStatusModal
+    # - AnswerBrowserModal, TimelineModal, BrowserTabsModal, WorkspaceBrowserModal
+    # - VoteResultsModal, OrchestratorEventsModal, CoordinationTableModal, AgentSelectorModal
+    # - SystemStatusModal, TextContentModal, CostBreakdownModal, MetricsModal
+    # - ContextModal, ConversationHistoryModal, TurnDetailModal
+    # - BroadcastPromptModal, StructuredBroadcastPromptModal
+    # - WorkspaceFilesModal, FileInspectionModal
+    # - AgentOutputModal
+    # =============================================================================
 
     class PostEvaluationPanel(Static):
         """Displays the most recent post-evaluation snippets."""

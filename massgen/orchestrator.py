@@ -55,6 +55,7 @@ from .mcp_tools.hooks import (
     GeneralHookManager,
     HighPriorityTaskReminderHook,
     HookType,
+    HumanInputHook,
     MidStreamInjectionHook,
     RoundTimeoutPostHook,
     RoundTimeoutPreHook,
@@ -167,6 +168,7 @@ class Orchestrator(ChatAgent):
         enable_rate_limit: bool = False,
         trace_classification: str = "legacy",
         generated_personas: Optional[Dict[str, Any]] = None,
+        plan_session_id: Optional[str] = None,
     ):
         """
         Initialize MassGen orchestrator.
@@ -192,6 +194,7 @@ class Orchestrator(ChatAgent):
                                   coordination/status as non-content for server mode.
             generated_personas: Pre-generated personas from previous turn (for multi-turn persistence)
                                Format: {agent_id: GeneratedPersona, ...}
+            plan_session_id: Optional plan session ID for plan execution mode (prevents workspace contamination)
         """
         super().__init__(
             session_id,
@@ -203,6 +206,7 @@ class Orchestrator(ChatAgent):
         self.agent_states = {aid: AgentState() for aid in agents.keys()}
         self.config = config or AgentConfig.create_openai_config()
         self.dspy_paraphraser = dspy_paraphraser
+        self._plan_session_id = plan_session_id
 
         # Debug: Log timeout config values
         logger.info(
@@ -281,6 +285,9 @@ class Orchestrator(ChatAgent):
         self._active_streams: Dict = {}
         self._active_tasks: Dict = {}
 
+        # Human input hook for injecting user input during execution
+        # Shared across all agents (one per orchestration session)
+        self._human_input_hook: Optional[HumanInputHook] = None
         # Async subagent completion tracking
         # Stores pending results for each parent agent until they can be injected
         # Format: {parent_agent_id: [(subagent_id, SubagentResult), ...]}
@@ -3408,7 +3415,17 @@ Your answer:"""
                                 f"VOTE BLOCK ENTERED for {agent_id}, result_data={result_data}",
                             )
                             # Ignore votes from agents with restart pending (votes are about current state)
-                            if self._check_restart_pending(agent_id):
+                            # EXCEPTION: For single agent, if it's voting for itself after producing
+                            # its first answer, accept the vote (no other agents to wait for)
+                            restart_pending = self._check_restart_pending(agent_id)
+                            is_single_agent = len(self.agents) == 1
+                            agent_has_answer = self.agent_states[agent_id].answer is not None
+                            if restart_pending and is_single_agent and agent_has_answer:
+                                # Single agent voting for itself - clear restart_pending and accept vote
+                                self.agent_states[agent_id].restart_pending = False
+                                restart_pending = False
+                                logger.info(f"[Orchestrator] Single agent {agent_id} vote accepted (has own answer)")
+                            if restart_pending:
                                 voted_for = result_data.get("agent_id", "<unknown>")
                                 reason = result_data.get("reason", "No reason provided")
                                 # Track the ignored vote action
@@ -3634,6 +3651,20 @@ Your answer:"""
                             agent.backend.end_round_tracking("restarted")
                         completed_agent_ids.add(agent_id)
                         log_stream_chunk("orchestrator", "done", None, agent_id)
+
+                        # Phase 13.1: Emit token usage update for TUI status ribbon
+                        if agent and hasattr(agent.backend, "token_usage") and agent.backend.token_usage:
+                            token_usage = agent.backend.token_usage
+                            yield StreamChunk(
+                                type="token_usage_update",
+                                source=agent_id,
+                                usage={
+                                    "input_tokens": token_usage.input_tokens or 0,
+                                    "output_tokens": token_usage.output_tokens or 0,
+                                    "estimated_cost": token_usage.estimated_cost or 0,
+                                },
+                            )
+
                         # Note: Removed agent_status: completed emission here - it was causing
                         # agents to show "Done" immediately before they've done any work.
                         # Status updates are properly handled by the "result" handler.
@@ -4552,6 +4583,14 @@ Your answer:"""
         reminder_hook = HighPriorityTaskReminderHook()
         manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
+        # Register human input hook (shared across all agents)
+        # Create on first agent setup, reuse for subsequent agents
+        if self._human_input_hook is None:
+            self._human_input_hook = HumanInputHook()
+            # Share hook with display so TUI can queue input
+            self._share_human_input_hook_with_display()
+        manager.register_global_hook(HookType.POST_TOOL_USE, self._human_input_hook)
+
         # Register subagent completion hook for async result injection
         if self._async_subagents_enabled:
             subagent_hook = SubagentCompleteHook(
@@ -4582,6 +4621,31 @@ Your answer:"""
         logger.debug(
             f"[Orchestrator] Set up hook manager for {agent_id} with mid-stream and reminder hooks",
         )
+
+    def _share_human_input_hook_with_display(self) -> None:
+        """Share the human input hook reference with the TUI display.
+
+        This allows the TUI to queue user input for injection during execution.
+        Called once when the human input hook is first created.
+        """
+        if not self._human_input_hook:
+            return
+
+        # Get display from coordination_ui if available
+        display = None
+        if hasattr(self, "coordination_ui") and self.coordination_ui:
+            display = getattr(self.coordination_ui, "display", None)
+
+        if not display:
+            logger.debug("[Orchestrator] No display available for human input hook sharing")
+            return
+
+        # Check if display supports human input hook
+        if hasattr(display, "set_human_input_hook"):
+            display.set_human_input_hook(self._human_input_hook)
+            logger.info("[Orchestrator] Shared human input hook with TUI display")
+        else:
+            logger.debug("[Orchestrator] Display does not support human input hook")
 
     def _register_round_timeout_hooks(
         self,
@@ -4788,6 +4852,12 @@ Your answer:"""
         # Register high-priority task reminder hook
         reminder_hook = HighPriorityTaskReminderHook()
         manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+
+        # Register human input hook (shared across all agents)
+        if self._human_input_hook is None:
+            self._human_input_hook = HumanInputHook()
+            self._share_human_input_hook_with_display()
+        manager.register_global_hook(HookType.POST_TOOL_USE, self._human_input_hook)
 
         # Register subagent completion hook for async result injection
         if self._async_subagents_enabled:
@@ -7157,6 +7227,15 @@ Your answer:"""
                     )
                     self._final_presentation_content = existing_answer
 
+                    # Force a workspace snapshot before final answer saving in single-agent skip mode
+                    if is_single_agent_mode and agent and hasattr(agent, "backend") and agent.backend:
+                        filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+                        if filesystem_manager:
+                            await filesystem_manager.save_snapshot(
+                                timestamp=None,  # Use None for final snapshots
+                                is_final=True,
+                            )
+
                     # Save the final snapshot (creates final/ directory with answer.txt)
                     # This copies the agent's workspace to the final directory
                     final_context = self.get_last_context(self._selected_agent)
@@ -8631,12 +8710,17 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         if not self._selected_agent or not self._final_presentation_content:
             return None
 
-        winning_agent = self.agents.get(self._selected_agent)
+        # Use the final log directory workspace which we just saved
+        # This is guaranteed to have the correct content (from either workspace or snapshot_storage)
+        from massgen.logger_config import get_log_session_dir
+
         workspace_path = None
-        if winning_agent and winning_agent.backend.filesystem_manager:
-            workspace_path = str(
-                winning_agent.backend.filesystem_manager.get_current_workspace(),
-            )
+        log_session_dir = get_log_session_dir()
+        if log_session_dir:
+            final_workspace = log_session_dir / "final" / self._selected_agent / "workspace"
+            if final_workspace.exists():
+                workspace_path = str(final_workspace)
+                logger.info(f"[Orchestrator] Using final log workspace for session persistence: {workspace_path}")
 
         return {
             "final_answer": self._final_presentation_content,
@@ -9011,8 +9095,17 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                         f"[Orchestrator] Cleared workspace for {agent_id}: {workspace_path}",
                     )
 
+                    # Check if this is a plan→execute transition
+                    # For plan execution, we want a clean workspace (planning artifacts in context only)
+                    skip_workspace_copy = False
+                    if self._plan_session_id:
+                        skip_workspace_copy = True
+                        logger.info(
+                            f"[Orchestrator] Skipping workspace pre-population for plan execution (plan_session: {self._plan_session_id})",
+                        )
+
                     # Pre-populate with previous turn's results if available (creates writable copy)
-                    if previous_turn_workspace and previous_turn_workspace.exists():
+                    if not skip_workspace_copy and previous_turn_workspace and previous_turn_workspace.exists():
                         logger.info(
                             f"[Orchestrator] Pre-populating {agent_id} workspace with writable copy of turn n-1 from {previous_turn_workspace}",
                         )

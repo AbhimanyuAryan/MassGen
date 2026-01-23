@@ -7,7 +7,9 @@ Provides a horizontal tab bar for switching between agent panels.
 
 from typing import Dict, List, Optional
 
+from rich.text import Text
 from textual.app import ComposeResult
+from textual.containers import Horizontal
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -24,6 +26,21 @@ class AgentTabChanged(Message):
             agent_id: The ID of the newly active agent.
         """
         self.agent_id = agent_id
+        super().__init__()
+
+
+class SessionInfoClicked(Message):
+    """Message emitted when session info is clicked to show full prompt."""
+
+    def __init__(self, turn: int, question: str) -> None:
+        """Initialize the message.
+
+        Args:
+            turn: Current turn number.
+            question: Full question text.
+        """
+        self.turn = turn
+        self.question = question
         super().__init__()
 
 
@@ -44,6 +61,52 @@ def _tab_log(msg: str) -> None:
         pass
 
 
+class SessionInfoWidget(Static):
+    """Clickable session info widget showing turn and question."""
+
+    can_focus = True
+
+    def __init__(
+        self,
+        turn: int = 1,
+        question: str = "",
+        *,
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+    ) -> None:
+        super().__init__(id=id, classes=classes)
+        self._turn = turn
+        self._question = question
+
+    def render(self) -> Text:
+        """Render the session info."""
+        text = Text()
+
+        # Line 1: Turn number with icon prefix (blue for distinction)
+        text.append("◈ ", style="#58a6ff")
+        text.append(f"Turn {self._turn}", style="#58a6ff")
+
+        # Line 2: Truncated question (dimmed)
+        if self._question and self._question != "Welcome! Type your question below...":
+            text.append("\n")
+            q = self._question.replace("\n", " ").strip()
+            if len(q) > 40:
+                q = q[:37] + "…"
+            text.append(q, style="italic #6e7681")
+
+        return text
+
+    def update_info(self, turn: int, question: str) -> None:
+        """Update turn and question."""
+        self._turn = turn
+        self._question = question
+        self.refresh()
+
+    async def on_click(self) -> None:
+        """Handle click to show full prompt."""
+        self.post_message(SessionInfoClicked(self._turn, self._question))
+
+
 class AgentTab(Static):
     """Individual tab representing an agent.
 
@@ -54,20 +117,21 @@ class AgentTab(Static):
     # Enable clicking on the widget
     can_focus = True
 
-    # Status icon mapping - use actual Unicode characters for reliable rendering
+    # Status icon mapping - minimal dot indicators for cleaner look
     STATUS_ICONS = {
-        "waiting": "⏳",  # Hourglass
-        "working": "⚙️",  # Gear
-        "streaming": "📝",  # Memo/Writing
-        "completed": "✅",  # Check mark
-        "error": "❌",  # Cross mark
-        "winner": "🏆",  # Trophy
+        "waiting": "○",  # Empty dot - idle/waiting
+        "working": "◉",  # Filled dot - active
+        "streaming": "◉",  # Filled dot - streaming
+        "completed": "✓",  # Check mark - done
+        "error": "✗",  # X mark - error
+        "winner": "✓",  # Check mark - winner
     }
 
     def __init__(
         self,
         agent_id: str,
         key_index: int = 0,
+        model_name: str = "",
         *,
         id: Optional[str] = None,
         classes: Optional[str] = None,
@@ -77,12 +141,14 @@ class AgentTab(Static):
         Args:
             agent_id: The agent's identifier.
             key_index: Keyboard shortcut index (1-9, 0 for none).
+            model_name: Model name to display as subtitle.
             id: Optional DOM ID.
             classes: Optional CSS classes.
         """
         super().__init__(id=id, classes=classes)
         self.agent_id = agent_id
         self.key_index = key_index
+        self.model_name = model_name
         self._status = "waiting"
         self._disabled = False  # For single-agent mode
 
@@ -91,10 +157,25 @@ class AgentTab(Static):
         return []
 
     def render(self) -> str:
-        """Render the tab content with agent ID and status."""
-        status_icon = self.STATUS_ICONS.get(self._status, "🤖")
-        key_hint = f"[{self.key_index}]" if self.key_index else ""
-        return f" {status_icon} {self.agent_id} {key_hint} "
+        """Render the tab content with two-line format: agent ID + model name."""
+        status_icon = self.STATUS_ICONS.get(self._status, "○")
+        # Two-line display: agent name with status on first line, model on second
+        if self.model_name:
+            short_model = self._shorten_model_name(self.model_name)
+            return f" {status_icon} {self.agent_id}\n   {short_model} "
+        return f" {status_icon} {self.agent_id}\n "
+
+    def _shorten_model_name(self, model: str) -> str:
+        """Shorten model name for compact display."""
+        # Remove common suffixes
+        for suffix in ["-preview", "-latest", "-turbo"]:
+            if model.endswith(suffix):
+                model = model[: -len(suffix)]
+                break
+        # Truncate if still too long (max ~15 chars)
+        if len(model) > 15:
+            model = model[:12] + "…"
+        return model
 
     def update_status(self, status: str) -> None:
         """Update the agent's status.
@@ -159,6 +240,7 @@ class AgentTabBar(Widget):
     """Horizontal tab bar for switching between agent panels.
 
     Displays a row of tabs, one per agent, with status badges.
+    Right side shows session info (turn, question).
     Supports keyboard navigation (Tab, Shift+Tab, number keys).
     """
 
@@ -171,6 +253,20 @@ class AgentTabBar(Widget):
         border-bottom: solid $primary;
         padding: 0 1;
     }
+
+    AgentTabBar #tab_container {
+        width: auto;
+        height: 100%;
+        layout: horizontal;
+    }
+
+    AgentTabBar #session_info {
+        width: 1fr;
+        height: 100%;
+        content-align: right middle;
+        text-align: right;
+        padding-right: 1;
+    }
     """
 
     # Reactive attribute for the active agent
@@ -179,6 +275,9 @@ class AgentTabBar(Widget):
     def __init__(
         self,
         agent_ids: List[str],
+        agent_models: Optional[Dict[str, str]] = None,
+        turn: int = 1,
+        question: str = "",
         *,
         id: Optional[str] = None,
         classes: Optional[str] = None,
@@ -187,27 +286,69 @@ class AgentTabBar(Widget):
 
         Args:
             agent_ids: List of agent IDs to display as tabs.
+            agent_models: Optional mapping of agent IDs to model names.
+            turn: Current turn number.
+            question: Current question text.
             id: Optional DOM ID.
             classes: Optional CSS classes.
         """
         super().__init__(id=id, classes=classes)
         self._agent_ids = agent_ids
+        self._agent_models = agent_models or {}
         self._tabs: Dict[str, AgentTab] = {}
+        self._turn = turn
+        self._question = question
+        self._session_info_widget: Optional[SessionInfoWidget] = None
 
     def compose(self) -> ComposeResult:
-        """Create agent tabs."""
-        for idx, agent_id in enumerate(self._agent_ids):
-            key_index = idx + 1 if idx < 9 else 0  # 1-9 for first 9 agents
-            # Assign a color class based on agent index (cycles through 8 colors)
-            color_class = f"agent-color-{(idx % 8) + 1}"
-            tab = AgentTab(
-                agent_id=agent_id,
-                key_index=key_index,
-                id=f"tab_{agent_id.replace(' ', '_').replace('.', '_')}",
-                classes=f"inactive {color_class}",
-            )
-            self._tabs[agent_id] = tab
-            yield tab
+        """Create agent tabs and session info."""
+        # Left side: agent tabs in a container
+        with Horizontal(id="tab_container"):
+            for idx, agent_id in enumerate(self._agent_ids):
+                key_index = idx + 1 if idx < 9 else 0  # 1-9 for first 9 agents
+                # Assign a color class based on agent index (cycles through 8 colors)
+                color_class = f"agent-color-{(idx % 8) + 1}"
+                model_name = self._agent_models.get(agent_id, "")
+                tab = AgentTab(
+                    agent_id=agent_id,
+                    key_index=key_index,
+                    model_name=model_name,
+                    id=f"tab_{agent_id.replace(' ', '_').replace('.', '_')}",
+                    classes=f"inactive {color_class}",
+                )
+                self._tabs[agent_id] = tab
+                yield tab
+
+        # Right side: session info (turn + question) - clickable to show full prompt
+        self._session_info_widget = SessionInfoWidget(
+            turn=self._turn,
+            question=self._question,
+            id="session_info",
+        )
+        yield self._session_info_widget
+
+    def update_turn(self, turn: int) -> None:
+        """Update the turn number display.
+
+        Args:
+            turn: The new turn number.
+        """
+        self._turn = turn
+        self._update_session_info()
+
+    def update_question(self, question: str) -> None:
+        """Update the question display.
+
+        Args:
+            question: The new question text.
+        """
+        self._question = question
+        self._update_session_info()
+
+    def _update_session_info(self) -> None:
+        """Refresh the session info widget."""
+        if self._session_info_widget:
+            self._session_info_widget.update_info(self._turn, self._question)
 
     def on_mount(self) -> None:
         """Set initial active agent after mounting."""

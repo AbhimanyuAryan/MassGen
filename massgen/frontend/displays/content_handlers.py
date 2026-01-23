@@ -189,6 +189,15 @@ TOOL_CATEGORIES = {
             "coordination",
         ],
     },
+    "human_input": {
+        "icon": "💬",
+        "color": "#d29922",  # Warning/gold color to match queued input banner
+        "patterns": [
+            "human_input",
+            "user_input",
+            "injected_input",
+        ],
+    },
 }
 
 
@@ -354,6 +363,37 @@ class ToolContentHandler(BaseContentHandler):
             return parts[-1].lower()
         return name.lower()
 
+    def _shorten_paths_in_json(self, json_str: str, max_len: int) -> str:
+        """Truncate JSON string, keeping path endings (filenames) visible.
+
+        For tool arguments containing file paths, we want to show the filename
+        at the end rather than truncating from the end and losing it.
+
+        Args:
+            json_str: The JSON string to truncate
+            max_len: Maximum length for the result
+
+        Returns:
+            Truncated string with path endings preserved where possible
+        """
+        import re
+
+        # Find long paths and shorten from beginning, keeping the filename visible
+        def shorten_path(match: re.Match) -> str:
+            path = match.group(1)
+            if len(path) > 40:
+                # Keep last 35 chars (usually the filename + some parent dirs)
+                return f'"...{path[-35:]}"'
+            return match.group(0)
+
+        # Match quoted paths (starting with /)
+        result = re.sub(r'"(/[^"]{40,})"', shorten_path, json_str)
+
+        # If still too long, truncate from end
+        if len(result) <= max_len:
+            return result
+        return result[: max_len - 3] + "..."
+
     def _detect_background_operation(
         self,
         tool_name: str,
@@ -473,9 +513,9 @@ class ToolContentHandler(BaseContentHandler):
         args_summary = None
         if meta.args and "summary" in meta.args:
             args_full = meta.args["summary"]  # This is actually the full args from normalizer
-            # Create truncated summary for card display
+            # Create truncated summary for card display (path-aware)
             if len(args_full) > 80:
-                args_summary = args_full[:77] + "..."
+                args_summary = self._shorten_paths_in_json(args_full, 80)
             else:
                 args_summary = args_full
 

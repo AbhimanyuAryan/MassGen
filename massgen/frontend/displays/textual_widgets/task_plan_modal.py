@@ -22,6 +22,7 @@ class TaskPlanModal(ModalScreen[None]):
         ("escape", "close", "Close"),
     ]
 
+    # Note: CSS variables don't work in DEFAULT_CSS - use hardcoded hex colors
     DEFAULT_CSS = """
     TaskPlanModal {
         align: center middle;
@@ -32,8 +33,8 @@ class TaskPlanModal(ModalScreen[None]):
         max-width: 120;
         height: auto;
         max-height: 85%;
-        background: $surface;
-        border: thick #a371f7;
+        background: #161b22;
+        border: round #9568d9;
         padding: 1 2;
     }
 
@@ -53,7 +54,7 @@ class TaskPlanModal(ModalScreen[None]):
     TaskPlanModal .modal-title {
         text-style: bold;
         width: 1fr;
-        color: #a371f7;
+        color: #9568d9;
     }
 
     TaskPlanModal .modal-stats {
@@ -66,6 +67,11 @@ class TaskPlanModal(ModalScreen[None]):
         min-width: 3;
         background: transparent;
         border: none;
+        color: #8b949e;
+    }
+
+    TaskPlanModal .modal-close:hover {
+        color: #e6edf3;
     }
 
     TaskPlanModal .progress-bar {
@@ -89,12 +95,12 @@ class TaskPlanModal(ModalScreen[None]):
     }
 
     TaskPlanModal .task-row:hover {
-        background: #21262d;
+        background: #1c2128;
     }
 
     TaskPlanModal .task-focused {
-        background: #1a2332;
-        border-left: thick #58a6ff;
+        background: #1c2128;
+        border-left: solid #3ab0b5;
     }
 
     TaskPlanModal .task-header {
@@ -168,7 +174,7 @@ class TaskPlanModal(ModalScreen[None]):
             # Header section
             with Container(classes="modal-header"):
                 with Container(classes="header-row"):
-                    yield Static("📋 Task Plan", classes="modal-title")
+                    yield Static("Task Plan", classes="modal-title")
                     yield Static(self._build_stats(total, completed, in_progress, blocked), classes="modal-stats")
                     yield Button("✕", variant="default", classes="modal-close", id="close_btn")
 
@@ -270,7 +276,7 @@ class TaskPlanModal(ModalScreen[None]):
 
         # Status label
         if status == "in_progress":
-            text.append("  ← active", style="dim #58a6ff")
+            text.append("  ← current", style="dim #58a6ff")
         elif status == "blocked":
             text.append("  ← blocked", style="dim #f85149")
 

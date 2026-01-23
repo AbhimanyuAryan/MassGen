@@ -259,8 +259,11 @@ class ReasoningSection(Vertical):
     ```
     """
 
-    is_collapsed = reactive(True)  # Collapsed by default
+    # Start expanded, auto-collapse after threshold
+    is_collapsed = reactive(False)
     item_count = reactive(0)
+    COLLAPSE_THRESHOLD = 5  # Auto-collapse after this many items
+    PREVIEW_LINES = 2  # Show this many lines when collapsed
 
     DEFAULT_CSS = """
     ReasoningSection {
@@ -274,7 +277,8 @@ class ReasoningSection(Vertical):
     }
 
     ReasoningSection.collapsed #reasoning_content {
-        display: none;
+        max-height: 2;
+        overflow: hidden;
     }
 
     ReasoningSection.hidden {
@@ -311,8 +315,8 @@ class ReasoningSection(Vertical):
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
         self._items: list = []
-        self.add_class("collapsed")
-        self.add_class("hidden")  # Start hidden until content arrives
+        # Start expanded (not collapsed) but hidden until content arrives
+        self.add_class("hidden")
 
     def compose(self) -> ComposeResult:
         yield Static(self._build_header(), id="reasoning_header")
@@ -324,19 +328,19 @@ class ReasoningSection(Vertical):
 
         # Collapse indicator
         indicator = "▶" if self.is_collapsed else "▼"
-        text.append(f"{indicator} ", style="dim")
+        text.append(f"{indicator} ", style="cyan")
 
         # Icon and title
-        text.append("🧠 ", style="")
-        text.append("Reasoning", style="bold dim")
+        text.append("💭 ", style="")
+        text.append("Reasoning", style="bold #c9d1d9")
 
-        # Count badge
+        # Count badge - show hidden count when collapsed
         if self.item_count > 0:
-            text.append(" ─" + "─" * 30 + "─ ", style="dim")
-            text.append(
-                f"({self.item_count} item{'s' if self.item_count != 1 else ''})",
-                style="dim cyan",
-            )
+            if self.is_collapsed and self.item_count > self.PREVIEW_LINES:
+                hidden = self.item_count - self.PREVIEW_LINES
+                text.append(f"  (+{hidden} more)", style="dim cyan")
+            else:
+                text.append(f"  ({self.item_count})", style="dim")
 
         return text
 
@@ -389,12 +393,23 @@ class ReasoningSection(Vertical):
 
         try:
             container = self.query_one("#reasoning_content", ScrollableContainer)
+
+            # Format content with bullet point for structure
+            formatted = Text()
+            formatted.append("• ", style="cyan")
+            formatted.append(content, style="#c9d1d9")
+
             widget = Static(
-                Text(content, style="dim"),
+                formatted,
                 id=f"reasoning_{self.item_count}",
                 classes="reasoning-text",
             )
             container.mount(widget)
+
+            # Auto-collapse after threshold (but still show preview)
+            if self.item_count > self.COLLAPSE_THRESHOLD and not self.is_collapsed:
+                self.is_collapsed = True
+
         except Exception:
             pass
 
@@ -504,8 +519,12 @@ class TimelineScrollContainer(ScrollableContainer):
         if self.max_scroll_y <= 0:
             return
 
-        # Check if at bottom (with tolerance for float precision)
+        # Check if at top/bottom (with tolerance for float precision)
+        at_top = new_value <= 2
         at_bottom = new_value >= self.max_scroll_y - 2
+
+        # Phase 11.2: Post scroll position for scroll indicators
+        self.post_message(self.ScrollPositionChanged(at_top=at_top, at_bottom=at_bottom))
 
         if new_value < old_value and not at_bottom:
             # User scrolled up - enter scroll mode
@@ -562,6 +581,17 @@ class TimelineScrollContainer(ScrollableContainer):
 
     class ScrollModeExited(Message):
         """Posted when user exits scroll mode by scrolling to bottom."""
+
+    class ScrollPositionChanged(Message):
+        """Posted when scroll position changes - for scroll indicators.
+
+        Phase 11.2: Scroll indicators support.
+        """
+
+        def __init__(self, at_top: bool, at_bottom: bool) -> None:
+            self.at_top = at_top
+            self.at_bottom = at_bottom
+            super().__init__()
 
 
 class TimelineSection(Vertical):
@@ -639,16 +669,37 @@ class TimelineSection(Vertical):
     TimelineSection .scroll-indicator {
         width: 100%;
         height: auto;
-        background: #2d333b;
-        color: #f0883e;
+        background: #21262d;
+        color: #7d8590;
         text-align: center;
         padding: 0 1;
         text-style: bold;
-        border-bottom: solid #f0883e;
+        border-bottom: solid #30363d;
     }
 
     TimelineSection .scroll-indicator.hidden {
         display: none;
+    }
+
+    /* Phase 11.2: Scroll arrow indicators */
+    TimelineSection .scroll-arrow-indicator {
+        width: 100%;
+        height: 1;
+        text-align: center;
+        color: #8b949e;
+        background: transparent;
+    }
+
+    TimelineSection .scroll-arrow-indicator.hidden {
+        display: none;
+    }
+
+    TimelineSection #scroll_top_indicator {
+        dock: top;
+    }
+
+    TimelineSection #scroll_bottom_indicator {
+        dock: bottom;
     }
     """
 
@@ -664,12 +715,18 @@ class TimelineSection(Vertical):
         self._scroll_mode = False
         self._new_content_count = 0  # Count of new items since entering scroll mode
         self._truncation_shown = False  # Track if we've shown truncation message
+        # Phase 12: View-based round navigation
+        self._viewed_round: int = 1  # Which round is currently being displayed
 
     def compose(self) -> ComposeResult:
+        # Phase 11.2: Top scroll indicator (hidden by default - shows ▲ when content above)
+        yield Static("▲ more above", id="scroll_top_indicator", classes="scroll-arrow-indicator hidden")
         # Scroll mode indicator (hidden by default)
         yield Static("", id="scroll_mode_indicator", classes="scroll-indicator hidden")
         # Main timeline content with scroll detection
         yield TimelineScrollContainer(id="timeline_container")
+        # Phase 11.2: Bottom scroll indicator (hidden by default - shows ▼ when content below)
+        yield Static("▼ more below", id="scroll_bottom_indicator", classes="scroll-arrow-indicator hidden")
 
     def on_timeline_scroll_container_scroll_mode_entered(
         self,
@@ -690,6 +747,32 @@ class TimelineSection(Vertical):
             self._scroll_mode = False
             self._new_content_count = 0
             self._update_scroll_indicator()
+
+    def on_timeline_scroll_container_scroll_position_changed(
+        self,
+        event: TimelineScrollContainer.ScrollPositionChanged,
+    ) -> None:
+        """Handle scroll position changes - show/hide scroll arrow indicators.
+
+        Phase 11.2: Scroll indicators.
+        """
+        try:
+            top_indicator = self.query_one("#scroll_top_indicator", Static)
+            bottom_indicator = self.query_one("#scroll_bottom_indicator", Static)
+
+            # Show top indicator when NOT at top (content above)
+            if event.at_top:
+                top_indicator.add_class("hidden")
+            else:
+                top_indicator.remove_class("hidden")
+
+            # Show bottom indicator when NOT at bottom (content below)
+            if event.at_bottom:
+                bottom_indicator.add_class("hidden")
+            else:
+                bottom_indicator.remove_class("hidden")
+        except Exception:
+            pass
 
     def _update_scroll_indicator(self) -> None:
         """Update the scroll mode indicator in the UI."""
@@ -716,7 +799,8 @@ class TimelineSection(Vertical):
             return
         try:
             container = self.query_one("#timeline_container", TimelineScrollContainer)
-            container.scroll_end(animate=False)
+            # Use smooth animated scrolling for better UX
+            container.scroll_end(animate=True)
         except Exception:
             pass
 
@@ -812,11 +896,12 @@ class TimelineSection(Vertical):
         except Exception:
             pass
 
-    def add_tool(self, tool_data: ToolDisplayData) -> ToolCallCard:
+    def add_tool(self, tool_data: ToolDisplayData, round_number: int = 1) -> ToolCallCard:
         """Add a tool card to the timeline.
 
         Args:
             tool_data: Tool display data
+            round_number: The round this content belongs to (for view switching)
 
         Returns:
             The created ToolCallCard
@@ -830,6 +915,12 @@ class TimelineSection(Vertical):
 
         if tool_data.args_summary:
             card.set_params(tool_data.args_summary, tool_data.args_full)
+
+        # Phase 12: Tag with round class for CSS visibility switching
+        card.add_class(f"round-{round_number}")
+        # Hide if viewing a different round
+        if round_number != self._viewed_round:
+            card.add_class("hidden")
 
         self._tools[tool_data.tool_id] = card
         self._item_count += 1
@@ -970,13 +1061,14 @@ class TimelineSection(Vertical):
                     injection_content=injection_content,
                 )
 
-    def add_text(self, content: str, style: str = "", text_class: str = "") -> None:
+    def add_text(self, content: str, style: str = "", text_class: str = "", round_number: int = 1) -> None:
         """Add text content to the timeline.
 
         Args:
             content: Text content
             style: Rich style string
             text_class: CSS class (status, thinking, response)
+            round_number: The round this content belongs to (for view switching)
         """
         # Clean up excessive whitespace - collapse multiple newlines to single
         import re
@@ -1006,31 +1098,45 @@ class TimelineSection(Vertical):
             else:
                 widget = Static(content, id=widget_id, classes=classes)
 
+            # Phase 12: Tag with round class for CSS visibility switching
+            widget.add_class(f"round-{round_number}")
+            # Hide if viewing a different round
+            if round_number != self._viewed_round:
+                widget.add_class("hidden")
+
             container.mount(widget)
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
         except Exception:
             pass
 
-    def add_separator(self, label: str = "") -> None:
+    def add_separator(self, label: str = "", round_number: int = 1) -> None:
         """Add a visual separator to the timeline.
 
         Args:
             label: Optional label for the separator
+            round_number: The round this content belongs to (for view switching)
         """
+        from massgen.logger_config import logger
+
         self._item_count += 1
         widget_id = f"tl_sep_{self._item_count}"
+
+        logger.debug(
+            f"TimelineSection.add_separator: label='{label}', round={round_number}, " f"viewed_round={self._viewed_round}, widget_id={widget_id}",
+        )
 
         try:
             container = self.query_one("#timeline_container", TimelineScrollContainer)
 
-            # Check if this is a restart separator
+            # Check if this is a round separator (should be prominent)
+            is_round = label.upper().startswith("ROUND") if label else False
             is_restart = "RESTART" in label.upper() if label else False
 
-            if is_restart:
-                # Create prominent restart banner
-                banner = RestartBanner(label=label, id=widget_id)
-                container.mount(banner)
+            if is_round or is_restart:
+                # Create prominent round/restart banner
+                widget = RestartBanner(label=label, id=widget_id)
+                logger.debug(f"TimelineSection.add_separator: Created RestartBanner for '{label}'")
             else:
                 # Regular separator
                 sep_text = Text()
@@ -1038,21 +1144,31 @@ class TimelineSection(Vertical):
                 if label:
                     sep_text.append(f" {label} ", style="dim italic")
                     sep_text.append("─" * 10, style="dim")
-                container.mount(Static(sep_text, id=widget_id))
+                widget = Static(sep_text, id=widget_id)
 
+            # Phase 12: Tag with round class for CSS visibility switching
+            widget.add_class(f"round-{round_number}")
+            # Hide if viewing a different round
+            if round_number != self._viewed_round:
+                widget.add_class("hidden")
+                logger.debug(f"TimelineSection.add_separator: Hiding widget (round {round_number} != viewed {self._viewed_round})")
+            else:
+                logger.debug(f"TimelineSection.add_separator: Widget visible (round {round_number} == viewed {self._viewed_round})")
+
+            container.mount(widget)
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
+            logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
         except Exception as e:
             # Log the error but don't crash
-            import sys
+            logger.error(f"TimelineSection.add_separator failed: {e}")
 
-            print(f"[ERROR] add_separator failed: {e}", file=sys.stderr)
-
-    def add_reasoning(self, content: str) -> None:
-        """Add coordination/reasoning content inline with nice styling.
+    def add_reasoning(self, content: str, round_number: int = 1) -> None:
+        """Add coordination/reasoning content inline with subtle styling.
 
         Args:
             content: Reasoning/voting/coordination text
+            round_number: The round this content belongs to (for view switching)
         """
         if not content.strip():
             return
@@ -1062,25 +1178,36 @@ class TimelineSection(Vertical):
 
         try:
             container = self.query_one("#timeline_container", TimelineScrollContainer)
-
-            # Style reasoning content with a subtle left border and muted color
+            # Subtle inline styling - dim italic with thinking emoji
             widget = Static(
-                Text(f"💭 {content}", style="dim italic"),
+                Text(f"💭 {content}", style="dim italic #8b949e"),
                 id=widget_id,
-                classes="timeline-text reasoning-inline",
+                classes="timeline-text thinking-inline",
             )
+            # Phase 12: Tag with round class for CSS visibility switching
+            widget.add_class(f"round-{round_number}")
+            # Hide if viewing a different round
+            if round_number != self._viewed_round:
+                widget.add_class("hidden")
             container.mount(widget)
             self._auto_scroll()
         except Exception:
             pass
 
-    def add_widget(self, widget) -> None:
+    def add_widget(self, widget, round_number: int = 1) -> None:
         """Add a generic widget to the timeline.
 
         Args:
             widget: Any Textual widget to add to the timeline
+            round_number: The round this content belongs to (for view switching)
         """
         self._item_count += 1
+
+        # Phase 12: Tag with round class for CSS visibility switching
+        widget.add_class(f"round-{round_number}")
+        # Hide if viewing a different round
+        if round_number != self._viewed_round:
+            widget.add_class("hidden")
 
         try:
             container = self.query_one("#timeline_container", TimelineScrollContainer)
@@ -1109,34 +1236,175 @@ class TimelineSection(Vertical):
         """
         self._tools.clear()
 
+    def set_viewed_round(self, round_number: int) -> None:
+        """Update which round is currently being viewed.
+
+        Phase 12: Called when a new round starts to track the active round.
+        New content will use this round number for visibility tagging.
+
+        Args:
+            round_number: The round number being viewed
+        """
+        self._viewed_round = round_number
+
+    def switch_to_round(self, round_number: int) -> None:
+        """Switch visibility to show only the specified round.
+
+        Phase 12: CSS-based visibility switching. All round content stays in DOM,
+        we just toggle the 'hidden' class based on round tags.
+
+        Args:
+            round_number: The round number to display
+        """
+        self._viewed_round = round_number
+
+        try:
+            container = self.query_one("#timeline_container", TimelineScrollContainer)
+
+            # Iterate through all children and toggle visibility based on round class
+            for widget in container.children:
+                # Check if widget has any round class
+                round_classes = [c for c in widget.classes if c.startswith("round-")]
+                if round_classes:
+                    # Widget is tagged with a round - show/hide based on match
+                    if f"round-{round_number}" in widget.classes:
+                        widget.remove_class("hidden")
+                    else:
+                        widget.add_class("hidden")
+                # Widgets without round tags (e.g., scroll indicators) stay visible
+        except Exception:
+            pass
+
 
 class ThinkingSection(Vertical):
     """Section for streaming thinking/reasoning content.
 
-    Wraps a RichLog for streaming compatibility while providing
-    clean visual treatment.
+    Phase 11.1: Now collapsible - auto-collapses when content exceeds threshold.
+    Click header to toggle expanded/collapsed state.
+
+    Design (collapsed):
+    ```
+    ▶ 💭 Reasoning [+12 more lines] ──────────────────────────────────────
+    │ First few lines of reasoning visible here...
+    ```
+
+    Design (expanded):
+    ```
+    ▼ 💭 Reasoning ───────────────────────────────────────────────────────
+    │ Full reasoning content visible...
+    │ Multiple lines of thinking...
+    │ ...
+    ```
     """
+
+    # Collapse threshold - auto-collapse when exceeding this many lines
+    COLLAPSE_THRESHOLD = 5
+    # Preview lines to show when collapsed
+    PREVIEW_LINES = 3
+
+    is_collapsed = reactive(False)
 
     DEFAULT_CSS = """
     ThinkingSection {
         height: auto;
         max-height: 50%;
         padding: 0;
+        margin: 0 0 1 0;
+        border-left: thick #484f58;
+        background: #161b22;
+    }
+
+    ThinkingSection.hidden {
+        display: none;
+    }
+
+    ThinkingSection #thinking_header {
+        height: 1;
+        width: 100%;
+        padding: 0 1;
+        background: #21262d;
+        color: #8b949e;
+    }
+
+    ThinkingSection #thinking_header:hover {
+        background: #30363d;
+        color: #c9d1d9;
+    }
+
+    ThinkingSection #thinking_content {
+        height: auto;
+        max-height: 100%;
+        padding: 0 1;
+        overflow-y: auto;
+    }
+
+    ThinkingSection.collapsed #thinking_content {
+        max-height: 3;
+        overflow: hidden;
     }
 
     ThinkingSection #thinking_log {
         height: auto;
-        max-height: 100%;
-        padding: 0 1;
+        padding: 0;
     }
     """
 
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
         self._line_count = 0
+        self._auto_collapsed = False  # Track if we auto-collapsed
+        self.add_class("hidden")  # Start hidden until content arrives
 
     def compose(self) -> ComposeResult:
-        yield RichLog(id="thinking_log", highlight=False, wrap=True, markup=True)
+        yield Static(self._build_header(), id="thinking_header", classes="section-header")
+        yield ScrollableContainer(
+            RichLog(id="thinking_log", highlight=False, wrap=True, markup=True),
+            id="thinking_content",
+        )
+
+    def _build_header(self) -> Text:
+        """Build the section header text."""
+        text = Text()
+
+        # Collapse indicator
+        indicator = "▶" if self.is_collapsed else "▼"
+        text.append(f"{indicator} ", style="dim")
+
+        # Icon and title
+        text.append("💭 ", style="")
+        text.append("Reasoning", style="bold dim")
+
+        # Show hidden line count when collapsed
+        if self.is_collapsed and self._line_count > self.PREVIEW_LINES:
+            hidden_count = self._line_count - self.PREVIEW_LINES
+            text.append(" ─" + "─" * 20 + "─ ", style="dim")
+            text.append(f"[+{hidden_count} more lines]", style="dim cyan")
+
+        return text
+
+    def watch_is_collapsed(self, collapsed: bool) -> None:
+        """Update UI when collapse state changes."""
+        if collapsed:
+            self.add_class("collapsed")
+        else:
+            self.remove_class("collapsed")
+
+        # Update header
+        try:
+            header = self.query_one("#thinking_header", Static)
+            header.update(self._build_header())
+        except Exception:
+            pass
+
+    def on_click(self, event) -> None:
+        """Toggle collapsed state on header click."""
+        try:
+            header = self.query_one("#thinking_header", Static)
+            # Check if click was on header area
+            if event.widget == header or (hasattr(event, "widget") and event.widget.id == "thinking_header"):
+                self.is_collapsed = not self.is_collapsed
+        except Exception:
+            pass
 
     def append(self, content: str, style: str = "") -> None:
         """Append content to the thinking log.
@@ -1146,12 +1414,28 @@ class ThinkingSection(Vertical):
             style: Optional Rich style string
         """
         try:
+            # Show section when content arrives
+            self.remove_class("hidden")
+
             log = self.query_one("#thinking_log", RichLog)
             if style:
                 log.write(Text(content, style=style))
             else:
                 log.write(content)
             self._line_count += 1
+
+            # Auto-collapse when exceeding threshold (only once)
+            if not self._auto_collapsed and self._line_count > self.COLLAPSE_THRESHOLD:
+                self._auto_collapsed = True
+                self.is_collapsed = True
+
+            # Update header to show line count
+            try:
+                header = self.query_one("#thinking_header", Static)
+                header.update(self._build_header())
+            except Exception:
+                pass
+
         except Exception:
             pass
 
@@ -1162,9 +1446,25 @@ class ThinkingSection(Vertical):
             text: Pre-styled Rich Text
         """
         try:
+            # Show section when content arrives
+            self.remove_class("hidden")
+
             log = self.query_one("#thinking_log", RichLog)
             log.write(text)
             self._line_count += 1
+
+            # Auto-collapse when exceeding threshold (only once)
+            if not self._auto_collapsed and self._line_count > self.COLLAPSE_THRESHOLD:
+                self._auto_collapsed = True
+                self.is_collapsed = True
+
+            # Update header to show line count
+            try:
+                header = self.query_one("#thinking_header", Static)
+                header.update(self._build_header())
+            except Exception:
+                pass
+
         except Exception:
             pass
 
@@ -1174,6 +1474,9 @@ class ThinkingSection(Vertical):
             log = self.query_one("#thinking_log", RichLog)
             log.clear()
             self._line_count = 0
+            self._auto_collapsed = False
+            self.is_collapsed = False
+            self.add_class("hidden")
         except Exception:
             pass
 
@@ -1181,6 +1484,14 @@ class ThinkingSection(Vertical):
     def line_count(self) -> int:
         """Get the number of lines written."""
         return self._line_count
+
+    def expand(self) -> None:
+        """Expand the section (show all content)."""
+        self.is_collapsed = False
+
+    def collapse(self) -> None:
+        """Collapse the section (show preview only)."""
+        self.is_collapsed = True
 
 
 class ResponseSection(Vertical):
@@ -1469,6 +1780,10 @@ class RestartBanner(Static):
         margin: 1 0;
         padding: 0;
     }
+
+    RestartBanner.hidden {
+        display: none;
+    }
     """
 
     def __init__(self, label: str = "", id: Optional[str] = None) -> None:
@@ -1477,20 +1792,26 @@ class RestartBanner(Static):
 
     def render(self) -> Text:
         """Render a subtle, professional restart banner."""
+        import re
+
         text = Text()
 
         # Clean up the label - extract meaningful info
         display_label = self._label
         if "RESTART" in display_label.upper():
             # Try to extract round number
-            import re
-
             match = re.search(r"ROUND\s*(\d+)", display_label, re.IGNORECASE)
             if match:
                 round_num = match.group(1)
                 display_label = f"⟳ Round {round_num} Complete"
             else:
                 display_label = "⟳ New Round Starting"
+        elif display_label.upper().startswith("ROUND"):
+            # Simple "Round X" label - format as round start indicator
+            match = re.search(r"ROUND\s*(\d+)", display_label, re.IGNORECASE)
+            if match:
+                round_num = match.group(1)
+                display_label = f"▶ Round {round_num}"
 
         # Subtle dotted line style - professional and understated
         line_char = "┄"
