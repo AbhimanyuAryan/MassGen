@@ -202,12 +202,13 @@ Screen {
 
 /* === Agent Tab Bar === */
 /* NOTE: No dock: top - flows naturally below HeaderWidget */
+/* Phase 9: Removed border-bottom for edge-to-edge layout */
 AgentTabBar {
     height: 3;
     width: 100%;
     layout: horizontal;
     background: transparent;
-    border-bottom: solid $border-default;
+    border-bottom: none;
     padding: 0 1;
 }
 
@@ -230,7 +231,8 @@ AgentTab:hover {
 AgentTab:focus {
     background: $bg-surface;
     color: $fg-primary;
-    border: solid $border-focus;
+    /* Only bottom border to prevent clipping model name on 2-line tabs */
+    border-bottom: tall $border-focus;
     outline: none;
 }
 
@@ -463,13 +465,13 @@ SessionInfoPanel #session_content {
     text-align: center;
 }
 
-/* === Mode Bar (above input) === */
+/* === Mode Bar (now inside input_header on the left) === */
 #mode_bar {
-    height: 2;
-    width: 100%;
+    height: auto;
+    width: auto;
     layout: horizontal;
-    background: transparent;
-    padding: 0 1;
+    background: $bg-base;
+    padding: 0;
     align: left middle;
 }
 
@@ -485,7 +487,8 @@ ModeToggle {
     padding: 0 2;
     background: $bg-surface-2;
     color: $fg-muted;
-    border: none;
+    border: solid $bg-surface-2;
+    outline: none;
 }
 
 ModeToggle:hover {
@@ -590,12 +593,10 @@ StatusBar.consensus-reached {
 }
 
 /* Agent panels - now full width, one at a time */
+/* Phase 9: Edge-to-edge layout - removed borders from base panel */
 AgentPanel {
     background: $bg-surface;
-    border-left: solid $border-default;
-    border-top: solid $border-default;
-    border-bottom: solid $border-default;
-    border-right: none;
+    border: none;
     margin: 0;
     padding: 0;
     width: 100%;
@@ -622,28 +623,22 @@ AgentPanel.hidden {
 }
 
 AgentPanel:hover {
+    /* Phase 9: Keep hover subtle - only left accent border */
     border-left: solid $border-highlight;
-    border-top: solid $border-highlight;
-    border-bottom: solid $border-highlight;
-    border-right: none;
 }
 
 /* Override Textual's default purple focus outline */
 AgentPanel:focus,
 AgentPanel:focus-within {
+    /* Phase 9: Keep focus subtle - only left accent border */
     border-left: solid $accent-primary;
-    border-top: solid $accent-primary;
-    border-bottom: solid $accent-primary;
-    border-right: none;
     background: $bg-surface;
     outline: none;
 }
 
 AgentPanel.status-waiting {
+    /* Phase 9: Only left border for status variants */
     border-left: solid $border-default;
-    border-top: solid $border-default;
-    border-bottom: solid $border-default;
-    border-right: none;
 }
 
 AgentPanel.status-working {
@@ -862,6 +857,7 @@ AgentPanel.agent-color-8.pulse-bright { border-left: thick #ff7b72; background: 
 }
 
 /* Compact Header - Shows question and turn info */
+/* Phase 9: Removed border-bottom for edge-to-edge layout */
 HeaderWidget {
     dock: top;
     height: auto;
@@ -869,7 +865,7 @@ HeaderWidget {
     padding: 0 1;
     background: $bg-base;
     color: $fg-muted;
-    border-bottom: solid $border-default;
+    border-bottom: none;
 }
 
 HeaderWidget.hidden {
@@ -883,7 +879,7 @@ HeaderWidget.hidden {
     min-height: 4;
     width: 100%;
     padding: 0 1;
-    background: transparent;
+    background: $bg-base;
 }
 
 /* Execution bar - hidden (keeping input area consistent in all states) */
@@ -986,11 +982,13 @@ SuggestionRow.selected {
     min-height: 1;
     max-height: 10;
     margin: 0 1;
+    margin-top: 0;
     padding: 0 1;
 }
 
 #question_input:focus {
-    border: round $accent-primary;
+    /* Subtle border on focus - main blue line is at top of input_header */
+    border: round $border-highlight;
     background: transparent;
 }
 
@@ -999,22 +997,30 @@ SuggestionRow.selected {
     display: none;
 }
 
-/* Input header - contains hint, vim indicator, and cancel button */
+/* Input header - contains modes (left) and hint (right) on same line */
 #input_header {
     layout: horizontal;
-    height: 1;
+    height: auto;
     width: 100%;
-    margin-bottom: 0;
+    margin: 0;
+    align: left middle;
+    /* Blue line separator above the modes/hint row */
+    border-top: solid $accent-primary;
+    border-bottom: none;
+    padding: 0;
+    background: $bg-base;
 }
 
-/* Input hint text */
+
+/* Input hint text - docked to right side */
 #input_hint {
+    dock: right;
     height: 1;
-    width: 1fr;
+    width: auto;
     color: $fg-subtle;
     text-style: italic;
     padding: 0 1;
-    margin-left: 1;
+    background: $bg-base;
 }
 
 /* Vim mode indicator - hidden by default */
@@ -2528,11 +2534,13 @@ TimelineSection .timeline-text.thinking {
 }
 
 /* Inline reasoning - continuous with thinking blocks */
-TimelineSection .timeline-text.reasoning-inline {
-    color: #8b949e;
-    border-left: solid #484f58;
+TimelineSection .timeline-text.reasoning-inline,
+TimelineSection .timeline-text.thinking-inline {
+    color: #6e7681;
+    border-left: none;
     padding: 0 0 0 2;
     margin: 0 0 0 1;
+    text-style: italic;
 }
 
 TimelineSection .timeline-text.injection {

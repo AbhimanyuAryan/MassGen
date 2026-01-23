@@ -208,6 +208,13 @@ class CoordinationUI:
                         self.display.update_agent_status(source, status)
                     continue
 
+                # Phase 13.1: Handle token usage updates for status ribbon
+                elif chunk_type == "token_usage_update":
+                    usage = getattr(chunk, "usage", {})
+                    if self.display and source and hasattr(self.display, "update_token_usage"):
+                        self.display.update_token_usage(source, usage)
+                    continue
+
                 # Handle system status updates (e.g., "Initializing coordination...", "Preparing agents...")
                 elif chunk_type == "system_status":
                     if self.display and hasattr(self.display, "update_system_status"):
@@ -814,6 +821,13 @@ class CoordinationUI:
                         self.display.update_agent_status(source, status)
                     continue
 
+                # Phase 13.1: Handle token usage updates for status ribbon
+                elif chunk_type == "token_usage_update":
+                    usage = getattr(chunk, "usage", {})
+                    if self.display and source and hasattr(self.display, "update_token_usage"):
+                        self.display.update_token_usage(source, usage)
+                    continue
+
                 # Handle system status updates (e.g., "Initializing coordination...", "Preparing agents...")
                 elif chunk_type == "system_status":
                     if self.display and hasattr(self.display, "update_system_status"):
@@ -1325,6 +1339,13 @@ class CoordinationUI:
                     status = getattr(chunk, "status", None)
                     if source and status:
                         self.display.update_agent_status(source, status)
+                    continue
+
+                # Phase 13.1: Handle token usage updates for status ribbon
+                elif chunk_type == "token_usage_update":
+                    usage = getattr(chunk, "usage", {})
+                    if self.display and source and hasattr(self.display, "update_token_usage"):
+                        self.display.update_token_usage(source, usage)
                     continue
 
                 # Handle system status updates (e.g., "Initializing coordination...", "Preparing agents...")

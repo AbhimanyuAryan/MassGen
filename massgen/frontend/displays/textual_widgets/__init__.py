@@ -18,6 +18,7 @@ from .content_sections import (
     TimelineSection,
     ToolSection,
 )
+from .execution_status_line import ExecutionStatusLine
 from .injection_card import InjectionSubCard
 from .mode_bar import ModeBar, ModeChanged, ModeToggle, OverrideRequested
 from .multi_line_input import MultiLineInput
@@ -58,6 +59,8 @@ __all__ = [
     "AgentStatusRibbon",
     "RoundSelected",
     "TasksClicked",
+    # Execution status line
+    "ExecutionStatusLine",
     # Phase indicator bar
     "PhaseIndicatorBar",
     # Session info panel

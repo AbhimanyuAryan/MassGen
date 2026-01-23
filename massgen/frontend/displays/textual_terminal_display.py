@@ -72,6 +72,7 @@ try:
         AgentTabBar,
         AgentTabChanged,
         CompletionFooter,
+        ExecutionStatusLine,
         FinalPresentationCard,
         ModeBar,
         ModeChanged,
@@ -1330,6 +1331,18 @@ class TextualTerminalDisplay(TerminalDisplay):
         """
         if self._app:
             self._call_app_method("update_hook_execution", agent_id, tool_call_id, hook_info)
+
+    def update_token_usage(self, agent_id: str, usage: Dict[str, Any]) -> None:
+        """Update token usage display for an agent.
+
+        Phase 13.1: Wire token/cost updates from backend to status ribbon.
+
+        Args:
+            agent_id: The agent whose token usage to update
+            usage: Token usage dict with input_tokens, output_tokens, estimated_cost
+        """
+        if self._app:
+            self._call_app_method("update_token_usage", agent_id, usage)
 
     def add_orchestrator_event(self, event: str):
         """Add an orchestrator coordination event."""
@@ -2878,6 +2891,7 @@ if TEXTUAL_AVAILABLE:
             self.safe_indicator = None
             self._tab_bar: Optional[AgentTabBar] = None
             self._status_ribbon: Optional[AgentStatusRibbon] = None
+            self._execution_status_line: Optional[ExecutionStatusLine] = None
             self._active_agent_id: Optional[str] = None
             # Final presentation state (streams into winner's AgentPanel)
             self._final_presentation_agent: Optional[str] = None
@@ -2957,13 +2971,12 @@ if TEXTUAL_AVAILABLE:
             # === BOTTOM DOCKED WIDGETS (yield order: last yielded = very bottom) ===
             # Input area container - dock: bottom
             with Container(id="input_area"):
-                # Mode bar - toggles for plan/agent/refinement modes (above input header)
-                self._mode_bar = ModeBar(id="mode_bar")
-                yield self._mode_bar
-
-                # Input header with hint and vim mode indicator (above input)
+                # Input header with modes (left) and hint (right) on same line
                 with Horizontal(id="input_header"):
-                    # Hint for submission (updated dynamically for vim mode)
+                    # Mode bar - toggles for plan/agent/refinement modes (left side)
+                    self._mode_bar = ModeBar(id="mode_bar")
+                    yield self._mode_bar
+                    # Hint for submission (right side) - uses width: 1fr to take remaining space
                     self._input_hint = Static("Enter to submit • Shift+Enter for new line • Ctrl+G help", id="input_hint")
                     yield self._input_hint
                     # Vim mode indicator (hidden by default)
@@ -3044,6 +3057,15 @@ if TEXTUAL_AVAILABLE:
                             agent_widget.add_class("hidden")
                         self.agent_widgets[agent_id] = agent_widget
                         yield agent_widget
+
+                # Phase 13.2: Execution status line - shows all agents' states at a glance
+                # Placed at bottom of main content area, above mode bar
+                self._execution_status_line = ExecutionStatusLine(
+                    agent_ids=agent_ids,
+                    focused_agent=initial_agent,
+                    id="execution_status_line",
+                )
+                yield self._execution_status_line
 
             self.post_eval_panel = PostEvaluationPanel()
             yield self.post_eval_panel
@@ -3283,11 +3305,13 @@ if TEXTUAL_AVAILABLE:
             if self._welcome_screen:
                 self._welcome_screen.add_class("hidden")
 
-            # Show tab bar, status ribbon, main container, and status bar
+            # Show tab bar, status ribbon, execution status line, main container, and status bar
             if self._tab_bar:
                 self._tab_bar.remove_class("hidden")
             if self._status_ribbon:
                 self._status_ribbon.remove_class("hidden")
+            if self._execution_status_line:
+                self._execution_status_line.remove_class("hidden")
             if self._status_bar:
                 self._status_bar.remove_class("hidden")
                 self._status_bar.start_timer()
@@ -3928,6 +3952,25 @@ Type your question and press Enter to ask the agents.
                     self._start_agent_pulse(agent_id)
                 else:
                     self._stop_agent_pulse(agent_id)
+
+            # Phase 13.2: Update ExecutionStatusLine with agent state
+            if self._execution_status_line:
+                # Map to ExecutionStatusLine states
+                STATE_MAP = {
+                    "working": "working",
+                    "thinking": "thinking",
+                    "streaming": "streaming",
+                    "tool_call": "tool_use",
+                    "mcp_tool_called": "tool_use",
+                    "custom_tool_called": "tool_use",
+                    "voted": "voted",
+                    "completed": "done",
+                    "done": "done",
+                    "error": "error",
+                    "idle": "idle",
+                }
+                mapped_state = STATE_MAP.get(status, "idle")
+                self._execution_status_line.set_agent_state(agent_id, mapped_state)
             # Update execution status bar with new agent icons
             self._update_execution_status()
 
@@ -3940,6 +3983,11 @@ Type your question and press Enter to ask the agents.
             """
             if agent_id in self.agent_widgets:
                 self.agent_widgets[agent_id].update_timeout(timeout_state)
+
+            # Also update the status ribbon timeout display
+            if self._status_ribbon:
+                remaining = timeout_state.get("remaining_seconds")
+                self._status_ribbon.set_timeout(agent_id, remaining)
 
         def update_hook_execution(
             self,
@@ -3963,6 +4011,20 @@ Type your question and press Enter to ask the agents.
                 self.agent_widgets[agent_id].add_hook_to_tool(tool_call_id, hook_info)
             else:
                 logger.warning(f"[MassGenApp] Agent {agent_id} not in agent_widgets")
+
+        def update_token_usage(self, agent_id: str, usage: Dict[str, Any]):
+            """Update token usage display for an agent.
+
+            Phase 13.1: Wire token/cost updates to status ribbon.
+
+            Args:
+                agent_id: The agent whose token usage to update
+                usage: Token usage dict with input_tokens, output_tokens, estimated_cost
+            """
+            if self._status_ribbon:
+                total_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                self._status_ribbon.set_tokens(agent_id, total_tokens)
+                self._status_ribbon.set_cost(agent_id, usage.get("estimated_cost", 0))
 
         def add_orchestrator_event(self, event: str):
             """Add orchestrator event to internal tracking."""
@@ -4726,6 +4788,10 @@ Type your question and press Enter to ask the agents.
                 if self._status_ribbon:
                     tui_log(f"  Updating status ribbon for: {agent_id}")
                     self._status_ribbon.set_agent(agent_id)
+
+                # Phase 13.2: Update execution status line focused agent
+                if self._execution_status_line:
+                    self._execution_status_line.set_focused_agent(agent_id)
 
                 self._active_agent_id = agent_id
                 tui_log(f"  Switch complete to: {agent_id}")
@@ -7121,11 +7187,9 @@ Type your question and press Enter to ask the agents.
 
                 # Handle line buffering for streaming
                 def write_line(line: str):
-                    if is_coordination:
-                        # Route to collapsible reasoning section
-                        timeline.add_reasoning(line)
-                    elif raw_type == "thinking":
-                        timeline.add_text(line, style="dim", text_class="thinking")
+                    if is_coordination or raw_type == "thinking":
+                        # Thinking/reasoning shown inline with subtle styling
+                        timeline.add_text(line, style="dim italic", text_class="thinking-inline")
                     else:
                         timeline.add_text(line)
 

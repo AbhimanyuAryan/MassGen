@@ -259,8 +259,11 @@ class ReasoningSection(Vertical):
     ```
     """
 
-    is_collapsed = reactive(True)  # Collapsed by default
+    # Start expanded, auto-collapse after threshold
+    is_collapsed = reactive(False)
     item_count = reactive(0)
+    COLLAPSE_THRESHOLD = 5  # Auto-collapse after this many items
+    PREVIEW_LINES = 2  # Show this many lines when collapsed
 
     DEFAULT_CSS = """
     ReasoningSection {
@@ -274,7 +277,8 @@ class ReasoningSection(Vertical):
     }
 
     ReasoningSection.collapsed #reasoning_content {
-        display: none;
+        max-height: 2;
+        overflow: hidden;
     }
 
     ReasoningSection.hidden {
@@ -311,8 +315,8 @@ class ReasoningSection(Vertical):
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
         self._items: list = []
-        self.add_class("collapsed")
-        self.add_class("hidden")  # Start hidden until content arrives
+        # Start expanded (not collapsed) but hidden until content arrives
+        self.add_class("hidden")
 
     def compose(self) -> ComposeResult:
         yield Static(self._build_header(), id="reasoning_header")
@@ -324,19 +328,19 @@ class ReasoningSection(Vertical):
 
         # Collapse indicator
         indicator = "▶" if self.is_collapsed else "▼"
-        text.append(f"{indicator} ", style="dim")
+        text.append(f"{indicator} ", style="cyan")
 
         # Icon and title
-        text.append("🧠 ", style="")
-        text.append("Reasoning", style="bold dim")
+        text.append("💭 ", style="")
+        text.append("Reasoning", style="bold #c9d1d9")
 
-        # Count badge
+        # Count badge - show hidden count when collapsed
         if self.item_count > 0:
-            text.append(" ─" + "─" * 30 + "─ ", style="dim")
-            text.append(
-                f"({self.item_count} item{'s' if self.item_count != 1 else ''})",
-                style="dim cyan",
-            )
+            if self.is_collapsed and self.item_count > self.PREVIEW_LINES:
+                hidden = self.item_count - self.PREVIEW_LINES
+                text.append(f"  (+{hidden} more)", style="dim cyan")
+            else:
+                text.append(f"  ({self.item_count})", style="dim")
 
         return text
 
@@ -389,12 +393,23 @@ class ReasoningSection(Vertical):
 
         try:
             container = self.query_one("#reasoning_content", ScrollableContainer)
+
+            # Format content with bullet point for structure
+            formatted = Text()
+            formatted.append("• ", style="cyan")
+            formatted.append(content, style="#c9d1d9")
+
             widget = Static(
-                Text(content, style="dim"),
+                formatted,
                 id=f"reasoning_{self.item_count}",
                 classes="reasoning-text",
             )
             container.mount(widget)
+
+            # Auto-collapse after threshold (but still show preview)
+            if self.item_count > self.COLLAPSE_THRESHOLD and not self.is_collapsed:
+                self.is_collapsed = True
+
         except Exception:
             pass
 
@@ -504,8 +519,12 @@ class TimelineScrollContainer(ScrollableContainer):
         if self.max_scroll_y <= 0:
             return
 
-        # Check if at bottom (with tolerance for float precision)
+        # Check if at top/bottom (with tolerance for float precision)
+        at_top = new_value <= 2
         at_bottom = new_value >= self.max_scroll_y - 2
+
+        # Phase 11.2: Post scroll position for scroll indicators
+        self.post_message(self.ScrollPositionChanged(at_top=at_top, at_bottom=at_bottom))
 
         if new_value < old_value and not at_bottom:
             # User scrolled up - enter scroll mode
@@ -562,6 +581,17 @@ class TimelineScrollContainer(ScrollableContainer):
 
     class ScrollModeExited(Message):
         """Posted when user exits scroll mode by scrolling to bottom."""
+
+    class ScrollPositionChanged(Message):
+        """Posted when scroll position changes - for scroll indicators.
+
+        Phase 11.2: Scroll indicators support.
+        """
+
+        def __init__(self, at_top: bool, at_bottom: bool) -> None:
+            self.at_top = at_top
+            self.at_bottom = at_bottom
+            super().__init__()
 
 
 class TimelineSection(Vertical):
@@ -650,6 +680,27 @@ class TimelineSection(Vertical):
     TimelineSection .scroll-indicator.hidden {
         display: none;
     }
+
+    /* Phase 11.2: Scroll arrow indicators */
+    TimelineSection .scroll-arrow-indicator {
+        width: 100%;
+        height: 1;
+        text-align: center;
+        color: #8b949e;
+        background: transparent;
+    }
+
+    TimelineSection .scroll-arrow-indicator.hidden {
+        display: none;
+    }
+
+    TimelineSection #scroll_top_indicator {
+        dock: top;
+    }
+
+    TimelineSection #scroll_bottom_indicator {
+        dock: bottom;
+    }
     """
 
     # Maximum number of items to keep in timeline (prevents memory/performance issues)
@@ -666,10 +717,14 @@ class TimelineSection(Vertical):
         self._truncation_shown = False  # Track if we've shown truncation message
 
     def compose(self) -> ComposeResult:
+        # Phase 11.2: Top scroll indicator (hidden by default - shows ▲ when content above)
+        yield Static("▲ more above", id="scroll_top_indicator", classes="scroll-arrow-indicator hidden")
         # Scroll mode indicator (hidden by default)
         yield Static("", id="scroll_mode_indicator", classes="scroll-indicator hidden")
         # Main timeline content with scroll detection
         yield TimelineScrollContainer(id="timeline_container")
+        # Phase 11.2: Bottom scroll indicator (hidden by default - shows ▼ when content below)
+        yield Static("▼ more below", id="scroll_bottom_indicator", classes="scroll-arrow-indicator hidden")
 
     def on_timeline_scroll_container_scroll_mode_entered(
         self,
@@ -690,6 +745,32 @@ class TimelineSection(Vertical):
             self._scroll_mode = False
             self._new_content_count = 0
             self._update_scroll_indicator()
+
+    def on_timeline_scroll_container_scroll_position_changed(
+        self,
+        event: TimelineScrollContainer.ScrollPositionChanged,
+    ) -> None:
+        """Handle scroll position changes - show/hide scroll arrow indicators.
+
+        Phase 11.2: Scroll indicators.
+        """
+        try:
+            top_indicator = self.query_one("#scroll_top_indicator", Static)
+            bottom_indicator = self.query_one("#scroll_bottom_indicator", Static)
+
+            # Show top indicator when NOT at top (content above)
+            if event.at_top:
+                top_indicator.add_class("hidden")
+            else:
+                top_indicator.remove_class("hidden")
+
+            # Show bottom indicator when NOT at bottom (content below)
+            if event.at_bottom:
+                bottom_indicator.add_class("hidden")
+            else:
+                bottom_indicator.remove_class("hidden")
+        except Exception:
+            pass
 
     def _update_scroll_indicator(self) -> None:
         """Update the scroll mode indicator in the UI."""
@@ -1050,7 +1131,7 @@ class TimelineSection(Vertical):
             print(f"[ERROR] add_separator failed: {e}", file=sys.stderr)
 
     def add_reasoning(self, content: str) -> None:
-        """Add coordination/reasoning content inline with nice styling.
+        """Add coordination/reasoning content inline with subtle styling.
 
         Args:
             content: Reasoning/voting/coordination text
@@ -1063,12 +1144,11 @@ class TimelineSection(Vertical):
 
         try:
             container = self.query_one("#timeline_container", TimelineScrollContainer)
-
-            # Style reasoning content with a subtle left border and muted color
+            # Subtle inline styling - dim italic with thinking emoji
             widget = Static(
-                Text(f"💭 {content}", style="dim italic"),
+                Text(f"💭 {content}", style="dim italic #8b949e"),
                 id=widget_id,
-                classes="timeline-text reasoning-inline",
+                classes="timeline-text thinking-inline",
             )
             container.mount(widget)
             self._auto_scroll()
@@ -1114,30 +1194,132 @@ class TimelineSection(Vertical):
 class ThinkingSection(Vertical):
     """Section for streaming thinking/reasoning content.
 
-    Wraps a RichLog for streaming compatibility while providing
-    clean visual treatment.
+    Phase 11.1: Now collapsible - auto-collapses when content exceeds threshold.
+    Click header to toggle expanded/collapsed state.
+
+    Design (collapsed):
+    ```
+    ▶ 💭 Reasoning [+12 more lines] ──────────────────────────────────────
+    │ First few lines of reasoning visible here...
+    ```
+
+    Design (expanded):
+    ```
+    ▼ 💭 Reasoning ───────────────────────────────────────────────────────
+    │ Full reasoning content visible...
+    │ Multiple lines of thinking...
+    │ ...
+    ```
     """
+
+    # Collapse threshold - auto-collapse when exceeding this many lines
+    COLLAPSE_THRESHOLD = 5
+    # Preview lines to show when collapsed
+    PREVIEW_LINES = 3
+
+    is_collapsed = reactive(False)
 
     DEFAULT_CSS = """
     ThinkingSection {
         height: auto;
         max-height: 50%;
         padding: 0;
+        margin: 0 0 1 0;
+        border-left: thick #484f58;
+        background: #161b22;
+    }
+
+    ThinkingSection.hidden {
+        display: none;
+    }
+
+    ThinkingSection #thinking_header {
+        height: 1;
+        width: 100%;
+        padding: 0 1;
+        background: #21262d;
+        color: #8b949e;
+    }
+
+    ThinkingSection #thinking_header:hover {
+        background: #30363d;
+        color: #c9d1d9;
+    }
+
+    ThinkingSection #thinking_content {
+        height: auto;
+        max-height: 100%;
+        padding: 0 1;
+        overflow-y: auto;
+    }
+
+    ThinkingSection.collapsed #thinking_content {
+        max-height: 3;
+        overflow: hidden;
     }
 
     ThinkingSection #thinking_log {
         height: auto;
-        max-height: 100%;
-        padding: 0 1;
+        padding: 0;
     }
     """
 
     def __init__(self, id: Optional[str] = None) -> None:
         super().__init__(id=id)
         self._line_count = 0
+        self._auto_collapsed = False  # Track if we auto-collapsed
+        self.add_class("hidden")  # Start hidden until content arrives
 
     def compose(self) -> ComposeResult:
-        yield RichLog(id="thinking_log", highlight=False, wrap=True, markup=True)
+        yield Static(self._build_header(), id="thinking_header", classes="section-header")
+        yield ScrollableContainer(
+            RichLog(id="thinking_log", highlight=False, wrap=True, markup=True),
+            id="thinking_content",
+        )
+
+    def _build_header(self) -> Text:
+        """Build the section header text."""
+        text = Text()
+
+        # Collapse indicator
+        indicator = "▶" if self.is_collapsed else "▼"
+        text.append(f"{indicator} ", style="dim")
+
+        # Icon and title
+        text.append("💭 ", style="")
+        text.append("Reasoning", style="bold dim")
+
+        # Show hidden line count when collapsed
+        if self.is_collapsed and self._line_count > self.PREVIEW_LINES:
+            hidden_count = self._line_count - self.PREVIEW_LINES
+            text.append(" ─" + "─" * 20 + "─ ", style="dim")
+            text.append(f"[+{hidden_count} more lines]", style="dim cyan")
+
+        return text
+
+    def watch_is_collapsed(self, collapsed: bool) -> None:
+        """Update UI when collapse state changes."""
+        if collapsed:
+            self.add_class("collapsed")
+        else:
+            self.remove_class("collapsed")
+
+        # Update header
+        try:
+            header = self.query_one("#thinking_header", Static)
+            header.update(self._build_header())
+        except Exception:
+            pass
+
+    def on_click(self, event) -> None:
+        """Toggle collapsed state on header click."""
+        try:
+            header = self.query_one("#thinking_header", Static)
+            # Check if click was on header area
+            if event.widget == header or (hasattr(event, "widget") and event.widget.id == "thinking_header"):
+                self.is_collapsed = not self.is_collapsed
+        except Exception:
+            pass
 
     def append(self, content: str, style: str = "") -> None:
         """Append content to the thinking log.
@@ -1147,12 +1329,28 @@ class ThinkingSection(Vertical):
             style: Optional Rich style string
         """
         try:
+            # Show section when content arrives
+            self.remove_class("hidden")
+
             log = self.query_one("#thinking_log", RichLog)
             if style:
                 log.write(Text(content, style=style))
             else:
                 log.write(content)
             self._line_count += 1
+
+            # Auto-collapse when exceeding threshold (only once)
+            if not self._auto_collapsed and self._line_count > self.COLLAPSE_THRESHOLD:
+                self._auto_collapsed = True
+                self.is_collapsed = True
+
+            # Update header to show line count
+            try:
+                header = self.query_one("#thinking_header", Static)
+                header.update(self._build_header())
+            except Exception:
+                pass
+
         except Exception:
             pass
 
@@ -1163,9 +1361,25 @@ class ThinkingSection(Vertical):
             text: Pre-styled Rich Text
         """
         try:
+            # Show section when content arrives
+            self.remove_class("hidden")
+
             log = self.query_one("#thinking_log", RichLog)
             log.write(text)
             self._line_count += 1
+
+            # Auto-collapse when exceeding threshold (only once)
+            if not self._auto_collapsed and self._line_count > self.COLLAPSE_THRESHOLD:
+                self._auto_collapsed = True
+                self.is_collapsed = True
+
+            # Update header to show line count
+            try:
+                header = self.query_one("#thinking_header", Static)
+                header.update(self._build_header())
+            except Exception:
+                pass
+
         except Exception:
             pass
 
@@ -1175,6 +1389,9 @@ class ThinkingSection(Vertical):
             log = self.query_one("#thinking_log", RichLog)
             log.clear()
             self._line_count = 0
+            self._auto_collapsed = False
+            self.is_collapsed = False
+            self.add_class("hidden")
         except Exception:
             pass
 
@@ -1182,6 +1399,14 @@ class ThinkingSection(Vertical):
     def line_count(self) -> int:
         """Get the number of lines written."""
         return self._line_count
+
+    def expand(self) -> None:
+        """Expand the section (show all content)."""
+        self.is_collapsed = False
+
+    def collapse(self) -> None:
+        """Collapse the section (show preview only)."""
+        self.is_collapsed = True
 
 
 class ResponseSection(Vertical):

@@ -305,14 +305,19 @@ Already complete from previous phases:
 
 ---
 
-## 9. Phase 9: Remove Outer Container Border
+## 9. Phase 9: Edge-to-Edge Layout ✓ COMPLETED
 
 ### 9.1 Container Styling
-- [ ] 9.1.1 Remove border from main app container (Screen or top-level widget)
-- [ ] 9.1.2 Ensure content flows edge-to-edge without outer frame
-- [ ] 9.1.3 Update dark.tcss and light.tcss to remove container borders
-- [ ] 9.1.4 Test that keyboard focus rings and modals still work correctly
-- [ ] **9.1.5 CHECKPOINT: User approval for borderless container**
+- [x] 9.1.1 Remove border from AgentPanel (keep left accent border for status)
+- [x] 9.1.2 Remove border from AgentTabBar
+- [x] 9.1.3 Remove border from HeaderWidget
+- [x] 9.1.4 Update dark.tcss and light.tcss
+- [x] **9.1.5 CHECKPOINT: User approved edge-to-edge layout**
+
+**Implementation Notes:**
+- AgentPanel uses only left border accent for visual feedback (no full border box)
+- AgentTabBar has no bottom border
+- Content flows edge-to-edge without outer frame
 
 ---
 
@@ -328,25 +333,34 @@ Completed as part of Phase 8 - header info consolidated into tab bar.
 
 ---
 
-## 11. Phase 11: UX Polish
+## 11. Phase 11: UX Polish ✓ COMPLETED
 
-### 11.1 Collapsible Reasoning Blocks
-Long `<thinking>` or reasoning sections should be collapsed by default to improve readability.
-- [ ] 11.1.1 Detect reasoning/thinking blocks in content (look for `<thinking>` tags or "Thinking:" prefixes)
-- [ ] 11.1.2 Show first 3-5 lines of reasoning by default
-- [ ] 11.1.3 Add "[+N more lines]" expander link below truncated content
-- [ ] 11.1.4 Implement click to expand/collapse reasoning blocks
-- [ ] 11.1.5 Remember expansion state within session
-- [ ] **11.1.6 CHECKPOINT: User approval for collapsible reasoning blocks**
+### 11.1 Inline Reasoning Styling (Simplified)
+User preferred inline reasoning over collapsible sections for smoother UX.
+- [x] 11.1.1 Thinking/reasoning content styled inline with dim italic text
+- [x] 11.1.2 💭 emoji prefix for visual distinction
+- [x] 11.1.3 No border (cleaner look) - blends with timeline
+- [x] 11.1.4 ReasoningSection widget exists but not used (user preferred inline)
+- [x] **11.1.5 CHECKPOINT: User approved inline reasoning styling**
 
-### 11.2 Scroll Indicators
-Show visual cues when content is scrollable in containers.
-- [ ] 11.2.1 Add scroll position tracking to main content area (ScrollableContainer)
-- [ ] 11.2.2 Show ▲ indicator at top when content exists above viewport
-- [ ] 11.2.3 Show ▼ indicator at bottom when content exists below viewport
-- [ ] 11.2.4 Use subtle styling (muted color, small size) to avoid distraction
-- [ ] 11.2.5 Hide indicators when at scroll boundaries
-- [ ] **11.2.6 CHECKPOINT: User approval for scroll indicators**
+**Implementation Notes:**
+- Reasoning styled with `dim italic #8b949e` (subtle gray)
+- No left border - blends smoothly with other timeline content
+- ThinkingSection and ReasoningSection widgets exist in content_sections.py but unused
+- Decided against collapsible sections - inline is cleaner for this UX
+
+### 11.2 Scroll Indicators ✓ COMPLETED
+- [x] 11.2.1 Added scroll position tracking to TimelineScrollContainer
+- [x] 11.2.2 Show "▲ more above" indicator when content above viewport
+- [x] 11.2.3 Show "▼ more below" indicator when content below viewport
+- [x] 11.2.4 Subtle muted styling with hidden class toggle
+- [x] 11.2.5 Indicators hide at scroll boundaries via ScrollPositionChanged message
+- [x] **11.2.6 CHECKPOINT: User approved scroll indicators**
+
+**Implementation Notes:**
+- TimelineScrollContainer posts ScrollPositionChanged(at_top, at_bottom) message
+- TimelineSection handles message and toggles hidden class on indicators
+- CSS: `.scroll-arrow-indicator` with `.hidden` class for visibility
 
 ---
 
@@ -404,56 +418,49 @@ Show visual cues when content is scrollable in containers.
 
 ---
 
-## 13. Phase 13: Backend Integration for Status Ribbon
+## 13. Phase 13: Backend Integration for Status Ribbon ✓ COMPLETED
 
-### 13.1 Token/Cost Wiring
-The status ribbon has placeholders for tokens and cost that need backend integration.
+### 13.1 Token/Cost Wiring ✓ COMPLETED
+- [x] 13.1.1 Token tracking via backend.token_usage (TokenUsage dataclass)
+- [x] 13.1.2 Cost calculation from token_usage.estimated_cost
+- [x] 13.1.3 Orchestrator emits token_usage_update chunks after agent turns
+- [x] 13.1.4 TextualTerminalDisplay.update_token_usage() wires to AgentStatusRibbon
+- [x] 13.1.5 Ribbon updates in real-time via set_tokens() and set_cost()
+- [x] **13.1.6 CHECKPOINT: User approved token/cost display**
 
-- [ ] 13.1.1 Add token tracking to `ChatAgent` - accumulate input/output tokens per turn
-- [ ] 13.1.2 Add cost calculation using `token_manager` pricing data
-- [ ] 13.1.3 Pass token/cost data through `TextualTerminalDisplay` callbacks
-- [ ] 13.1.4 Wire `AgentStatusRibbon.set_tokens()` and `set_cost()` methods
-- [ ] 13.1.5 Update ribbon display in real-time during streaming
-- [ ] **13.1.6 CHECKPOINT: User approval for token/cost display**
+**Implementation Notes:**
+- orchestrator.py yields ("token_usage_update", {...}) after "done" chunk
+- coordination_ui.py handles token_usage_update in 3 stream processing locations
+- textual_terminal_display.py has update_token_usage() method
 
-### 13.2 Execution Status Line (Multi-Agent Aware)
-Add a status line above the mode bar showing activity across ALL agents, not just the focused one.
+### 13.2 Execution Status Line ✓ COMPLETED
+Implemented simplified single-line centered design with pulsing dots animation.
 
-**Design Options (implement 1c as default, test others):**
-
-**Option 1c - Two-Line Status (DEFAULT):**
+**Final Design (centered, minimal):**
 ```
-  ◉ agent_a thinking...                                     R2 • 45s • $0.02
-  B: ✓ done  C: ◉ write_file
-```
-
-**Option 1b - All Agents Inline:**
-```
-  A: ◉ thinking    B: ✓ done    C: ◉ write_file (0.3s)
+                    A ○   B ...   C ✓
 ```
 
-**Option 1a - Current Focus + Agent Pills:**
-```
-  ◉ agent_a is thinking...                    [B ✓] [C ◉]
-```
+- [x] 13.2.1 Created `ExecutionStatusLine` widget in `textual_widgets/execution_status_line.py`
+- [x] 13.2.2 Positioned at bottom of main content, above mode bar
+- [x] 13.2.3 Single-line centered layout with all agents
+- [x] 13.2.4 Status indicators:
+  - `...` (pulsing) for working/streaming/thinking/tool_use
+  - `✓` for voted/done
+  - `✗` for error
+  - `○` for idle
+- [x] 13.2.5 Agent-specific colors matching tab/panel colors (AGENT_COLORS array)
+- [x] 13.2.6 Focused agent shown bold, others dimmed
+- [x] 13.2.7 Pulsing dots animation (0.4s interval, 4 frames)
+- [x] 13.2.8 Hidden for single-agent sessions
+- [x] 13.2.9 Exported in textual_widgets/__init__.py
+- [x] **13.2.10 CHECKPOINT: User approved execution status line**
 
-**Tasks:**
-- [ ] 13.2.1 Create `ExecutionStatusLine` widget with multi-agent awareness
-- [ ] 13.2.2 Position above mode bar / below agent panels
-- [ ] 13.2.3 Implement Option 1c (two-line) as default layout:
-  - Top line: focused agent's detailed status + round/time/cost
-  - Bottom line: other agents' compact status (letter: indicator action)
-- [ ] 13.2.4 Track status for ALL agents, not just focused one:
-  - `◉` streaming/thinking (with optional elapsed time)
-  - `✓` done/ready
-  - `○` waiting/idle
-  - Tool name when executing tool (e.g., `write_file`)
-  - Vote target when voted (e.g., `voted A1.2`)
-- [ ] 13.2.5 Wire to orchestrator events for real-time updates across all agents
-- [ ] 13.2.6 Update bottom line when switching agent tabs (swap focused vs other agents)
-- [ ] 13.2.7 Use subtle styling (dim/muted) - bottom line even more muted than top
-- [ ] 13.2.8 (Optional) Implement 1a and 1b as alternative layouts for A/B testing
-- [ ] **13.2.9 CHECKPOINT: User approval for execution status line**
+**Implementation Notes:**
+- Files: `execution_status_line.py`, `__init__.py`, `textual_terminal_display.py`
+- Agent labels extracted from suffix (agent_a → A, agent_b → B)
+- Colors: #58a6ff (blue), #3fb950 (green), #a371f7 (purple), etc.
+- Pulse patterns: ["   ", ".  ", ".. ", "..."]
 
 ---
 

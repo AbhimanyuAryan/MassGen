@@ -72,12 +72,13 @@ Screen {
 
 /* === Agent Tab Bar === */
 /* NOTE: No dock: top - flows naturally below HeaderWidget */
+/* Phase 9: Removed border-bottom for edge-to-edge layout */
 AgentTabBar {
     height: 2;
     width: 100%;
     layout: horizontal;
     background: transparent;
-    border-bottom: solid #dddddd;
+    border-bottom: none;
     padding: 0 1;
 }
 
@@ -339,12 +340,10 @@ StatusBar.consensus-reached {
 }
 
 /* Agent panels - now full width, one at a time */
+/* Phase 9: Edge-to-edge layout - removed borders from base panel */
 AgentPanel {
     background: #f9f9f9;
-    border-left: solid #dddddd;
-    border-top: solid #dddddd;
-    border-bottom: solid #dddddd;
-    border-right: none;
+    border: none;
     margin: 0;
     padding: 0;
     width: 100%;
@@ -371,51 +370,39 @@ AgentPanel.hidden {
 }
 
 AgentPanel:hover {
+    /* Phase 9: Keep hover subtle - only left accent border */
     border-left: solid #bbbbbb;
-    border-top: solid #bbbbbb;
-    border-bottom: solid #bbbbbb;
-    border-right: none;
 }
 
 /* Override Textual's default purple focus outline */
 AgentPanel:focus,
 AgentPanel:focus-within {
+    /* Phase 9: Keep focus subtle - only left accent border */
     border-left: solid #2196f3;
-    border-top: solid #2196f3;
-    border-bottom: solid #2196f3;
-    border-right: none;
     background: #f5f9ff;
     outline: none;
 }
 
 AgentPanel.status-waiting {
+    /* Phase 9: Only left border for status variants */
     border-left: solid #dddddd;
-    border-top: solid #dddddd;
-    border-bottom: solid #dddddd;
-    border-right: none;
 }
 
 AgentPanel.status-working {
-    border-left: solid #2196f3;
-    border-top: solid #2196f3;
-    border-bottom: solid #2196f3;
-    border-right: none;
+    /* Phase 9: Only left border for status variants */
+    border-left: thick #2196f3;
     background: #f5f9ff;
 }
 
 AgentPanel.status-streaming {
-    border-left: solid #4caf50;
-    border-top: solid #4caf50;
-    border-bottom: solid #4caf50;
-    border-right: none;
+    /* Phase 9: Only left border for status variants */
+    border-left: thick #4caf50;
     background: #f5fff5;
 }
 
 AgentPanel.status-completed {
-    border-left: solid #4caf50;
-    border-top: solid #4caf50;
-    border-bottom: solid #4caf50;
-    border-right: none;
+    /* Phase 9: Only left border for status variants */
+    border-left: thick #4caf50;
 }
 
 AgentPanel.status-error {
@@ -740,14 +727,14 @@ SuggestionRow.selected {
     margin-bottom: 0;
 }
 
-/* Input hint text */
+/* Input hint text - docked to right side */
 #input_hint {
+    dock: right;
     height: 1;
-    width: 1fr;
+    width: auto;
     color: #6e7681;
     text-style: italic;
     padding: 0 1;
-    margin-left: 1;
 }
 
 /* Vim mode indicator - hidden by default */

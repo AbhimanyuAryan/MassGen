@@ -3614,6 +3614,20 @@ Your answer:"""
                             agent.backend.end_round_tracking("restarted")
                         completed_agent_ids.add(agent_id)
                         log_stream_chunk("orchestrator", "done", None, agent_id)
+
+                        # Phase 13.1: Emit token usage update for TUI status ribbon
+                        if agent and hasattr(agent.backend, "token_usage") and agent.backend.token_usage:
+                            token_usage = agent.backend.token_usage
+                            yield StreamChunk(
+                                type="token_usage_update",
+                                source=agent_id,
+                                usage={
+                                    "input_tokens": token_usage.input_tokens or 0,
+                                    "output_tokens": token_usage.output_tokens or 0,
+                                    "estimated_cost": token_usage.estimated_cost or 0,
+                                },
+                            )
+
                         # Note: Removed agent_status: completed emission here - it was causing
                         # agents to show "Done" immediately before they've done any work.
                         # Status updates are properly handled by the "result" handler.
