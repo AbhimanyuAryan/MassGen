@@ -466,6 +466,18 @@ SessionInfoPanel #session_content {
 }
 
 /* === Mode Bar (now inside input_header on the left) === */
+/* Override ModeBar widget's DEFAULT_CSS - keep width: auto so buttons fit content */
+ModeBar {
+    height: 1;
+    width: auto;
+    layout: horizontal;
+    background: $bg-base;
+    padding: 0;
+    align: left middle;
+    border: none;
+    border-bottom: none;
+}
+
 #mode_bar {
     height: auto;
     width: auto;
@@ -473,21 +485,23 @@ SessionInfoPanel #session_content {
     background: $bg-base;
     padding: 0;
     align: left middle;
+    border: none;
+    border-bottom: none;
 }
 
 #mode_bar.hidden {
     display: none;
 }
 
-/* Mode Toggle buttons - pill style with radio indicators */
+/* Mode Toggle buttons - compact pill style with radio indicators */
 ModeToggle {
     width: auto;
-    height: auto;
-    margin: 0 1;
-    padding: 0 2;
+    height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
     background: $bg-surface-2;
     color: $fg-muted;
-    border: solid $bg-surface-2;
+    border: none;
     outline: none;
 }
 
@@ -1004,9 +1018,8 @@ SuggestionRow.selected {
     width: 100%;
     margin: 0;
     align: left middle;
-    /* Blue line separator above the modes/hint row */
-    border-top: solid $accent-primary;
-    border-bottom: none;
+    /* Full-width subtle separator line above mode buttons */
+    border-top: solid $border-subtle;
     padding: 0;
     background: $bg-base;
 }
@@ -2593,7 +2606,7 @@ TimelineSection .timeline-text.post-eval {
     width: 100%;
     height: auto;
     max-height: 12;
-    margin: 0 0 1 0;
+    margin: 0;
     padding: 0;
     background: $bg-surface;
     border-bottom: solid $border-default;
@@ -2612,9 +2625,9 @@ TimelineSection .timeline-text.post-eval {
 TaskPlanCard {
     width: 100%;
     height: auto;
-    min-height: 2;
+    min-height: 1;
     padding: 0 0 0 2;
-    margin: 0 0 0 1;
+    margin: 0;
     background: transparent;
     border-left: solid $accent-special;
 }
@@ -2688,6 +2701,29 @@ TimelineSection .scroll-indicator {
 
 TimelineSection .scroll-indicator.hidden {
     display: none;
+}
+
+/* Scroll arrow indicators (▲ more above, ▼ more below) - compact */
+TimelineSection .scroll-arrow-indicator {
+    width: 100%;
+    height: 1;
+    text-align: center;
+    color: #7d8590;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+
+TimelineSection .scroll-arrow-indicator.hidden {
+    display: none;
+}
+
+TimelineSection #scroll_top_indicator {
+    dock: top;
+}
+
+TimelineSection #scroll_bottom_indicator {
+    dock: bottom;
 }
 
 /* Restart Banner - prominent separator with color */
@@ -4355,4 +4391,179 @@ WizardModal #wizard_hints {
 
 .tree-node-collapsed {
     color: $fg-muted;
+}
+
+/* =============================================================================
+ * Phase 12: View Dropdown & Final Answer View
+ * =============================================================================
+ */
+
+/* View Dropdown - Overlay for round/final answer selection */
+ViewDropdown {
+    layer: overlay;
+    width: auto;
+    min-width: 28;
+    height: auto;
+    max-height: 15;
+    background: $bg-surface;
+    border: solid $border-highlight;
+    padding: 0;
+    margin: 0;
+    offset: 0 1;
+}
+
+ViewDropdown .dropdown-item {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: transparent;
+}
+
+ViewDropdown .dropdown-item:hover {
+    background: $bg-elevated;
+}
+
+ViewDropdown .dropdown-item.current {
+    color: $accent-primary;
+}
+
+ViewDropdown .dropdown-item.final-answer {
+    color: $accent-success;
+    text-style: bold;
+}
+
+ViewDropdown .dropdown-item.final-answer.current {
+    color: #56d364;
+}
+
+ViewDropdown .dropdown-separator {
+    width: 100%;
+    height: 1;
+    color: $fg-subtle;
+    padding: 0 1;
+}
+
+ViewDropdown .context-reset {
+    color: $accent-warning;
+}
+
+/* Final Answer View - Full-panel display of winning answer */
+FinalAnswerView {
+    width: 100%;
+    height: 1fr;
+    padding: 0;
+    margin: 0;
+    background: $bg-base;
+}
+
+FinalAnswerView.hidden {
+    display: none;
+}
+
+FinalAnswerView #final_header {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: #1a4d2e;
+    border-bottom: solid $accent-success;
+}
+
+FinalAnswerView #final_header_title {
+    width: 100%;
+    text-align: center;
+    color: $accent-success;
+    text-style: bold;
+}
+
+FinalAnswerView #final_content_container {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+    background: $bg-base;
+    overflow-y: auto;
+}
+
+FinalAnswerView #final_content {
+    width: 100%;
+    height: auto;
+    color: $fg-primary;
+}
+
+FinalAnswerView #final_footer {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: $bg-surface;
+    border-top: solid $border-default;
+}
+
+FinalAnswerView #final_metadata {
+    width: 100%;
+    height: 1;
+    color: $fg-muted;
+    text-align: center;
+    padding: 0 1;
+}
+
+FinalAnswerView #final_buttons {
+    width: 100%;
+    height: 3;
+    align: center middle;
+}
+
+FinalAnswerView #final_buttons Button {
+    margin: 0 1;
+    min-width: 14;
+}
+
+FinalAnswerView #copy_btn {
+    background: $accent-success;
+    color: white;
+}
+
+FinalAnswerView #copy_btn:hover {
+    background: #2ea043;
+}
+
+FinalAnswerView #workspace_btn {
+    background: $bg-surface-2;
+    color: $fg-primary;
+}
+
+FinalAnswerView #workspace_btn:hover {
+    background: $bg-elevated;
+}
+
+FinalAnswerView #voting_btn {
+    background: $bg-surface-2;
+    color: $fg-primary;
+}
+
+FinalAnswerView #voting_btn:hover {
+    background: $bg-elevated;
+}
+
+FinalAnswerView #continue_hint {
+    width: 100%;
+    height: 1;
+    color: $accent-primary;
+    text-align: center;
+    text-style: italic;
+    padding: 0 1;
+}
+
+FinalAnswerView .separator {
+    width: 100%;
+    height: 1;
+    color: $border-default;
+}
+
+/* Round selector in AgentStatusRibbon - Final answer state */
+AgentStatusRibbon #round_selector.final-answer-view {
+    color: $accent-success;
+    text-style: bold;
+}
+
+AgentStatusRibbon #round_selector.final-answer-view:hover {
+    color: #56d364;
 }

@@ -22,6 +22,7 @@ class TaskPlanModal(ModalScreen[None]):
         ("escape", "close", "Close"),
     ]
 
+    # Note: CSS variables don't work in DEFAULT_CSS - use hardcoded hex colors
     DEFAULT_CSS = """
     TaskPlanModal {
         align: center middle;
@@ -32,8 +33,8 @@ class TaskPlanModal(ModalScreen[None]):
         max-width: 120;
         height: auto;
         max-height: 85%;
-        background: $bg-card;
-        border: round $accent-special;
+        background: #161b22;
+        border: round #9568d9;
         padding: 1 2;
     }
 
@@ -53,7 +54,7 @@ class TaskPlanModal(ModalScreen[None]):
     TaskPlanModal .modal-title {
         text-style: bold;
         width: 1fr;
-        color: $accent-special;
+        color: #9568d9;
     }
 
     TaskPlanModal .modal-stats {
@@ -66,11 +67,11 @@ class TaskPlanModal(ModalScreen[None]):
         min-width: 3;
         background: transparent;
         border: none;
-        color: $fg-muted;
+        color: #8b949e;
     }
 
     TaskPlanModal .modal-close:hover {
-        color: $fg-primary;
+        color: #e6edf3;
     }
 
     TaskPlanModal .progress-bar {
@@ -94,12 +95,12 @@ class TaskPlanModal(ModalScreen[None]):
     }
 
     TaskPlanModal .task-row:hover {
-        background: $bg-surface;
+        background: #1c2128;
     }
 
     TaskPlanModal .task-focused {
-        background: $bg-surface;
-        border-left: solid $accent-info;
+        background: #1c2128;
+        border-left: solid #3ab0b5;
     }
 
     TaskPlanModal .task-header {
@@ -120,7 +121,7 @@ class TaskPlanModal(ModalScreen[None]):
         align: center middle;
         margin-top: 1;
         padding-top: 1;
-        border-top: solid $border-default;
+        border-top: solid #30363d;
     }
 
     TaskPlanModal .close-button {

@@ -2,15 +2,15 @@
 """
 Agent Status Ribbon Widget for MassGen TUI.
 
-Displays real-time status bar below tabs with round dropdown, activity indicator,
-timeout display, tasks progress, and token/cost tracking.
+Displays real-time status bar below tabs with view dropdown (rounds + final answer),
+activity indicator, timeout display, tasks progress, and token/cost tracking.
 """
 
 import logging
 from typing import Dict, List, Optional, Tuple
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -19,8 +19,36 @@ from textual.widgets import Label, Static
 logger = logging.getLogger(__name__)
 
 
+class ViewSelected(Message):
+    """Message emitted when a view is selected from the dropdown.
+
+    Supports both round views and the final answer view.
+    """
+
+    def __init__(
+        self,
+        view_type: str,
+        agent_id: str,
+        round_number: Optional[int] = None,
+    ) -> None:
+        """Initialize ViewSelected message.
+
+        Args:
+            view_type: Either "round" or "final_answer"
+            agent_id: The agent ID this view is for
+            round_number: Round number (only for view_type="round")
+        """
+        self.view_type = view_type
+        self.agent_id = agent_id
+        self.round_number = round_number
+        super().__init__()
+
+
 class RoundSelected(Message):
-    """Message emitted when a round is selected from the dropdown."""
+    """Message emitted when a round is selected from the dropdown.
+
+    Legacy message - use ViewSelected instead for new code.
+    """
 
     def __init__(self, round_number: int, agent_id: str) -> None:
         self.round_number = round_number
@@ -34,6 +62,210 @@ class TasksClicked(Message):
     def __init__(self, agent_id: str) -> None:
         self.agent_id = agent_id
         super().__init__()
+
+
+class DropdownItem(Label):
+    """Clickable dropdown item that emits its ID when clicked."""
+
+    can_focus = True
+
+    class Selected(Message):
+        """Emitted when item is selected."""
+
+        def __init__(self, item_id: str) -> None:
+            self.item_id = item_id
+            super().__init__()
+
+    async def on_click(self) -> None:
+        """Handle click."""
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG: DropdownItem.on_click id={self.id}\n")
+        self.post_message(self.Selected(self.id or ""))
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG: DropdownItem.on_click message posted for id={self.id}\n")
+
+
+class ViewDropdown(Vertical):
+    """Popup dropdown menu for selecting round or final answer views.
+
+    Design:
+    ```
+    ┌────────────────────────────────┐
+    │ ✓ Final Answer                 │  (only if consensus reached)
+    │ ─────────────────────────────  │
+    │ ◉ Round 2 (current)            │
+    │   Round 1                      │
+    │ ↻ Round 1 (context reset)      │
+    └────────────────────────────────┘
+    ```
+    """
+
+    DEFAULT_CSS = """
+    ViewDropdown {
+        layer: overlay;
+        width: auto;
+        min-width: 28;
+        height: auto;
+        max-height: 15;
+        background: $surface;
+        border: solid $primary-darken-2;
+        padding: 0;
+        margin: 0;
+        offset: 0 1;
+    }
+
+    ViewDropdown .dropdown-item {
+        width: 100%;
+        height: auto;
+        padding: 0 1;
+        background: transparent;
+    }
+
+    ViewDropdown .dropdown-item:hover {
+        background: $primary-darken-3;
+    }
+
+    ViewDropdown .dropdown-item.current {
+        color: $accent;
+    }
+
+    ViewDropdown .dropdown-item.final-answer {
+        color: $success;
+        text-style: bold;
+    }
+
+    ViewDropdown .dropdown-item.final-answer.current {
+        color: $success-lighten-1;
+    }
+
+    ViewDropdown .dropdown-separator {
+        width: 100%;
+        height: 1;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    ViewDropdown .context-reset {
+        color: $warning;
+    }
+    """
+
+    def __init__(
+        self,
+        agent_id: str,
+        rounds: List[Tuple[int, bool]],
+        current_round: int,
+        viewed_round: Optional[int],
+        has_final_answer: bool = False,
+        viewing_final_answer: bool = False,
+        **kwargs,
+    ) -> None:
+        """Initialize the dropdown.
+
+        Args:
+            agent_id: The agent ID
+            rounds: List of (round_number, is_context_reset) tuples
+            current_round: The current/latest round number
+            viewed_round: The round being viewed (may differ from current)
+            has_final_answer: Whether final answer is available
+            viewing_final_answer: Whether currently viewing final answer
+        """
+        super().__init__(**kwargs)
+        self.agent_id = agent_id
+        self._rounds = rounds
+        self._current_round = current_round
+        self._viewed_round = viewed_round if viewed_round is not None else current_round
+        self._has_final_answer = has_final_answer
+        self._viewing_final_answer = viewing_final_answer
+
+    def compose(self) -> ComposeResult:
+        """Build the dropdown items."""
+        logger.info(
+            f"ViewDropdown.compose: rounds={self._rounds}, has_final={self._has_final_answer}",
+        )
+        # Final Answer option at top (only if available)
+        if self._has_final_answer:
+            classes = "dropdown-item final-answer"
+            if self._viewing_final_answer:
+                classes += " current"
+            yield DropdownItem("✓ Final Answer", classes=classes, id="view_final_answer")
+            yield Static("─" * 26, classes="dropdown-separator")
+
+        # Round options (newest first)
+        sorted_rounds = sorted(self._rounds, key=lambda x: x[0], reverse=True)
+        for round_num, is_context_reset in sorted_rounds:
+            is_current = round_num == self._current_round
+            is_viewed = round_num == self._viewed_round and not self._viewing_final_answer
+
+            # Build label text
+            if is_viewed:
+                indicator = "◉"  # Currently viewed
+            elif is_context_reset:
+                indicator = "↻"  # Context reset
+            else:
+                indicator = " "
+
+            suffix = " (current)" if is_current else ""
+            if is_context_reset and not is_viewed:
+                suffix = " (reset)" if not suffix else suffix + ", reset"
+
+            label_text = f"{indicator} Round {round_num}{suffix}"
+
+            classes = "dropdown-item"
+            if is_viewed:
+                classes += " current"
+            if is_context_reset:
+                classes += " context-reset"
+
+            logger.info(f"ViewDropdown.compose: creating DropdownItem id=view_round_{round_num}")
+            yield DropdownItem(label_text, classes=classes, id=f"view_round_{round_num}")
+
+    def on_dropdown_item_selected(self, event: DropdownItem.Selected) -> None:
+        """Handle dropdown item selection."""
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG: on_dropdown_item_selected item_id={event.item_id}\n")
+        event.stop()
+        item_id = event.item_id
+
+        if item_id == "view_final_answer":
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write("DEBUG: posting ViewSelected for final_answer\n")
+            self.post_message(ViewSelected("final_answer", self.agent_id))
+            self.remove()
+        elif item_id and item_id.startswith("view_round_"):
+            try:
+                round_num = int(item_id.replace("view_round_", ""))
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG: posting ViewSelected for round {round_num}\n")
+                self.post_message(ViewSelected("round", self.agent_id, round_num))
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG: removing dropdown\n")
+                self.remove()
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG: dropdown removed\n")
+            except ValueError:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG: ERROR failed to parse round from {item_id}\n")
+
+    def on_blur(self, event) -> None:
+        """Close dropdown when focus is lost."""
+        logger.info("ViewDropdown.on_blur: removing dropdown")
+        self.remove()
+
+
+class RoundSelector(Label):
+    """Clickable round selector label that emits RoundSelectorClicked message."""
+
+    can_focus = True
+
+    class Clicked(Message):
+        """Emitted when the round selector is clicked."""
+
+    async def on_click(self) -> None:
+        """Handle click on the round selector."""
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write("DEBUG: RoundSelector.on_click called!\n")
+        self.post_message(self.Clicked())
 
 
 class AgentStatusRibbon(Widget):
@@ -82,6 +314,15 @@ class AgentStatusRibbon(Widget):
     AgentStatusRibbon #round_selector:hover {
         color: $primary;
         text-style: underline;
+    }
+
+    AgentStatusRibbon #round_selector.final-answer-view {
+        color: $success;
+        text-style: bold;
+    }
+
+    AgentStatusRibbon #round_selector.final-answer-view:hover {
+        color: $success-lighten-1;
     }
 
     AgentStatusRibbon #timeout_display {
@@ -139,7 +380,8 @@ class AgentStatusRibbon(Widget):
         super().__init__(id=id, classes=classes)
         self.current_agent = agent_id
         self._rounds: Dict[str, List[Tuple[int, bool]]] = {}  # agent_id -> [(round_num, is_context_reset)]
-        self._current_round: Dict[str, int] = {}  # agent_id -> current round
+        self._current_round: Dict[str, int] = {}  # agent_id -> current round (live)
+        self._viewed_round: Dict[str, int] = {}  # agent_id -> round being viewed
         self._tasks_complete: Dict[str, int] = {}
         self._tasks_total: Dict[str, int] = {}
         self._tokens: Dict[str, int] = {}
@@ -148,9 +390,14 @@ class AgentStatusRibbon(Widget):
         self._start_time: Optional[float] = None
         self._timer_handle = None
 
+        # View state tracking
+        self._has_final_answer: Dict[str, bool] = {}  # agent_id -> has final answer
+        self._viewing_final_answer: Dict[str, bool] = {}  # agent_id -> viewing final answer
+        self._dropdown_open = False
+
     def compose(self) -> ComposeResult:
         with Horizontal(classes="ribbon-container"):
-            yield Label("Round 1 ▾", id="round_selector", classes="ribbon-section")
+            yield RoundSelector("Round 1 ▾", id="round_selector", classes="ribbon-section")
             yield Static("│", classes="ribbon-divider")
             yield Label("⏱ --:--", id="timeout_display", classes="ribbon-section")
             yield Static("│", classes="ribbon-divider")
@@ -232,15 +479,84 @@ class AgentStatusRibbon(Widget):
 
         self._current_round[agent_id] = round_number
 
+        # If not explicitly viewing a different round, follow the current round
+        if agent_id not in self._viewed_round or self._viewed_round.get(agent_id) == round_number - 1:
+            self._viewed_round[agent_id] = round_number
+            # Reset final answer view when new round starts (unless explicitly staying)
+            if self._viewing_final_answer.get(agent_id):
+                self._viewing_final_answer[agent_id] = False
+
         if agent_id == self.current_agent:
             self._update_round_display()
 
+    def set_viewed_round(self, agent_id: str, round_number: int) -> None:
+        """Set which round is being viewed for an agent.
+
+        Args:
+            agent_id: The agent ID
+            round_number: The round number to view
+        """
+        self._viewed_round[agent_id] = round_number
+        self._viewing_final_answer[agent_id] = False
+
+        if agent_id == self.current_agent:
+            self._update_round_display()
+
+    def set_final_answer_available(self, agent_id: str, available: bool = True) -> None:
+        """Set whether final answer is available for an agent.
+
+        Args:
+            agent_id: The agent ID
+            available: Whether final answer is now available
+        """
+        self._has_final_answer[agent_id] = available
+
+        if agent_id == self.current_agent:
+            self._update_round_display()
+
+    def set_viewing_final_answer(self, agent_id: str, viewing: bool = True) -> None:
+        """Set whether an agent is viewing the final answer.
+
+        Args:
+            agent_id: The agent ID
+            viewing: Whether to view the final answer
+        """
+        self._viewing_final_answer[agent_id] = viewing
+
+        if agent_id == self.current_agent:
+            self._update_round_display()
+
+    def get_view_state(self, agent_id: str) -> Tuple[str, Optional[int]]:
+        """Get the current view state for an agent.
+
+        Returns:
+            Tuple of (view_type, round_number) where view_type is "round" or "final_answer"
+        """
+        if self._viewing_final_answer.get(agent_id):
+            return ("final_answer", None)
+        return ("round", self._viewed_round.get(agent_id, 1))
+
     def _update_round_display(self) -> None:
-        """Update the round selector display."""
+        """Update the round selector display based on current view."""
         try:
-            selector = self.query_one("#round_selector", Label)
-            round_num = self._current_round.get(self.current_agent, 1)
-            selector.update(f"Round {round_num} ▾")
+            selector = self.query_one("#round_selector", RoundSelector)
+
+            if self._viewing_final_answer.get(self.current_agent):
+                selector.update("✓ Final Answer ▾")
+                selector.add_class("final-answer-view")
+            else:
+                round_num = self._viewed_round.get(
+                    self.current_agent,
+                    self._current_round.get(self.current_agent, 1),
+                )
+                current_round = self._current_round.get(self.current_agent, 1)
+
+                # Show indicator if viewing historical round
+                if round_num < current_round:
+                    selector.update(f"Round {round_num} ▾ (history)")
+                else:
+                    selector.update(f"Round {round_num} ▾")
+                selector.remove_class("final-answer-view")
         except Exception:
             pass
 
@@ -369,22 +685,71 @@ class AgentStatusRibbon(Widget):
         self._update_token_display()
         self._update_cost_display()
 
-    async def on_click(self, event) -> None:
-        """Handle clicks on ribbon sections."""
-        # Check if click was on tasks section
+    def on_round_selector_clicked(self, event: RoundSelector.Clicked) -> None:
+        """Handle click on the round selector - toggle dropdown."""
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write("DEBUG: on_round_selector_clicked received!\n")
+        event.stop()
+        self._toggle_dropdown()
+
+    def _toggle_dropdown(self) -> None:
+        """Toggle the view dropdown visibility."""
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write("DEBUG: _toggle_dropdown called\n")
+        # Close any existing dropdown
         try:
-            tasks_label = self.query_one("#tasks_progress", Label)
-            if hasattr(tasks_label, "region") and tasks_label.region.contains(event.x, event.y):
-                self.post_message(TasksClicked(self.current_agent))
-                return
+            existing = self.query_one(ViewDropdown)
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write("DEBUG: _toggle_dropdown closing existing\n")
+            existing.remove()
+            self._dropdown_open = False
+            return
         except Exception:
             pass
 
-        # Check if click was on round selector (for future dropdown)
-        try:
-            round_selector = self.query_one("#round_selector", Label)
-            if hasattr(round_selector, "region") and round_selector.region.contains(event.x, event.y):
-                # TODO: Show round dropdown
-                pass
-        except Exception:
-            pass
+        # Create and mount new dropdown
+        agent_id = self.current_agent
+        rounds = self._rounds.get(agent_id, [(1, False)])
+        current_round = self._current_round.get(agent_id, 1)
+        viewed_round = self._viewed_round.get(agent_id, current_round)
+        has_final = self._has_final_answer.get(agent_id, False)
+        viewing_final = self._viewing_final_answer.get(agent_id, False)
+
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG: _toggle_dropdown creating dropdown for {agent_id}, rounds={rounds}\n")
+
+        dropdown = ViewDropdown(
+            agent_id=agent_id,
+            rounds=rounds,
+            current_round=current_round,
+            viewed_round=viewed_round,
+            has_final_answer=has_final,
+            viewing_final_answer=viewing_final,
+            id="view_dropdown",
+        )
+
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write("DEBUG: _toggle_dropdown mounting dropdown\n")
+        self.mount(dropdown)
+        logger.info("AgentStatusRibbon._toggle_dropdown: focusing dropdown")
+        dropdown.focus()
+        self._dropdown_open = True
+        logger.info("AgentStatusRibbon._toggle_dropdown: done")
+
+    def on_view_selected(self, event: ViewSelected) -> None:
+        """Handle view selection from dropdown - update local state, let event bubble."""
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG: AgentStatusRibbon.on_view_selected type={event.view_type} round={event.round_number}\n")
+        self._dropdown_open = False
+
+        if event.view_type == "final_answer":
+            self._viewing_final_answer[event.agent_id] = True
+        else:
+            self._viewing_final_answer[event.agent_id] = False
+            if event.round_number is not None:
+                self._viewed_round[event.agent_id] = event.round_number
+
+        self._update_round_display()
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write("DEBUG: AgentStatusRibbon.on_view_selected done, letting event bubble\n")
+        # Don't stop or re-post - let the event bubble up naturally to the App

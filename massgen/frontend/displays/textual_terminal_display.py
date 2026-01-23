@@ -7253,8 +7253,9 @@ Type your question and press Enter to ask the agents.
         def _add_thinking_content(self, normalized, raw_type: str):
             """Route thinking/text content to TimelineSection.
 
-            Coordination content (voting, reasoning about other agents) is
-            routed to a collapsible ReasoningSection within the timeline.
+            Phase 15.5: Only display thinking/reasoning content, skip plain text.
+            Tool cards (answer, vote, etc.) already show meaningful output,
+            so raw text is redundant and clutters the UI.
             """
             # Process through handler for extra filtering
             cleaned = self._thinking_handler.process(normalized)
@@ -7263,6 +7264,10 @@ Type your question and press Enter to ask the agents.
 
             # Check if this is coordination content
             is_coordination = getattr(normalized, "is_coordination", False)
+
+            # Phase 15.5: Only display thinking/reasoning content, skip plain text
+            if not is_coordination and raw_type != "thinking":
+                return  # Skip plain text content - tool cards show meaningful output
 
             # Add to timeline
             # Phase 12: No storage needed - widgets stay in DOM with round tags
@@ -7275,10 +7280,7 @@ Type your question and press Enter to ask the agents.
 
                 def write_line(line: str):
                     # Phase 12: Pass round_number for CSS visibility
-                    if is_coordination or raw_type == "thinking":
-                        timeline.add_text(line, style="dim italic", text_class="thinking-inline", round_number=current_round)
-                    else:
-                        timeline.add_text(line, round_number=current_round)
+                    timeline.add_text(line, style="dim italic", text_class="thinking-inline", round_number=current_round)
 
                 self._line_buffer = _process_line_buffer(
                     self._line_buffer,

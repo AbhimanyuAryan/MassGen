@@ -5,7 +5,15 @@ Textual widgets for the MassGen TUI.
 This module provides reusable Textual widgets for the production TUI interface.
 """
 
-from .agent_status_ribbon import AgentStatusRibbon, RoundSelected, TasksClicked
+from .agent_status_ribbon import (
+    AgentStatusRibbon,
+    DropdownItem,
+    RoundSelected,
+    RoundSelector,
+    TasksClicked,
+    ViewDropdown,
+    ViewSelected,
+)
 from .background_tasks_modal import BackgroundTasksModal
 from .content_sections import (
     CompletionFooter,
@@ -19,6 +27,7 @@ from .content_sections import (
     ToolSection,
 )
 from .execution_status_line import ExecutionStatusLine
+from .final_answer_view import FinalAnswerView
 from .injection_card import InjectionSubCard
 from .mode_bar import ModeBar, ModeChanged, ModeToggle, OverrideRequested
 from .multi_line_input import MultiLineInput
@@ -57,8 +66,12 @@ __all__ = [
     "SessionInfoClicked",
     # Agent status ribbon
     "AgentStatusRibbon",
+    "DropdownItem",
     "RoundSelected",
+    "RoundSelector",
     "TasksClicked",
+    "ViewDropdown",
+    "ViewSelected",
     # Execution status line
     "ExecutionStatusLine",
     # Phase indicator bar
@@ -93,6 +106,8 @@ __all__ = [
     "CompletionFooter",
     "RestartBanner",
     "FinalPresentationCard",
+    # Final Answer View
+    "FinalAnswerView",
     # Input widgets
     "MultiLineInput",
     "QueuedInputBanner",

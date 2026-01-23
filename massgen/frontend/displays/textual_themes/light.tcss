@@ -3982,3 +3982,178 @@ WizardModal #wizard_hints {
 .tree-node-collapsed {
     color: #666666;
 }
+
+/* =============================================================================
+ * Phase 12: View Dropdown & Final Answer View
+ * =============================================================================
+ */
+
+/* View Dropdown - Overlay for round/final answer selection */
+ViewDropdown {
+    layer: overlay;
+    width: auto;
+    min-width: 28;
+    height: auto;
+    max-height: 15;
+    background: #ffffff;
+    border: solid #d0d7de;
+    padding: 0;
+    margin: 0;
+    offset: 0 1;
+}
+
+ViewDropdown .dropdown-item {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: transparent;
+}
+
+ViewDropdown .dropdown-item:hover {
+    background: #f3f4f6;
+}
+
+ViewDropdown .dropdown-item.current {
+    color: #1a6bb8;
+}
+
+ViewDropdown .dropdown-item.final-answer {
+    color: #2e7d4a;
+    text-style: bold;
+}
+
+ViewDropdown .dropdown-item.final-answer.current {
+    color: #238636;
+}
+
+ViewDropdown .dropdown-separator {
+    width: 100%;
+    height: 1;
+    color: #d0d7de;
+    padding: 0 1;
+}
+
+ViewDropdown .context-reset {
+    color: #bf8700;
+}
+
+/* Final Answer View - Full-panel display of winning answer */
+FinalAnswerView {
+    width: 100%;
+    height: 1fr;
+    padding: 0;
+    margin: 0;
+    background: #ffffff;
+}
+
+FinalAnswerView.hidden {
+    display: none;
+}
+
+FinalAnswerView #final_header {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: #dff7e4;
+    border-bottom: solid #2e7d4a;
+}
+
+FinalAnswerView #final_header_title {
+    width: 100%;
+    text-align: center;
+    color: #2e7d4a;
+    text-style: bold;
+}
+
+FinalAnswerView #final_content_container {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+    background: #ffffff;
+    overflow-y: auto;
+}
+
+FinalAnswerView #final_content {
+    width: 100%;
+    height: auto;
+    color: #333333;
+}
+
+FinalAnswerView #final_footer {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    background: #f5f5f5;
+    border-top: solid #d0d7de;
+}
+
+FinalAnswerView #final_metadata {
+    width: 100%;
+    height: 1;
+    color: #666666;
+    text-align: center;
+    padding: 0 1;
+}
+
+FinalAnswerView #final_buttons {
+    width: 100%;
+    height: 3;
+    align: center middle;
+}
+
+FinalAnswerView #final_buttons Button {
+    margin: 0 1;
+    min-width: 14;
+}
+
+FinalAnswerView #copy_btn {
+    background: #2e7d4a;
+    color: white;
+}
+
+FinalAnswerView #copy_btn:hover {
+    background: #238636;
+}
+
+FinalAnswerView #workspace_btn {
+    background: #f0f0f0;
+    color: #333333;
+}
+
+FinalAnswerView #workspace_btn:hover {
+    background: #e0e0e0;
+}
+
+FinalAnswerView #voting_btn {
+    background: #f0f0f0;
+    color: #333333;
+}
+
+FinalAnswerView #voting_btn:hover {
+    background: #e0e0e0;
+}
+
+FinalAnswerView #continue_hint {
+    width: 100%;
+    height: 1;
+    color: #1a6bb8;
+    text-align: center;
+    text-style: italic;
+    padding: 0 1;
+}
+
+FinalAnswerView .separator {
+    width: 100%;
+    height: 1;
+    color: #d0d7de;
+}
+
+/* Round selector in AgentStatusRibbon - Final answer state */
+AgentStatusRibbon #round_selector.final-answer-view {
+    color: #2e7d4a;
+    text-style: bold;
+}
+
+AgentStatusRibbon #round_selector.final-answer-view:hover {
+    color: #238636;
+}

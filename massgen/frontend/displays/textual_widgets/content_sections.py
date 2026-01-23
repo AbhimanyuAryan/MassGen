@@ -669,12 +669,12 @@ class TimelineSection(Vertical):
     TimelineSection .scroll-indicator {
         width: 100%;
         height: auto;
-        background: #2d333b;
-        color: #f0883e;
+        background: #21262d;
+        color: #7d8590;
         text-align: center;
         padding: 0 1;
         text-style: bold;
-        border-bottom: solid #f0883e;
+        border-bottom: solid #30363d;
     }
 
     TimelineSection .scroll-indicator.hidden {

@@ -49,7 +49,7 @@ class TaskPlanCard(Static):
         height: auto;
         min-height: 3;
         padding: 0 1;
-        margin: 0 0 1 1;
+        margin: 0 0 0 1;
         background: #1a1f2e;
         border-left: thick #a371f7;
     }
