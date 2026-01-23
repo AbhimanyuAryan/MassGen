@@ -3013,7 +3013,8 @@ if TEXTUAL_AVAILABLE:
             # === CONTENT WIDGETS (fill remaining space, in visual order top-to-bottom) ===
             # Tab bar for agent switching (flows below header, hidden during welcome)
             # NOTE: No dock:top - just flows naturally after docked widgets
-            self._tab_bar = AgentTabBar(agent_ids, id="agent_tab_bar")
+            agent_models = getattr(self.coordination_display, "agent_models", {})
+            self._tab_bar = AgentTabBar(agent_ids, agent_models=agent_models, id="agent_tab_bar")
             if self._showing_welcome:
                 self._tab_bar.add_class("hidden")
             yield self._tab_bar

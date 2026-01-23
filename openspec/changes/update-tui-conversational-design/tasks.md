@@ -41,17 +41,25 @@ Each phase section ends with a **CHECKPOINT** task to remind you to pause for ap
 - Mode toggles use softer colors: #1a3a2a (green), #3d3520 (warning), #2d2d2d (off)
 - User preferred keeping "Refine OFF" label over "Skip"
 
-## 2. Phase 2: Agent Tabs
+## 2. Phase 2: Agent Tabs ✓ COMPLETED
 
 ### 2.1 Tab Indicator Redesign
-- [ ] 2.1.1 Replace emoji status icons with dot indicators in `tab_bar.py`
-- [ ] 2.1.2 Add model name subtitle display to tabs
-- [ ] 2.1.3 Update CSS for new tab styling with underline indicator
+- [x] 2.1.1 Replace emoji status icons with dot indicators in `tab_bar.py`
+- [x] 2.1.2 Add model name display to tabs (inline, shortened)
+- [x] 2.1.3 Update CSS for new tab styling with underline indicator
 
 ### 2.2 Tab Spacing
-- [ ] 2.2.1 Increase horizontal spacing between tabs
-- [ ] 2.2.2 Remove bracket notation `[1]` from tabs
-- [ ] **2.2.3 CHECKPOINT: User approval for agent tabs**
+- [x] 2.2.1 Updated tab spacing and removed borders for cleaner look
+- [x] 2.2.2 Remove bracket notation `[1]` from tabs
+- [x] **2.2.3 CHECKPOINT: User approval for agent tabs ✓**
+
+**Implementation Notes:**
+- Files modified: `tab_bar.py`, `textual_terminal_display.py`, `dark.tcss`, `light.tcss`
+- STATUS_ICONS changed from emoji (⏳, ⚙️, 📝, ✅, ❌, 🏆) to dots (○, ◉, ✓, ✗)
+- Model names shown inline with shortening (removes `-preview`, `-latest`, `-turbo` suffixes, truncates to 15 chars)
+- Tab height reduced to 2 for compact display
+- Active tabs use underline indicator (border-bottom: tall) instead of full border
+- Agent color palette now applies to underline only on active tab
 
 ## 3. Phase 3: Tool Cards
 

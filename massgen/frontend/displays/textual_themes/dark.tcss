@@ -197,126 +197,118 @@ Screen {
 /* === Agent Tab Bar === */
 /* NOTE: No dock: top - flows naturally below HeaderWidget */
 AgentTabBar {
-    height: 3;
+    height: 2;
     width: 100%;
     layout: horizontal;
-    background: $bg-surface;
+    background: transparent;
     border-bottom: solid $border-default;
     padding: 0 1;
 }
 
 AgentTab {
     width: auto;
-    height: 3;
+    height: 2;
     padding: 0 2;
-    margin: 0 1;
+    margin: 0;
     content-align: center middle;
-    border: solid $border-default;
+    text-align: center;
     background: transparent;
+    border: none;
 }
 
 AgentTab:hover {
-    background: $bg-surface-2;
-    border: solid $border-highlight;
+    background: $bg-surface;
+    color: $fg-primary;
 }
 
 AgentTab.active {
     background: $bg-surface-2;
     color: $fg-primary;
-    border: solid $accent-primary;
+    border: none;
     border-bottom: tall $accent-primary;
 }
 
 AgentTab.inactive {
     background: transparent;
-    border: dashed $border-default;
+    border: none;
     color: $fg-muted;
 }
 
 AgentTab.inactive:hover {
-    border: dashed $border-highlight;
     color: $fg-primary;
+    background: $bg-surface;
 }
 
-/* === Agent Color Palette - Each agent gets a unique accent color === */
+/* === Agent Color Palette - Each agent gets a unique accent underline === */
 /* Color 1: Blue (default) */
-AgentTab.agent-color-1 { border-left: thick $agent-1; }
-AgentTab.agent-color-1.active { border-left: thick $agent-1; background: $agent-1-bg; }
+AgentTab.agent-color-1.active { border-bottom: tall $agent-1; background: $agent-1-bg; }
 
 /* Color 2: Green */
-AgentTab.agent-color-2 { border-left: thick $agent-2; }
-AgentTab.agent-color-2.active { border-left: thick $agent-2; background: $agent-2-bg; }
+AgentTab.agent-color-2.active { border-bottom: tall $agent-2; background: $agent-2-bg; }
 
 /* Color 3: Purple */
-AgentTab.agent-color-3 { border-left: thick $agent-3; }
-AgentTab.agent-color-3.active { border-left: thick $agent-3; background: $agent-3-bg; }
+AgentTab.agent-color-3.active { border-bottom: tall $agent-3; background: $agent-3-bg; }
 
 /* Color 4: Orange */
-AgentTab.agent-color-4 { border-left: thick $agent-4; }
-AgentTab.agent-color-4.active { border-left: thick $agent-4; background: $agent-4-bg; }
+AgentTab.agent-color-4.active { border-bottom: tall $agent-4; background: $agent-4-bg; }
 
 /* Color 5: Cyan */
-AgentTab.agent-color-5 { border-left: thick $agent-5; }
-AgentTab.agent-color-5.active { border-left: thick $agent-5; background: $agent-5-bg; }
+AgentTab.agent-color-5.active { border-bottom: tall $agent-5; background: $agent-5-bg; }
 
 /* Color 6: Pink */
-AgentTab.agent-color-6 { border-left: thick $agent-6; }
-AgentTab.agent-color-6.active { border-left: thick $agent-6; background: $agent-6-bg; }
+AgentTab.agent-color-6.active { border-bottom: tall $agent-6; background: $agent-6-bg; }
 
 /* Color 7: Yellow */
-AgentTab.agent-color-7 { border-left: thick $agent-7; }
-AgentTab.agent-color-7.active { border-left: thick $agent-7; background: $agent-7-bg; }
+AgentTab.agent-color-7.active { border-bottom: tall $agent-7; background: $agent-7-bg; }
 
 /* Color 8: Red */
-AgentTab.agent-color-8 { border-left: thick $agent-8; }
-AgentTab.agent-color-8.active { border-left: thick $agent-8; background: $agent-8-bg; }
+AgentTab.agent-color-8.active { border-bottom: tall $agent-8; background: $agent-8-bg; }
 
-/* Tab status colors */
+/* Tab status colors - underline indicators */
 AgentTab.status-waiting {
-    border-bottom: solid $fg-muted;
+    color: $fg-muted;
 }
 
 AgentTab.status-working {
-    border-bottom: solid $accent-primary;
+    border-bottom: tall $accent-primary;
 }
 
 AgentTab.status-streaming {
-    border-bottom: solid $accent-success;
+    border-bottom: tall $accent-success;
 }
 
 AgentTab.status-completed {
-    border-bottom: solid $accent-success;
+    border-bottom: tall $accent-success;
 }
 
 AgentTab.status-error {
-    border-bottom: solid $accent-error;
+    border-bottom: tall $accent-error;
 }
 
 /* Active tab with status - subtle background tint */
 AgentTab.active.status-working {
     background: $bg-surface;
-    border: solid $accent-primary;
+    border-bottom: tall $accent-primary;
 }
 
 AgentTab.active.status-streaming {
     background: $agent-2-bg;
-    border: solid $accent-success;
+    border-bottom: tall $accent-success;
 }
 
 AgentTab.active.status-completed {
     background: $agent-2-bg;
-    border: solid $accent-success;
+    border-bottom: tall $accent-success;
 }
 
 AgentTab.active.status-error {
     background: $agent-8-bg;
-    border: solid $accent-error;
+    border-bottom: tall $accent-error;
 }
 
 /* Winner tab styling */
 AgentTab.status-winner {
     background: #3d3510;
-    border: solid #dcdcaa;
     color: #dcdcaa;
     text-style: bold;
     border-bottom: tall #dcdcaa;
@@ -324,7 +316,6 @@ AgentTab.status-winner {
 
 AgentTab.status-winner.active {
     background: #4d4520;
-    border: solid #dcdcaa;
     border-bottom: tall #dcdcaa;
 }
 
@@ -335,8 +326,7 @@ AgentTab.dimmed {
 
 /* Disabled tabs (single-agent mode - unselected agents) */
 AgentTab.disabled {
-    background: $bg-base;
-    border: dashed $bg-surface-2;
+    background: transparent;
     color: $border-highlight;
     text-style: italic;
     opacity: 0.7;
@@ -344,7 +334,6 @@ AgentTab.disabled {
 
 AgentTab.disabled:hover {
     background: $bg-surface;
-    border: dashed $border-default;
     color: $fg-muted;
     /* Clicking disabled tab selects it as new single agent */
 }

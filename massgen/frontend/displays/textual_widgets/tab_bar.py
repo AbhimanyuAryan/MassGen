@@ -54,20 +54,21 @@ class AgentTab(Static):
     # Enable clicking on the widget
     can_focus = True
 
-    # Status icon mapping - use actual Unicode characters for reliable rendering
+    # Status icon mapping - minimal dot indicators for cleaner look
     STATUS_ICONS = {
-        "waiting": "⏳",  # Hourglass
-        "working": "⚙️",  # Gear
-        "streaming": "📝",  # Memo/Writing
-        "completed": "✅",  # Check mark
-        "error": "❌",  # Cross mark
-        "winner": "🏆",  # Trophy
+        "waiting": "○",  # Empty dot - idle/waiting
+        "working": "◉",  # Filled dot - active
+        "streaming": "◉",  # Filled dot - streaming
+        "completed": "✓",  # Check mark - done
+        "error": "✗",  # X mark - error
+        "winner": "✓",  # Check mark - winner
     }
 
     def __init__(
         self,
         agent_id: str,
         key_index: int = 0,
+        model_name: str = "",
         *,
         id: Optional[str] = None,
         classes: Optional[str] = None,
@@ -77,12 +78,14 @@ class AgentTab(Static):
         Args:
             agent_id: The agent's identifier.
             key_index: Keyboard shortcut index (1-9, 0 for none).
+            model_name: Model name to display as subtitle.
             id: Optional DOM ID.
             classes: Optional CSS classes.
         """
         super().__init__(id=id, classes=classes)
         self.agent_id = agent_id
         self.key_index = key_index
+        self.model_name = model_name
         self._status = "waiting"
         self._disabled = False  # For single-agent mode
 
@@ -91,10 +94,26 @@ class AgentTab(Static):
         return []
 
     def render(self) -> str:
-        """Render the tab content with agent ID and status."""
-        status_icon = self.STATUS_ICONS.get(self._status, "🤖")
-        key_hint = f"[{self.key_index}]" if self.key_index else ""
-        return f" {status_icon} {self.agent_id} {key_hint} "
+        """Render the tab content with agent ID, status, and compact model name."""
+        status_icon = self.STATUS_ICONS.get(self._status, "○")
+        # Compact single-line display with shortened model name
+        if self.model_name:
+            # Shorten model name: "gemini-3-flash-preview" -> "gemini-3-flash"
+            short_model = self._shorten_model_name(self.model_name)
+            return f" {status_icon} {self.agent_id} ({short_model}) "
+        return f" {status_icon} {self.agent_id} "
+
+    def _shorten_model_name(self, model: str) -> str:
+        """Shorten model name for compact display."""
+        # Remove common suffixes
+        for suffix in ["-preview", "-latest", "-turbo"]:
+            if model.endswith(suffix):
+                model = model[: -len(suffix)]
+                break
+        # Truncate if still too long (max ~15 chars)
+        if len(model) > 15:
+            model = model[:12] + "…"
+        return model
 
     def update_status(self, status: str) -> None:
         """Update the agent's status.
@@ -179,6 +198,7 @@ class AgentTabBar(Widget):
     def __init__(
         self,
         agent_ids: List[str],
+        agent_models: Optional[Dict[str, str]] = None,
         *,
         id: Optional[str] = None,
         classes: Optional[str] = None,
@@ -187,11 +207,13 @@ class AgentTabBar(Widget):
 
         Args:
             agent_ids: List of agent IDs to display as tabs.
+            agent_models: Optional mapping of agent IDs to model names.
             id: Optional DOM ID.
             classes: Optional CSS classes.
         """
         super().__init__(id=id, classes=classes)
         self._agent_ids = agent_ids
+        self._agent_models = agent_models or {}
         self._tabs: Dict[str, AgentTab] = {}
 
     def compose(self) -> ComposeResult:
@@ -200,9 +222,11 @@ class AgentTabBar(Widget):
             key_index = idx + 1 if idx < 9 else 0  # 1-9 for first 9 agents
             # Assign a color class based on agent index (cycles through 8 colors)
             color_class = f"agent-color-{(idx % 8) + 1}"
+            model_name = self._agent_models.get(agent_id, "")
             tab = AgentTab(
                 agent_id=agent_id,
                 key_index=key_index,
+                model_name=model_name,
                 id=f"tab_{agent_id.replace(' ', '_').replace('.', '_')}",
                 classes=f"inactive {color_class}",
             )
