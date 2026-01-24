@@ -119,6 +119,10 @@ class ModeToggle(Static):
         self._current_state = initial_state
         self._enabled = True
 
+    def on_mount(self) -> None:
+        """Apply initial style class on mount."""
+        self._update_style()
+
     def render(self) -> str:
         """Render the toggle button."""
         icon = self.ICONS.get(self.mode_type, {}).get(self._current_state, "⚙️")
@@ -203,7 +207,7 @@ class ModeBar(Widget):
         height: 2;
         width: 100%;
         layout: horizontal;
-        background: $surface;
+        background: transparent;
         border-bottom: solid $primary-darken-2;
         padding: 0 1;
         align: left middle;
@@ -213,36 +217,72 @@ class ModeBar(Widget):
         display: none;
     }
 
+    /* Base toggle - minimal, no background */
     ModeBar ModeToggle {
         margin: 0 1;
         padding: 0 1;
-        background: $surface-darken-1;
-        color: $text;
-    }
-
-    ModeBar ModeToggle:hover {
-        background: $primary-darken-1;
-    }
-
-    ModeBar ModeToggle.disabled {
-        background: $surface-darken-2;
+        background: transparent;
         color: $text-muted;
+        border: solid $surface-lighten-2;
     }
 
-    ModeBar ModeToggle.state-plan,
+    /* Hover - subtle border highlight */
+    ModeBar ModeToggle:hover {
+        border: solid $primary-lighten-1;
+        color: $text;
+    }
+
+    /* Focus - visible focus ring */
+    ModeBar ModeToggle:focus {
+        border: solid $primary;
+    }
+
+    /* Disabled - very muted */
+    ModeBar ModeToggle.disabled {
+        color: $text-disabled;
+        border: solid $surface;
+    }
+
+    /* Plan mode active - green text */
+    ModeBar ModeToggle.state-plan {
+        color: $success;
+        border: solid $success;
+    }
+
+    /* Execute mode - green text (same as plan) */
     ModeBar ModeToggle.state-execute {
-        background: $success-darken-1;
-        color: $text;
+        color: $success;
+        border: solid $success;
     }
 
+    /* Single agent - warning color */
     ModeBar ModeToggle.state-single {
-        background: $warning-darken-1;
-        color: $text;
+        color: $warning;
+        border: solid $warning;
     }
 
-    ModeBar ModeToggle.state-off {
-        background: $error-darken-2;
+    /* Multi-agent (default) - normal text */
+    ModeBar ModeToggle.state-multi {
         color: $text;
+        border: solid $surface-lighten-2;
+    }
+
+    /* Refinement on - green */
+    ModeBar ModeToggle.state-on {
+        color: $success;
+        border: solid $success;
+    }
+
+    /* Refinement off - muted */
+    ModeBar ModeToggle.state-off {
+        color: $text-muted;
+        border: solid $surface-lighten-2;
+    }
+
+    /* Normal (inactive plan) - muted */
+    ModeBar ModeToggle.state-normal {
+        color: $text-muted;
+        border: solid $surface-lighten-2;
     }
 
     ModeBar #mode_spacer {
@@ -269,19 +309,20 @@ class ModeBar(Widget):
         margin-left: 1;
     }
 
+    /* Plan settings button - minimal style to match toggles */
     ModeBar #plan_settings_btn {
         width: auto;
         height: 1;
         min-width: 3;
-        background: $surface-darken-1;
+        background: transparent;
         color: $text-muted;
-        border: none;
+        border: solid $surface-lighten-2;
         padding: 0 1;
         margin-left: 1;
     }
 
     ModeBar #plan_settings_btn:hover {
-        background: $primary-darken-1;
+        border: solid $primary-lighten-1;
         color: $text;
     }
 
@@ -349,7 +390,7 @@ class ModeBar(Widget):
         yield self._refinement_toggle
 
         # Plan settings button (hidden when plan mode is "normal")
-        self._plan_settings_btn = Button("⚙", id="plan_settings_btn", variant="default")
+        self._plan_settings_btn = Button("⋮", id="plan_settings_btn", variant="default")
         self._plan_settings_btn.add_class("hidden")
         yield self._plan_settings_btn
 
@@ -469,3 +510,186 @@ class ModeBar(Widget):
         """Let mode change messages bubble to parent."""
         _mode_log(f"ModeBar.on_mode_changed: {event.mode_type}={event.value}")
         # Don't stop - let it bubble to TextualApp
+
+
+class WorkflowStatusLine(Static):
+    """Conversational status line explaining the multi-agent workflow.
+
+    Displays human-readable messages like:
+    - "3 agents are thinking about this..."
+    - "They can see each other's ideas now. Claude is refining..."
+    - "Gemini thinks Claude's approach is best. Waiting for GPT..."
+    - "They agreed! Here's the final answer."
+    """
+
+    DEFAULT_CSS = """
+    WorkflowStatusLine {
+        height: 1;
+        width: 1fr;
+        padding: 0 1;
+        text-align: right;
+        color: $text-muted;
+        text-style: italic;
+        background: transparent;
+    }
+
+    WorkflowStatusLine.hidden {
+        display: none;
+    }
+
+    WorkflowStatusLine.active {
+        color: $primary;
+    }
+
+    WorkflowStatusLine.consensus {
+        color: $success;
+        text-style: bold;
+    }
+    """
+
+    def __init__(self, id: Optional[str] = None) -> None:
+        """Initialize the workflow status line."""
+        super().__init__("", id=id or "workflow_status")
+        self._agent_count = 0
+        self._agent_names: dict[str, str] = {}  # agent_id -> display name
+        self._working_agents: set[str] = set()
+        self._voted_agents: dict[str, str] = {}  # voter_id -> voted_for_id
+        self._current_phase = "idle"
+
+    def set_agents(self, agent_ids: list[str], agent_names: Optional[dict[str, str]] = None) -> None:
+        """Set the agents in the workflow.
+
+        Args:
+            agent_ids: List of agent IDs
+            agent_names: Optional mapping of agent_id -> display name
+        """
+        self._agent_count = len(agent_ids)
+        self._agent_names = agent_names or {}
+        self._working_agents = set(agent_ids)
+        self._voted_agents = {}
+        self._update_message()
+
+    def _get_agent_name(self, agent_id: str) -> str:
+        """Get display name for an agent."""
+        if agent_id in self._agent_names:
+            return self._agent_names[agent_id]
+        # Extract model name if in "agent_X" format
+        # Or use the ID directly if it's a model name
+        if agent_id.startswith("agent_"):
+            return agent_id.replace("agent_", "Agent ")
+        return agent_id
+
+    def set_phase(self, phase: str) -> None:
+        """Update the workflow phase.
+
+        Args:
+            phase: Current phase - "idle", "initial_answer", "enforcement", "presenting"
+        """
+        self._current_phase = phase
+        self._update_message()
+
+    def set_agent_working(self, agent_id: str) -> None:
+        """Mark an agent as actively working."""
+        self._working_agents.add(agent_id)
+        self._update_message()
+
+    def set_agent_idle(self, agent_id: str) -> None:
+        """Mark an agent as idle (finished working)."""
+        self._working_agents.discard(agent_id)
+        self._update_message()
+
+    def record_vote(self, voter_id: str, voted_for_id: str) -> None:
+        """Record a vote from one agent for another.
+
+        Args:
+            voter_id: The agent casting the vote
+            voted_for_id: The agent being voted for
+        """
+        self._voted_agents[voter_id] = voted_for_id
+        self._update_message()
+
+    def show_consensus(self, winner_name: str = "") -> None:
+        """Show that consensus was reached."""
+        self._current_phase = "consensus"
+        self.remove_class("active")
+        self.add_class("consensus")
+        if winner_name:
+            self.update(f'"They agreed! {winner_name} presents the final answer."')
+        else:
+            self.update('"They agreed! Here\'s the final answer."')
+
+    def reset(self) -> None:
+        """Reset the status line for a new session."""
+        self._working_agents.clear()
+        self._voted_agents.clear()
+        self._current_phase = "idle"
+        self.remove_class("active")
+        self.remove_class("consensus")
+        self.update("")
+
+    def _update_message(self) -> None:
+        """Update the displayed message based on current state."""
+        if self._agent_count == 0:
+            self.update("")
+            self.add_class("hidden")
+            return
+
+        self.remove_class("hidden")
+        self.remove_class("consensus")
+
+        message = self._generate_message()
+        if message:
+            self.add_class("active")
+            self.update(f'"{message}"')
+        else:
+            self.remove_class("active")
+            self.update("")
+
+    def _generate_message(self) -> str:
+        """Generate the appropriate conversational message."""
+        if self._current_phase == "idle":
+            return ""
+
+        # Handle both fine-grained phases (initial_answer, enforcement) and
+        # coarse phases (coordinating) from orchestrator.workflow_phase
+        if self._current_phase in ("initial_answer", "coordinating"):
+            # If we have votes, we're actually in enforcement/voting phase
+            if self._voted_agents:
+                return self._generate_voting_message()
+
+            # Agents are working on initial answers
+            if self._agent_count > 0:
+                return f"{self._agent_count} agents are thinking about this..."
+            return ""
+
+        if self._current_phase == "enforcement":
+            return self._generate_voting_message()
+
+        if self._current_phase in ("presenting", "presentation"):
+            return "They agreed! Presenting the final answer..."
+
+        return ""
+
+    def _generate_voting_message(self) -> str:
+        """Generate message for the voting/enforcement phase."""
+        if not self._voted_agents:
+            return "They can see each other's ideas now. Deciding what to do..."
+
+        # Show voting status
+        voted_count = len(self._voted_agents)
+        remaining = self._agent_count - voted_count
+
+        if voted_count > 0 and remaining > 0:
+            # Show who voted for whom
+            last_voter, voted_for = list(self._voted_agents.items())[-1]
+            voter_name = self._get_agent_name(last_voter)
+            target_name = self._get_agent_name(voted_for)
+
+            if remaining == 1:
+                waiting_agents = [a for a in self._working_agents if a not in self._voted_agents]
+                if waiting_agents:
+                    waiting_name = self._get_agent_name(waiting_agents[0])
+                    return f"{voter_name} thinks {target_name}'s approach is best. Waiting for {waiting_name}..."
+            return f"{voter_name} voted for {target_name}. {remaining} still deciding..."
+
+        return f"{voted_count} agents have voted. Waiting for consensus..."

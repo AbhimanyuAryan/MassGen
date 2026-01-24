@@ -411,6 +411,47 @@ class PlanOptionsPopover(Widget):
         """Handle focus."""
         _popover_log("on_focus() called")
 
+    def _validate_plan_for_execution(self, plan_id: str) -> tuple[bool, str]:
+        """Validate a plan exists and is ready for execution.
+
+        Args:
+            plan_id: The plan ID to validate.
+
+        Returns:
+            Tuple of (is_valid, error_message). If valid, error_message is empty.
+        """
+        plan = self._get_plan_by_id(plan_id)
+        if not plan:
+            return False, f"Plan '{plan_id}' not found"
+
+        # Check metadata exists and has valid status
+        try:
+            metadata = plan.load_metadata()
+            status = metadata.status
+            if status not in ("ready", "completed"):
+                return False, f"Plan status is '{status}' (expected 'ready' or 'completed')"
+        except FileNotFoundError:
+            return False, "Plan metadata file not found"
+        except Exception as e:
+            return False, f"Error loading plan metadata: {e}"
+
+        # Check plan.json exists and has tasks
+        plan_file = plan.workspace_dir / "plan.json"
+        if not plan_file.exists():
+            return False, "Plan file (plan.json) not found in workspace"
+
+        try:
+            plan_data = json.loads(plan_file.read_text())
+            tasks = plan_data.get("tasks", [])
+            if not tasks:
+                return False, "Plan has no tasks"
+        except json.JSONDecodeError as e:
+            return False, f"Plan file is corrupted: {e}"
+        except Exception as e:
+            return False, f"Error reading plan file: {e}"
+
+        return True, ""
+
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle select widget changes."""
         _popover_log(f"on_select_changed: selector={event.select.id}, value={event.value}, initialized={self._initialized}")
@@ -431,8 +472,23 @@ class PlanOptionsPopover(Widget):
             if value == "new":
                 self.post_message(PlanSelected(None, is_new=True))
             elif value == "latest":
+                # Validate latest plan if one exists
+                if self._available_plans:
+                    is_valid, error_msg = self._validate_plan_for_execution(
+                        self._available_plans[0].plan_id,
+                    )
+                    if not is_valid:
+                        _popover_log(f"  -> latest plan validation failed: {error_msg}")
+                        self.app.notify(f"Latest plan invalid: {error_msg}", severity="warning")
+                        return
                 self.post_message(PlanSelected(None, is_new=False))
             else:
+                # Validate specific plan before accepting selection
+                is_valid, error_msg = self._validate_plan_for_execution(value)
+                if not is_valid:
+                    _popover_log(f"  -> plan validation failed: {error_msg}")
+                    self.app.notify(f"Plan invalid: {error_msg}", severity="warning")
+                    return
                 self.post_message(PlanSelected(value, is_new=False))
 
         elif selector_id == "depth_selector":

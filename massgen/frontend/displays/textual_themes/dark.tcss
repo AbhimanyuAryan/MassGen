@@ -385,8 +385,8 @@ AgentStatusRibbon {
     width: 100%;
     height: auto;
     min-height: 1;
-    background: $bg-surface-2;
-    border-bottom: solid $border-default;
+    background: transparent;
+    border-top: solid $border-default;
     padding: 0 1;
 }
 
@@ -477,7 +477,7 @@ SessionInfoPanel #session_content {
 /* === Mode Bar (now inside input_header on the left) === */
 /* Override ModeBar widget's DEFAULT_CSS - keep width: auto so buttons fit content */
 ModeBar {
-    height: 1;
+    height: 2;
     width: auto;
     layout: horizontal;
     background: $bg-base;
@@ -489,7 +489,7 @@ ModeBar {
 }
 
 #mode_bar {
-    height: auto;
+    height: 2;
     width: auto;
     layout: horizontal;
     background: $bg-base;
@@ -503,59 +503,101 @@ ModeBar {
     display: none;
 }
 
-/* Mode Toggle buttons - compact pill style with radio indicators */
+/* Mode Toggle buttons - underline style */
 ModeToggle {
     width: auto;
-    height: 1;
+    height: 2;
     margin: 0 1 0 0;
     padding: 0 1;
-    background: $bg-surface-2;
-    color: $fg-muted;
+    background: transparent;
+    color: $fg-primary;
     border: none;
+    border-bottom: tall $border-default;
     outline: none;
 }
 
 ModeToggle:hover {
-    background: #3a424d;
+    background: transparent;
     color: $fg-primary;
+    border-bottom: tall $border-highlight;
 }
 
 ModeToggle:focus {
-    background: #3a424d;
+    background: transparent;
     color: $fg-primary;
-    text-style: bold;
-    border: solid $border-focus;
+    border-bottom: tall $border-highlight;
     outline: none;
 }
 
 ModeToggle.disabled {
-    background: $bg-surface;
-    color: $border-highlight;
+    background: transparent;
+    color: $fg-subtle;
+    border-bottom: tall $border-muted;
     text-style: italic;
 }
 
-/* Plan mode states - softer green tones */
+/* Plan mode states - green text + underline */
 ModeToggle.state-plan {
-    background: #1a3a2a;
-    color: #7ee787;
+    background: transparent;
+    color: $accent-success;
+    border-bottom: tall $accent-success;
+}
+
+ModeToggle.state-plan:hover,
+ModeToggle.state-plan:focus {
+    background: transparent;
+    color: $accent-success;
+    border-bottom: tall $accent-success;
 }
 
 ModeToggle.state-execute {
-    background: #1a3a2a;
-    color: #7ee787;
+    background: transparent;
+    color: $accent-success;
+    border-bottom: tall $accent-success;
     text-style: bold;
 }
 
-/* Agent mode states - softer warning tones */
-ModeToggle.state-single {
-    background: #3d3520;
-    color: #e3b341;
+ModeToggle.state-execute:hover,
+ModeToggle.state-execute:focus {
+    background: transparent;
+    color: $accent-success;
+    border-bottom: tall $accent-success;
+    text-style: bold;
 }
 
-/* Refinement mode states - softer muted tones */
+/* Agent mode states - single is muted (reduced mode) */
+ModeToggle.state-single {
+    background: transparent;
+    color: $fg-muted;
+    border-bottom: tall $border-default;
+}
+
+/* Multi-agent (default) - normal text */
+ModeToggle.state-multi {
+    background: transparent;
+    color: $fg-primary;
+    border-bottom: tall $border-default;
+}
+
+/* Refinement on - default state, not highlighted */
+ModeToggle.state-on {
+    background: transparent;
+    color: $fg-primary;
+    border-bottom: tall $border-default;
+}
+
+/* Refinement off - muted gray (reduced mode) */
 ModeToggle.state-off {
-    background: #2d2d2d;
-    color: #8b949e;
+    background: transparent;
+    color: $fg-muted;
+    border-bottom: tall $border-default;
+}
+
+/* Normal (inactive plan) - visible but subdued */
+ModeToggle.state-normal {
+    background: transparent;
+    color: $fg-primary;
+    border-bottom: tall $border-default;
 }
 
 /* Override button in mode bar */
@@ -1034,6 +1076,30 @@ SuggestionRow.selected {
     background: $bg-base;
 }
 
+/* Workflow status line - conversational messages about multi-agent workflow */
+/* Now inside input_header horizontal, takes remaining space and aligns right */
+#workflow_status {
+    height: 1;
+    width: 1fr;
+    padding: 0 1;
+    text-align: right;
+    color: $fg-muted;
+    text-style: italic;
+    background: transparent;
+}
+
+#workflow_status.hidden {
+    display: none;
+}
+
+#workflow_status.active {
+    color: $accent-primary;
+}
+
+#workflow_status.consensus {
+    color: $accent-success;
+    text-style: bold italic;
+}
 
 /* Input hint text - docked to right side */
 #input_hint {
@@ -2309,7 +2375,7 @@ ToolCallCard {
     min-height: 1;
     max-height: 6;
     padding: 0 0 0 2;
-    margin: 0 0 0 1;  /* Compact spacing between consecutive tool cards */
+    margin: 1 0 1 1;  /* Compact spacing between consecutive tool cards */
     background: transparent;
     border: none;
     border-left: solid $border-default;
@@ -2620,7 +2686,7 @@ TimelineSection .timeline-text.post-eval {
     max-height: 12;
     margin: 0;
     padding: 0;
-    background: $bg-surface;
+    background: $bg-base;
     border-bottom: solid $border-default;
 }
 
@@ -2639,9 +2705,9 @@ TaskPlanCard {
     height: auto;
     min-height: 1;
     padding: 0 0 0 2;
-    margin: 0;
+    margin: 0 0 0 1;
     background: transparent;
-    border-left: solid $accent-special;
+    border-left: solid #484f58;
 }
 
 /* Update animation - brief highlight */
@@ -2738,17 +2804,13 @@ TimelineSection #scroll_bottom_indicator {
     dock: bottom;
 }
 
-/* Restart Banner - prominent separator with color */
+/* Restart Banner - clean inline separator */
 RestartBanner {
     width: 100%;
-    height: auto;
+    height: 1;
     margin: 1 0;
-    padding: 1 0;
-    text-align: center;
-    background: #1a1526;
-    border-top: solid $accent-special;
-    border-bottom: solid $accent-special;
-    color: $accent-special;
+    padding: 0;
+    background: transparent;
 }
 
 /* FinalPresentationCard is styled via DEFAULT_CSS in content_sections.py */
@@ -4635,21 +4697,23 @@ PlanOptionsPopover #close_btn:hover {
     background: $bg-elevated;
 }
 
-/* Plan settings button in mode bar */
+/* Plan settings button in mode bar - matches ModeToggle style */
 #plan_settings_btn {
     width: auto;
-    height: 1;
+    height: 2;
     min-width: 3;
-    background: $bg-surface-2;
+    background: transparent;
     color: $fg-muted;
     border: none;
+    border-bottom: tall $border-default;
     padding: 0 1;
     margin-left: 1;
 }
 
 #plan_settings_btn:hover {
-    background: #3a424d;
-    color: $fg-primary;
+    background: transparent;
+    color: $accent-primary;
+    border-bottom: tall $accent-primary;
 }
 
 #plan_settings_btn.hidden {

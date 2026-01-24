@@ -95,6 +95,7 @@ try:
         ToolDetailModal,
         ToolSection,
         ViewSelected,
+        WorkflowStatusLine,
     )
     from .tui_modes import TuiModeState
 
@@ -2248,6 +2249,8 @@ class TextualTerminalDisplay(TerminalDisplay):
             mode_state: TuiModeState instance to update
         """
         if not self._app:
+            logger.warning("[PlanApproval] Cannot show modal - no app instance")
+            mode_state.reset_plan_state()
             return
 
         from massgen.frontend.displays.textual_widgets.plan_approval_modal import (
@@ -2256,21 +2259,41 @@ class TextualTerminalDisplay(TerminalDisplay):
         )
 
         def show_modal():
-            modal = PlanApprovalModal(tasks, plan_path, plan_data)
+            try:
+                modal = PlanApprovalModal(tasks, plan_path, plan_data)
 
-            def handle_result(result: PlanApprovalResult) -> None:
-                if result and result.approved:
-                    self._execute_approved_plan(result, mode_state)
-                else:
-                    # Cancelled - reset to normal mode
-                    mode_state.reset_plan_state()
-                    self._app.notify("Plan cancelled", severity="information")
-                    if hasattr(self._app, "_mode_bar") and self._app._mode_bar:
-                        self._app._mode_bar.set_plan_mode("normal")
+                def handle_result(result: PlanApprovalResult) -> None:
+                    try:
+                        if result and result.approved:
+                            self._execute_approved_plan(result, mode_state)
+                        else:
+                            # Cancelled - reset to normal mode
+                            mode_state.reset_plan_state()
+                            self._app.notify("Plan cancelled", severity="information")
+                            if hasattr(self._app, "_mode_bar") and self._app._mode_bar:
+                                self._app._mode_bar.set_plan_mode("normal")
+                    except Exception as e:
+                        logger.exception(f"[PlanApproval] Error handling modal result: {e}")
+                        mode_state.reset_plan_state()
+                        self._app.notify(f"Plan error: {e}", severity="error")
+                        if hasattr(self._app, "_mode_bar") and self._app._mode_bar:
+                            self._app._mode_bar.set_plan_mode("normal")
 
-            self._app.push_screen(modal, handle_result)
+                self._app.push_screen(modal, handle_result)
+            except Exception as e:
+                logger.exception(f"[PlanApproval] Error showing modal: {e}")
+                mode_state.reset_plan_state()
+                self._app.notify(f"Failed to show plan approval: {e}", severity="error")
+                if hasattr(self._app, "_mode_bar") and self._app._mode_bar:
+                    self._app._mode_bar.set_plan_mode("normal")
 
-        self._app.call_from_thread(show_modal)
+        try:
+            self._app.call_from_thread(show_modal)
+        except Exception as e:
+            logger.exception(f"[PlanApproval] call_from_thread failed: {e}")
+            mode_state.reset_plan_state()
+            # Can't notify via app if call_from_thread failed
+            logger.error("[PlanApproval] Failed to dispatch modal to main thread")
 
     def _execute_approved_plan(
         self,
@@ -2287,6 +2310,19 @@ class TextualTerminalDisplay(TerminalDisplay):
         from massgen.plan_storage import PlanStorage
 
         try:
+            # Validate planning_started_turn is set
+            if mode_state.planning_started_turn is None:
+                # Recover by using current turn or defaulting to 0
+                current_turn = 0
+                if hasattr(self, "_current_turn"):
+                    current_turn = self._current_turn or 0
+                elif hasattr(self._app, "coordination_display"):
+                    current_turn = getattr(self._app.coordination_display, "current_turn", 0)
+                mode_state.planning_started_turn = current_turn
+                logger.warning(
+                    f"[PlanExecution] planning_started_turn was None, defaulting to {current_turn}",
+                )
+
             # Get log directory for plan session
             log_dir = get_log_session_root()
 
@@ -2322,11 +2358,26 @@ class TextualTerminalDisplay(TerminalDisplay):
 
             # Submit execution prompt directly using _submit_question
             if hasattr(self._app, "_submit_question"):
-                # Set the input value first
-                if hasattr(self._app, "question_input") and self._app.question_input:
-                    self._app.question_input.value = execution_prompt
-                # Submit as a new turn
-                self._app.call_later(lambda: self._app._submit_question(execution_prompt))
+                # Prevent duplicate submission by disabling input during auto-submit
+                question_input = getattr(self._app, "question_input", None)
+                if question_input:
+                    # Disable to prevent user accidentally triggering duplicate submit
+                    question_input.disabled = True
+                    question_input.value = execution_prompt
+
+                    def submit_and_reenable():
+                        try:
+                            self._app._submit_question(execution_prompt)
+                        finally:
+                            # Re-enable input after submission starts
+                            # (actual processing lock handled by set_input_enabled)
+                            if question_input:
+                                question_input.disabled = False
+
+                    self._app.call_later(submit_and_reenable)
+                else:
+                    # No input widget, just submit directly
+                    self._app.call_later(lambda: self._app._submit_question(execution_prompt))
             else:
                 logger.error("[PlanExecution] No _submit_question method found to execute plan")
                 mode_state.reset_plan_state()
@@ -3008,8 +3059,21 @@ if TEXTUAL_AVAILABLE:
                 self.BINDINGS = []
 
         def _keyboard_locked(self) -> bool:
-            """Return True when keyboard input should be ignored."""
-            return self.coordination_display.safe_keyboard_mode or not self._keyboard_interactive_mode
+            """Return True when keyboard input should be ignored.
+
+            Keyboard is locked when:
+            - safe_keyboard_mode is True (during sensitive operations)
+            - _keyboard_interactive_mode is False (non-interactive)
+            - execution is in progress (mode_state.is_locked())
+            """
+            if self.coordination_display.safe_keyboard_mode:
+                return True
+            if not self._keyboard_interactive_mode:
+                return True
+            # Block mode-changing keyboard shortcuts during execution
+            if hasattr(self, "_mode_state") and self._mode_state.is_locked():
+                return True
+            return False
 
         def compose(self) -> ComposeResult:
             """Compose the UI layout with adaptive agent arrangement."""
@@ -3038,6 +3102,10 @@ if TEXTUAL_AVAILABLE:
                     # Mode bar - toggles for plan/agent/refinement modes (left side)
                     self._mode_bar = ModeBar(id="mode_bar")
                     yield self._mode_bar
+                    # Workflow status line - conversational messages (right side, fills remaining space)
+                    self._workflow_status = WorkflowStatusLine(id="workflow_status")
+                    self._workflow_status.set_agents(agent_ids, agent_models)
+                    yield self._workflow_status
                     # Input hint - hidden by default, used only for vim mode hints
                     self._input_hint = Static("", id="input_hint", classes="hidden")
                     yield self._input_hint
@@ -5035,6 +5103,24 @@ Type your question and press Enter to ask the agents.
             """Handle mode toggle changes from ModeBar."""
             tui_log(f"on_mode_changed: {event.mode_type}={event.value}")
 
+            # Block mode changes during execution
+            if self._mode_state.is_locked():
+                tui_log("  -> BLOCKED: execution in progress")
+                self.notify(
+                    "Cannot change modes during execution. Wait for completion or cancel first.",
+                    severity="warning",
+                    timeout=3,
+                )
+                # Revert the toggle to its previous state
+                if event.mode_type == "plan" and self._mode_bar:
+                    self._mode_bar.set_plan_mode(self._mode_state.plan_mode)
+                elif event.mode_type == "agent" and self._mode_bar:
+                    self._mode_bar.set_agent_mode(self._mode_state.agent_mode)
+                elif event.mode_type == "refinement" and self._mode_bar:
+                    self._mode_bar.set_refinement_mode(self._mode_state.refinement_enabled)
+                event.stop()
+                return
+
             if event.mode_type == "plan":
                 self._handle_plan_mode_change(event.value)
             elif event.mode_type == "agent":
@@ -5053,6 +5139,18 @@ Type your question and press Enter to ask the agents.
         def on_plan_settings_clicked(self, event: PlanSettingsClicked) -> None:
             """Handle plan settings button click - show/hide plan options popover."""
             tui_log("on_plan_settings_clicked - START")
+
+            # Block during execution
+            if self._mode_state.is_locked():
+                tui_log("  -> BLOCKED: execution in progress")
+                self.notify(
+                    "Cannot change plan settings during execution.",
+                    severity="warning",
+                    timeout=2,
+                )
+                event.stop()
+                return
+
             if hasattr(self, "_plan_options_popover"):
                 popover = self._plan_options_popover
                 tui_log(f"  popover exists, visible={'visible' in popover.classes}, classes={list(popover.classes)}")
@@ -5081,6 +5179,14 @@ Type your question and press Enter to ask the agents.
         def on_plan_selected(self, event: PlanSelected) -> None:
             """Handle plan selection from popover."""
             tui_log(f"on_plan_selected: plan_id={event.plan_id}, is_new={event.is_new}")
+
+            # Block during execution
+            if self._mode_state.is_locked():
+                tui_log("  -> BLOCKED: execution in progress")
+                self.notify("Cannot change plan selection during execution.", severity="warning", timeout=2)
+                event.stop()
+                return
+
             if event.is_new:
                 # User wants to create a new plan
                 self._mode_state.selected_plan_id = None
@@ -5102,6 +5208,14 @@ Type your question and press Enter to ask the agents.
         def on_plan_depth_changed(self, event: PlanDepthChanged) -> None:
             """Handle plan depth change from popover."""
             tui_log(f"on_plan_depth_changed: depth={event.depth}")
+
+            # Block during execution
+            if self._mode_state.is_locked():
+                tui_log("  -> BLOCKED: execution in progress")
+                self.notify("Cannot change plan depth during execution.", severity="warning", timeout=2)
+                event.stop()
+                return
+
             self._mode_state.plan_config.depth = event.depth
             self.notify(f"Plan depth: {event.depth}", severity="information", timeout=2)
             event.stop()
@@ -5109,6 +5223,14 @@ Type your question and press Enter to ask the agents.
         def on_broadcast_mode_changed(self, event: BroadcastModeChanged) -> None:
             """Handle broadcast mode change from popover."""
             tui_log(f"on_broadcast_mode_changed: broadcast={event.broadcast}")
+
+            # Block during execution
+            if self._mode_state.is_locked():
+                tui_log("  -> BLOCKED: execution in progress")
+                self.notify("Cannot change broadcast mode during execution.", severity="warning", timeout=2)
+                event.stop()
+                return
+
             self._mode_state.plan_config.broadcast = event.broadcast
 
             if event.broadcast == "human":
@@ -5149,6 +5271,10 @@ Type your question and press Enter to ask the agents.
             """
             tui_log(f"_handle_plan_mode_change: {mode}")
             self._mode_state.plan_mode = mode
+
+            # Sync mode bar state (ensures settings button visibility, etc.)
+            if self._mode_bar:
+                self._mode_bar.set_plan_mode(mode)
 
             if mode == "plan":
                 self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
@@ -5223,6 +5349,16 @@ Type your question and press Enter to ask the agents.
         def action_toggle_plan_mode(self) -> None:
             """Toggle plan mode on/off (F5 shortcut)."""
             tui_log("action_toggle_plan_mode")
+
+            # Block during execution (keyboard_action decorator handles this,
+            # but add explicit check with user message for clarity)
+            if self._mode_state.is_locked():
+                self.notify(
+                    "Cannot change plan mode during execution. Wait for completion or cancel first.",
+                    severity="warning",
+                    timeout=3,
+                )
+                return
 
             if self._mode_state.plan_mode == "normal":
                 self._mode_state.plan_mode = "plan"
@@ -5776,6 +5912,10 @@ Type your question and press Enter to ask the agents.
                 },
             )
 
+            # Update workflow status line with vote
+            if hasattr(self, "_workflow_status") and self._workflow_status:
+                self._workflow_status.record_vote(voter, voted_for)
+
             if self._status_bar:
                 self._status_bar.add_vote(voted_for, voter)
                 standings = self._status_bar.get_standings_text()
@@ -6055,6 +6195,11 @@ Type your question and press Enter to ask the agents.
                 )
                 self._status_bar.celebrate_winner(winner_id)
 
+            # Update workflow status line with consensus message
+            if hasattr(self, "_workflow_status") and self._workflow_status:
+                winner_name = model_name if model_name else winner_id
+                self._workflow_status.show_consensus(winner_name)
+
             # 2. Add winner CSS class to the winning agent's tab
             try:
                 tab_bar = self.query_one(AgentTabBar)
@@ -6087,6 +6232,10 @@ Type your question and press Enter to ask the agents.
             tui_log(f"notify_phase called with phase='{phase}'")
             if self._status_bar:
                 self._status_bar.update_phase(phase)
+
+            # Update workflow status line with conversational message
+            if hasattr(self, "_workflow_status") and self._workflow_status:
+                self._workflow_status.set_phase(phase)
 
             # Toggle execution mode on input area based on phase
             try:

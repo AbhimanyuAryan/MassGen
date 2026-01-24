@@ -565,18 +565,24 @@ class ContentNormalizer:
         # Determine if should display
         should_display = True
 
-        # Filter pure JSON noise
-        if cls.is_json_noise(content):
-            should_display = False
+        # Presentation content (final answers) should always be displayed
+        # Skip all filtering for presentation content
+        if content_type == "presentation":
+            # Only filter if completely empty
+            pass
+        else:
+            # Filter pure JSON noise
+            if cls.is_json_noise(content):
+                should_display = False
 
-        # Filter workspace/action tool JSON (shown via tool cards instead)
-        if cls.is_workspace_tool_json(content):
-            should_display = False
+            # Filter workspace/action tool JSON (shown via tool cards instead)
+            if cls.is_workspace_tool_json(content):
+                should_display = False
 
-        # Filter workspace state content (internal messages)
-        # BUT: Don't filter tool content - tool args contain JSON that we need to display
-        if not content_type.startswith("tool_") and cls.is_workspace_state_content(content):
-            should_display = False
+            # Filter workspace state content (internal messages)
+            # BUT: Don't filter tool content - tool args contain JSON that we need to display
+            if not content_type.startswith("tool_") and cls.is_workspace_state_content(content):
+                should_display = False
 
         # Apply light cleaning
         if should_display:

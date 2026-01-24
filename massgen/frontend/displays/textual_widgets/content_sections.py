@@ -1849,9 +1849,10 @@ class RestartBanner(Static):
     DEFAULT_CSS = """
     RestartBanner {
         width: 100%;
-        height: auto;
+        height: 1;
         margin: 1 0;
         padding: 0;
+        background: transparent;
     }
 
     RestartBanner.hidden {
@@ -1865,72 +1866,55 @@ class RestartBanner(Static):
         self._subtitle = subtitle
 
     def render(self) -> Text:
-        """Render a subtle, professional restart banner."""
+        """Render a clean, inline separator with centered label."""
         import re
 
         text = Text()
 
         # Clean up the label - extract meaningful info
         display_label = self._label
-        subtitle = self._subtitle
         is_final = "FINAL" in display_label.upper()
 
         if is_final:
-            # Final Presentation banner - use green/success color scheme
+            # Final Presentation - prominent green styling
             display_label = "🏆 Final Presentation"
-            label_color = "#4ade80"  # Green for success/victory
-            line_color = "#22c55e"  # Slightly darker green for lines
-            subtitle_color = "#86efac"  # Lighter green for subtitle
+            label_color = "#4ade80"  # Green for success
+            line_color = "#22c55e"  # Green for lines
         elif "RESTART" in display_label.upper():
-            # Try to extract round number
+            # Extract round number for restart
             match = re.search(r"ROUND\s*(\d+)", display_label, re.IGNORECASE)
             if match:
                 round_num = match.group(1)
-                display_label = f"⟳ Round {round_num} Complete"
+                display_label = f"Round {round_num}"
             else:
-                display_label = "⟳ New Round Starting"
-            label_color = "#e2b340"  # Amber/gold for rounds
-            line_color = "#5a6374"  # Default dim gray
-            subtitle_color = "#9ca3af"  # Gray for subtitle
+                display_label = "New Round"
+            label_color = "#9ca3af"  # Muted gray
+            line_color = "#4b5563"  # Dim gray
         elif display_label.upper().startswith("ROUND"):
-            # Simple "Round X" label - format as round start indicator
+            # Simple "Round X" label
             match = re.search(r"ROUND\s*(\d+)", display_label, re.IGNORECASE)
             if match:
                 round_num = match.group(1)
-                display_label = f"▶ Round {round_num}"
-            label_color = "#e2b340"  # Amber/gold for rounds
-            line_color = "#5a6374"  # Default dim gray
-            subtitle_color = "#9ca3af"  # Gray for subtitle
+                display_label = f"Round {round_num}"
+            label_color = "#9ca3af"  # Muted gray
+            line_color = "#4b5563"  # Dim gray
         else:
-            label_color = "#e2b340"  # Default amber
-            line_color = "#5a6374"  # Default dim gray
-            subtitle_color = "#9ca3af"  # Gray for subtitle
+            label_color = "#9ca3af"  # Muted gray
+            line_color = "#4b5563"  # Dim gray
 
-        # Subtle dotted line style - professional and understated
-        line_char = "┄"
-        line_width = 68
+        # Single-line inline separator: ──── ▸ Round 1 ────────────────
+        line_char = "─"
+        total_width = 70
+        label_with_arrow = f" ▸ {display_label} "
+        label_len = len(label_with_arrow)
 
-        # Top line - gradient fade effect using dim styling
-        text.append("  ", style="")
-        text.append(line_char * line_width, style=f"dim {line_color}")
-        text.append("\n")
+        # Calculate line lengths (left shorter, right fills remaining)
+        left_len = 4
+        right_len = max(4, total_width - left_len - label_len)
 
-        # Center label
-        label_centered = display_label.center(line_width)
-        text.append("  ", style="")
-        text.append(label_centered, style=label_color)
-        text.append("\n")
-
-        # Subtitle line (if provided)
-        if subtitle:
-            subtitle_centered = subtitle.center(line_width)
-            text.append("  ", style="")
-            text.append(subtitle_centered, style=f"dim italic {subtitle_color}")
-            text.append("\n")
-
-        # Bottom line
-        text.append("  ", style="")
-        text.append(line_char * line_width, style=f"dim {line_color}")
+        text.append(line_char * left_len, style=f"dim {line_color}")
+        text.append(label_with_arrow, style=label_color)
+        text.append(line_char * right_len, style=f"dim {line_color}")
 
         return text
 

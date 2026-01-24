@@ -284,8 +284,8 @@ class AgentStatusRibbon(Widget):
         width: 100%;
         height: auto;
         min-height: 1;
-        background: $surface;
-        border-bottom: solid $primary-darken-3;
+        background: transparent;
+        border-top: solid $primary-darken-3;
         padding: 0 1;
     }
 

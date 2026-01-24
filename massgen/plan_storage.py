@@ -211,31 +211,77 @@ class PlanStorage:
         return None
 
     def finalize_planning_phase(self, session: PlanSession, workspace_source: Path):
-        """Copy planning workspace to plan storage and freeze it."""
-        # Copy all files from planning workspace to session workspace
-        if workspace_source.exists():
-            for item in workspace_source.rglob("*"):
-                if item.is_file():
-                    rel_path = item.relative_to(workspace_source)
-                    dest = session.workspace_dir / rel_path
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(item, dest)
+        """Copy planning workspace to plan storage and freeze it.
 
-        # Rename project_plan.json -> plan.json for MCP planning tool compatibility
-        # Planning phase outputs project_plan.json (to distinguish from internal tasks/plan.json)
-        # but execution phase expects plan/plan.json to align with MCP tools
-        project_plan = session.workspace_dir / "project_plan.json"
-        if project_plan.exists():
-            project_plan.rename(session.workspace_dir / "plan.json")
-            logger.info("[PlanStorage] Renamed project_plan.json -> plan.json")
+        Uses atomic operations to prevent partial state on interruption:
+        1. Copy to temp directory
+        2. Perform transformations (rename files)
+        3. Atomic rename to final location
+        """
+        # Use a temp directory for atomic operation
+        temp_workspace = session.plan_dir / ".workspace_temp"
+        temp_frozen = session.plan_dir / ".frozen_temp"
 
-        # Create immutable frozen copy
-        session.copy_workspace_to_frozen()
+        try:
+            # Clean up any leftover temp directories from previous failed attempts
+            if temp_workspace.exists():
+                shutil.rmtree(temp_workspace)
+            if temp_frozen.exists():
+                shutil.rmtree(temp_frozen)
 
-        # Update metadata
-        metadata = session.load_metadata()
-        metadata.status = "ready"
-        session.save_metadata(metadata)
-        session.log_event("planning_finalized", {"workspace_files": [str(f) for f in session.workspace_dir.rglob("*") if f.is_file()]})
+            # Step 1: Copy source to temp workspace
+            if workspace_source.exists():
+                temp_workspace.mkdir(parents=True, exist_ok=True)
+                for item in workspace_source.rglob("*"):
+                    if item.is_file():
+                        rel_path = item.relative_to(workspace_source)
+                        dest = temp_workspace / rel_path
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, dest)
 
-        logger.info(f"[PlanStorage] Finalized planning phase for {session.plan_id}")
+            # Step 2: Rename project_plan.json -> plan.json in temp workspace
+            # Planning phase outputs project_plan.json (to distinguish from internal tasks/plan.json)
+            # but execution phase expects plan/plan.json to align with MCP tools
+            project_plan = temp_workspace / "project_plan.json"
+            if project_plan.exists():
+                project_plan.rename(temp_workspace / "plan.json")
+                logger.info("[PlanStorage] Renamed project_plan.json -> plan.json")
+
+            # Step 3: Create frozen copy from temp workspace
+            if temp_workspace.exists():
+                shutil.copytree(temp_workspace, temp_frozen)
+
+            # Step 4: Atomic move - remove existing and rename temp to final
+            # Remove existing directories if they exist
+            if session.workspace_dir.exists():
+                shutil.rmtree(session.workspace_dir)
+            if session.frozen_dir.exists():
+                shutil.rmtree(session.frozen_dir)
+
+            # Atomic rename to final locations
+            if temp_workspace.exists():
+                temp_workspace.rename(session.workspace_dir)
+            if temp_frozen.exists():
+                temp_frozen.rename(session.frozen_dir)
+
+            logger.info(f"[PlanStorage] Froze workspace snapshot: {session.frozen_dir}")
+
+            # Step 5: Update metadata (this is a small file, low risk of corruption)
+            metadata = session.load_metadata()
+            metadata.status = "ready"
+            session.save_metadata(metadata)
+            session.log_event(
+                "planning_finalized",
+                {"workspace_files": [str(f) for f in session.workspace_dir.rglob("*") if f.is_file()]},
+            )
+
+            logger.info(f"[PlanStorage] Finalized planning phase for {session.plan_id}")
+
+        except Exception as e:
+            # Clean up temp directories on failure
+            logger.error(f"[PlanStorage] Finalization failed, cleaning up: {e}")
+            if temp_workspace.exists():
+                shutil.rmtree(temp_workspace, ignore_errors=True)
+            if temp_frozen.exists():
+                shutil.rmtree(temp_frozen, ignore_errors=True)
+            raise
