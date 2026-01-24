@@ -762,7 +762,7 @@ SuggestionRow.selected {
     dock: right;
     height: 1;
     width: auto;
-    color: #6e7681;
+    color: #a8b1ba;  /* Lighter/more muted for shadow effect */
     text-style: italic;
     padding: 0 1;
 }
@@ -2080,6 +2080,48 @@ ToolCallCard.type-subagent.expanded {
     max-height: 100%;
     height: auto;
     min-height: 8;
+}
+
+/* === Terminal Tool Hero Cards (new_answer, vote) === */
+/* These tools are the culmination of agent work and get prominent styling */
+ToolCallCard.terminal-tool {
+    border: heavy #d97706;
+    background: #fef3c7;
+    min-height: 4;
+    max-height: 12;
+    padding: 0 1;
+    margin: 1 1;
+}
+
+ToolCallCard.terminal-tool.status-running {
+    border: heavy #d97706;
+    background: #fef3c7;
+}
+
+ToolCallCard.terminal-tool.status-success {
+    border: heavy #16a34a;
+    background: #dcfce7;
+}
+
+ToolCallCard.terminal-tool.status-error {
+    border: heavy #f44336;
+    background: #ffebee;
+}
+
+ToolCallCard.terminal-tool:hover {
+    background: #fde68a;
+    border: heavy #b45309;
+}
+
+ToolCallCard.terminal-tool:focus {
+    background: #fde68a;
+    border: heavy #92400e;
+    outline: none;
+}
+
+/* Terminal tool header styling - amber accent for tool name */
+ToolCallCard.terminal-tool #tool-main-content {
+    color: #92400e;
 }
 
 /* === Tool Batch Cards === */

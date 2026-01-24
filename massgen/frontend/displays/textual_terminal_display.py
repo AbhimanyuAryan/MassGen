@@ -6986,6 +6986,13 @@ Type your question and press Enter to ask the agents.
             self._final_answer_content: Optional[str] = None
             self._final_answer_metadata: Optional[Dict[str, Any]] = None
 
+            # Terminal tool transition tracking (new_answer, vote)
+            # When a terminal tool completes, we delay round transitions so users can see the action
+            self._last_tool_was_terminal: bool = False
+            self._transition_pending: bool = False
+            self._transition_timer: Optional[Any] = None
+            self._pending_round_transition: Optional[Tuple[int, bool]] = None  # (round_num, is_context_reset)
+
         def compose(self) -> ComposeResult:
             with Vertical():
                 # NOTE: Agent header row removed in Phase 8c/10 - redundant with tab bar + status ribbon
@@ -7606,6 +7613,12 @@ Type your question and press Enter to ask the agents.
                         # Check if this is a subagent tool - update existing card with results
                         if is_subagent_tool:
                             self._update_subagent_card_with_results(tool_data, timeline)
+
+                        # Check if this is a terminal tool (new_answer, vote) and mark for delayed transition
+                        tool_name_lower = tool_data.tool_name.lower()
+                        if "new_answer" in tool_name_lower or "vote" in tool_name_lower:
+                            self.mark_terminal_tool_complete()
+                            tui_log(f"Terminal tool completed: {tool_data.tool_name}")
 
                     # Refresh header if this is a background operation (to show bg badge)
                     if tool_data.status == "background":
@@ -8385,6 +8398,10 @@ Type your question and press Enter to ask the agents.
             Phase 12: With CSS-based visibility, all round content stays in the DOM.
             We switch visibility to show the new round and hide old round content.
 
+            Terminal Tool Delay: When a terminal tool (new_answer, vote) just completed,
+            we delay the transition by 3 seconds so users can see the completed action
+            before the view switches to the new round.
+
             IMPORTANT: This method is atomic - tracking is updated FIRST before any
             visibility changes to ensure all new content gets tagged with the correct
             round number.
@@ -8402,6 +8419,43 @@ Type your question and press Enter to ask the agents.
             # Debug logging
             with open("/tmp/tui_debug.log", "a") as f:
                 f.write(f"DEBUG: AgentPanel.start_new_round agent={self.agent_id} new_round={round_number} prev_round={self._current_round}\n")
+
+            # Terminal tool transition delay - give users time to see completed action
+            if self._transition_pending:
+                # Already waiting for a transition - update the pending round
+                self._pending_round_transition = (round_number, is_context_reset)
+                return
+
+            if self._last_tool_was_terminal:
+                # Delay transition so users can see the completed terminal tool
+                self._transition_pending = True
+                self._pending_round_transition = (round_number, is_context_reset)
+                self._transition_timer = self.set_timer(5.0, self._execute_round_transition)
+                self._last_tool_was_terminal = False  # Reset for next round
+
+                # Show a subtle notification
+                try:
+                    self.notify("Round complete - transitioning in 5s", timeout=3)
+                except Exception:
+                    pass  # Notification is optional
+                return
+
+            # Execute the round transition immediately
+            self._execute_round_transition_impl(round_number, is_context_reset)
+
+        def _execute_round_transition(self) -> None:
+            """Execute a delayed round transition (called by timer)."""
+            self._transition_pending = False
+            self._transition_timer = None
+
+            if self._pending_round_transition:
+                round_number, is_context_reset = self._pending_round_transition
+                self._pending_round_transition = None
+                self._execute_round_transition_impl(round_number, is_context_reset)
+
+        def _execute_round_transition_impl(self, round_number: int, is_context_reset: bool = False) -> None:
+            """Execute the actual round transition logic."""
+            from massgen.logger_config import logger
 
             # Step 1: Update round tracking FIRST (before any visibility changes)
             # This ensures all subsequent content gets tagged with the new round number
@@ -8437,6 +8491,16 @@ Type your question and press Enter to ask the agents.
             self._update_ribbon_round(round_number, is_context_reset)
 
             logger.debug(f"AgentPanel.start_new_round: completed round={round_number}")
+
+        def mark_terminal_tool_complete(self) -> None:
+            """Mark that a terminal tool (new_answer, vote) has just completed.
+
+            This triggers a delayed transition when start_new_round is called,
+            giving users time to see the completed action before the view switches.
+            """
+            self._last_tool_was_terminal = True
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG: AgentPanel.mark_terminal_tool_complete agent={self.agent_id}\n")
 
         def start_final_presentation(self, vote_counts: Optional[Dict[str, int]] = None, answer_labels: Optional[Dict[str, str]] = None) -> None:
             """Start the final presentation phase - shows fresh view with distinct banner.
