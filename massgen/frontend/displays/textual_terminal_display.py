@@ -3805,9 +3805,6 @@ if TEXTUAL_AVAILABLE:
 
         def _handle_slash_command(self, command: str) -> None:
             """Handle slash commands within the TUI using unified SlashCommandDispatcher."""
-            # DEBUG: Write to file
-            with open("/tmp/theme_debug.log", "a") as f:
-                f.write(f"_handle_slash_command called with: {command}\n")
             try:
                 from massgen.frontend.interactive_controller import (
                     SessionContext,
@@ -3822,9 +3819,6 @@ if TEXTUAL_AVAILABLE:
 
                 dispatcher = SlashCommandDispatcher(context=context, adapter=None)
                 result = dispatcher.dispatch(command)
-                # DEBUG: Write to file
-                with open("/tmp/theme_debug.log", "a") as f:
-                    f.write(f"dispatch result: ui_action={result.ui_action}, handled={result.handled}\n")
 
                 if result.should_exit:
                     self.exit()
@@ -3868,8 +3862,6 @@ if TEXTUAL_AVAILABLE:
                 elif result.ui_action == "toggle_vim":
                     self._toggle_vim_mode()
                 elif result.ui_action == "toggle_theme":
-                    with open("/tmp/theme_debug.log", "a") as f:
-                        f.write("toggle_theme ui_action matched, calling action_toggle_theme\n")
                     self.action_toggle_theme()
                 elif result.ui_action == "show_history":
                     self._show_history_modal()
@@ -4582,6 +4574,8 @@ Type your question and press Enter to ask the agents.
                     )
                     # Tag with current round for CSS visibility switching
                     card.add_class(f"round-{self._current_round}")
+                    # Enable full-width mode for prominent display
+                    card.add_class("full-width-mode")
                     timeline.add_widget(card)
                     self._final_presentation_card = card
 
@@ -5582,9 +5576,6 @@ Type your question and press Enter to ask the agents.
         def action_toggle_theme(self) -> None:
             """Toggle between light and dark themes (Ctrl+Shift+T binding)."""
             from textual.css.stylesheet import Stylesheet
-
-            with open("/tmp/theme_debug.log", "a") as f:
-                f.write("action_toggle_theme called\n")
 
             current = self.coordination_display.theme
             new_theme = "light" if current == "dark" else "dark"

@@ -2322,6 +2322,38 @@ class FinalPresentationCard(Vertical):
         height: 1;
         margin-top: 1;
     }
+
+    /* Full-width mode - fills available vertical space */
+    FinalPresentationCard.full-width-mode {
+        height: 1fr;
+        min-height: 20;
+    }
+
+    FinalPresentationCard.full-width-mode #final_card_content {
+        height: 1fr;
+        max-height: none;
+        overflow-y: auto;
+    }
+
+    /* Enhanced prominence styling for full-width mode */
+    FinalPresentationCard.full-width-mode.streaming {
+        border: double #ffd700;
+    }
+
+    FinalPresentationCard.full-width-mode.completed {
+        border: double #3fb950;
+        background: #0d1f14;
+    }
+
+    FinalPresentationCard.full-width-mode #final_card_header {
+        background: #1a4d2e;
+        padding: 1;
+        border-bottom: solid #3fb950 50%;
+    }
+
+    FinalPresentationCard.full-width-mode #final_card_title {
+        color: #3fb950;
+    }
     """
 
     def __init__(

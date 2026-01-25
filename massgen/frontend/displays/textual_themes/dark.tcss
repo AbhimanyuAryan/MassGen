@@ -2376,7 +2376,7 @@ ToolCallCard {
     max-height: 8;
     padding: 0 1 0 2;
     margin: 1 0 1 1;  /* Better visual separation between tool cards */
-    background: $bg-card;
+    background: transparent;
     border: none;
     border-left: thick $border-default;
 }
@@ -2426,12 +2426,12 @@ ToolCallCard.has-injection {
 }
 
 ToolCallCard:hover {
-    background: $bg-surface;
+    background: transparent;
     border-left: solid $border-highlight;
 }
 
 ToolCallCard:focus {
-    background: $bg-surface;
+    background: transparent;
     border-left: solid $accent-primary;
     outline: none;
 }
@@ -2496,31 +2496,31 @@ ToolCallCard.type-workspace {
 /* === Subagent Tool Cards - Special styling for spawn_subagents === */
 ToolCallCard.type-subagent {
     border-left: solid $accent-special;
-    background: #1a1526;
+    background: transparent;
     max-height: 15;
     padding: 0 1;
 }
 
 ToolCallCard.type-subagent.status-running {
     border-left: solid $accent-special;
-    background: #1f1830;
+    background: transparent;
     border: solid $accent-special;
     border-left: solid $accent-special;
 }
 
 ToolCallCard.type-subagent.status-success {
     border-left: solid $accent-success;
-    background: $agent-2-bg;
+    background: transparent;
 }
 
 ToolCallCard.type-subagent.status-error {
     border-left: solid $accent-error;
-    background: #1f0d0f;
+    background: transparent;
 }
 
 ToolCallCard.type-subagent.status-background {
     border-left: solid $accent-warning;
-    background: #1f1a10;
+    background: transparent;
 }
 
 ToolCallCard.type-subagent.expanded {
@@ -2560,13 +2560,13 @@ ToolCallCard.terminal-tool.status-error {
 }
 
 ToolCallCard.terminal-tool:hover {
-    background: #1e1e1e;
+    background: transparent;
     border: none;
     border-left: tall #8b9cb5;
 }
 
 ToolCallCard.terminal-tool:focus {
-    background: #1e1e1e;
+    background: transparent;
     border: none;
     border-left: tall #94a3b8;
     outline: none;
@@ -2587,7 +2587,7 @@ ToolBatchCard {
     max-height: 20;
     padding: 0 1;
     margin: 1 0 1 1;  /* Match ToolCallCard spacing for consistency */
-    background: $bg-card;
+    background: transparent;
     border-left: thick $border-default;
 }
 
@@ -2601,12 +2601,12 @@ ToolBatchCard.appeared {
 }
 
 ToolBatchCard:hover {
-    background: $bg-surface;
+    background: transparent;
     border-left: solid $border-highlight;
 }
 
 ToolBatchCard:focus {
-    background: $bg-surface;
+    background: transparent;
     border-left: solid $accent-primary;
     outline: none;
 }
@@ -2632,7 +2632,7 @@ ToolBatchCard.status-success {
 
 ToolBatchCard.status-error {
     border-left: solid $accent-error;
-    background: #1a0f0f20;
+    background: transparent;
 }
 
 /* Batch card content container */
@@ -2670,6 +2670,11 @@ CollapsibleTextCard:focus {
 CollapsibleTextCard.expanded {
     max-height: 100%;
     background: $bg-card;
+}
+
+/* Content cards need extra spacing when following Thinking cards */
+CollapsibleTextCard.label-content {
+    margin-top: 2;
 }
 
 /* === Content Sections === */
@@ -2956,7 +2961,37 @@ RestartBanner {
     background: transparent;
 }
 
-/* FinalPresentationCard is styled via DEFAULT_CSS in content_sections.py */
+/* FinalPresentationCard - full-width mode overrides for dark theme */
+FinalPresentationCard.full-width-mode {
+    height: 1fr;
+    min-height: 20;
+    border: double $accent-success;
+}
+
+FinalPresentationCard.full-width-mode.streaming {
+    border: double $accent-warning;
+}
+
+FinalPresentationCard.full-width-mode #final_card_content {
+    height: 1fr;
+    max-height: 100%;
+    overflow-y: auto;
+    background: $bg-base;
+}
+
+FinalPresentationCard.full-width-mode #final_card_header {
+    background: #1a4d2e;
+    padding: 1;
+    border-bottom: solid $accent-success 50%;
+}
+
+FinalPresentationCard.full-width-mode #final_card_title {
+    color: $accent-success;
+}
+
+FinalPresentationCard.full-width-mode.completed #final_card_header {
+    background: #1a4d2e;
+}
 
 /* Thinking Section - auto height, shrinks to content */
 ThinkingSection {

@@ -70,16 +70,19 @@ class CollapsibleTextCard(Static):
         self._label = label
         self._expanded = False
         self._chunks: List[str] = [self._content] if self._content else []
+        # Add label-based class for CSS targeting (e.g., label-thinking, label-content)
+        self.add_class(f"label-{label.lower()}")
 
     def render(self) -> Text:
         """Render the card content."""
         return self._build_content()
 
     def _render_chunk(self, text: Text, chunk: str) -> None:
-        """Render a single chunk of content."""
+        """Render a single chunk of content with indentation for visual hierarchy."""
         for line in chunk.split("\n"):
             if line:  # Skip completely empty lines
-                text.append(f"\n{line}", style="dim #9ca3af")
+                # Add 4-space indent to show content belongs under header
+                text.append(f"\n    {line}", style="dim #9ca3af")
 
     def _build_content(self) -> Text:
         """Build the Rich Text content for display."""
@@ -95,25 +98,36 @@ class CollapsibleTextCard(Static):
         if total_chunks == 0:
             return text
 
+        # Only show separators for Thinking/Reasoning, not Content
+        show_separators = self._label.lower() in ("thinking", "reasoning")
+
         if self._expanded:
-            # Show all chunks with separators
+            # Show all chunks
             for i, chunk in enumerate(self._chunks):
                 self._render_chunk(text, chunk)
-                # Add separator between chunks (not after last)
+                # Add separator or blank line between chunks (not after last)
                 if i < total_chunks - 1:
-                    text.append(f"\n{self.CHUNK_SEPARATOR}", style="dim #484f58")
+                    if show_separators:
+                        text.append(f"\n    {self.CHUNK_SEPARATOR}", style="dim #484f58")
+                    else:
+                        # Blank line between content chunks for readability
+                        text.append("\n")
         else:
             # Show "(+N chunks above)" at TOP if truncated
             if total_chunks > self.COLLAPSED_CHUNK_COUNT:
                 hidden = total_chunks - self.COLLAPSED_CHUNK_COUNT
-                text.append(f"\n(+{hidden} chunks above)", style="dim italic #6e7681")
+                text.append(f"\n    (+{hidden} chunks above)", style="dim italic #6e7681")
 
-            # Show LAST N chunks (tail) with separators - newest content visible
+            # Show LAST N chunks (tail) - newest content visible
             visible_chunks = self._chunks[-self.COLLAPSED_CHUNK_COUNT :]
             for i, chunk in enumerate(visible_chunks):
-                # Add separator before chunk (except first visible)
+                # Add separator or blank line before chunk (except first visible)
                 if i > 0:
-                    text.append(f"\n{self.CHUNK_SEPARATOR}", style="dim #484f58")
+                    if show_separators:
+                        text.append(f"\n    {self.CHUNK_SEPARATOR}", style="dim #484f58")
+                    else:
+                        # Blank line between content chunks for readability
+                        text.append("\n")
                 self._render_chunk(text, chunk)
 
         return text
