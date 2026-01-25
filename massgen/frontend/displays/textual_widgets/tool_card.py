@@ -408,7 +408,7 @@ class ToolCallCard(Static):
             self._start_elapsed_timer()
 
         # Complete the appearance animation after a brief delay
-        self.set_timer(0.15, self._complete_appearance)
+        self.set_timer(0.3, self._complete_appearance)
 
     def _complete_appearance(self) -> None:
         """Complete the appearance animation by transitioning to appeared state."""

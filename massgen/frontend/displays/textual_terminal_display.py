@@ -944,6 +944,7 @@ class TextualTerminalDisplay(TerminalDisplay):
         # Runtime toggle to ignore hotkeys/key handling when enabled
         self.safe_keyboard_mode = kwargs.get("safe_keyboard_mode", False)
         self.max_buffer_batch = kwargs.get("max_buffer_batch", 50)
+        self.max_buffer_size = kwargs.get("max_buffer_size", 200)  # Max items per agent buffer
         self._keyboard_interactive_mode = kwargs.get("keyboard_interactive_mode", True)
 
         # File output
@@ -1233,15 +1234,6 @@ class TextualTerminalDisplay(TerminalDisplay):
             if content_type != "tool":
                 return
 
-        # Skip non-tool timeline updates after final presentation card is complete
-        # (prevents "presenting final answer" messages from appearing below the card)
-        # But always allow tool content through - tools should be displayed during final presentation
-        if hasattr(self, "_final_presentation_card") and self._final_presentation_card:
-            if hasattr(self._final_presentation_card, "_is_streaming") and not self._final_presentation_card._is_streaming:
-                # Only skip non-tool content - tool calls should still be shown
-                if content_type != "tool":
-                    return
-
         if not content:
             return
 
@@ -1275,6 +1267,13 @@ class TextualTerminalDisplay(TerminalDisplay):
                 },
             )
             buffered_len = len(self._buffers[agent_id])
+            # Trim buffer if it exceeds max size to prevent memory issues
+            if buffered_len > self.max_buffer_size:
+                # Keep critical items and the most recent half
+                keep_count = self.max_buffer_size // 2
+                critical = [e for e in self._buffers[agent_id][:-keep_count] if self._is_critical_content(e.get("content", ""), e.get("type", ""))]
+                self._buffers[agent_id] = critical + self._buffers[agent_id][-keep_count:]
+                buffered_len = len(self._buffers[agent_id])
 
         if self._app and (is_critical or buffered_len >= self.max_buffer_batch):
             self._app.request_flush()
@@ -2005,6 +2004,10 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     def stream_final_answer_chunk(self, chunk: str, selected_agent: Optional[str], vote_results: Optional[Dict[str, Any]] = None):
         """Stream incoming final presentation content into the Textual UI."""
+        # Debug logging
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG stream_final_answer_chunk: agent={selected_agent} chunk_len={len(chunk) if chunk else 0} chunk_preview={chunk[:100] if chunk else 'None'}...\n")
+
         if not chunk:
             return
 
@@ -3015,7 +3018,13 @@ if TEXTUAL_AVAILABLE:
             buffer_lock: threading.Lock,
             buffer_flush_interval: float,
         ):
-            css_path = self.THEMES_DIR / ("light.tcss" if display.theme == "light" else "dark.tcss")
+            # Determine CSS path based on theme (dark, light, or transparent)
+            if display.theme == "light":
+                css_path = self.THEMES_DIR / "light.tcss"
+            elif display.theme == "transparent":
+                css_path = self.THEMES_DIR / "transparent.tcss"
+            else:
+                css_path = self.THEMES_DIR / "dark.tcss"
             super().__init__(css_path=str(css_path))
             self.coordination_display = display
             self.question = question
@@ -3213,14 +3222,16 @@ if TEXTUAL_AVAILABLE:
                         self.agent_widgets[agent_id] = agent_widget
                         yield agent_widget
 
-                # Phase 13.2: Execution status line - shows all agents' states at a glance
-                # Placed at bottom of main content area, above mode bar
-                self._execution_status_line = ExecutionStatusLine(
-                    agent_ids=agent_ids,
-                    focused_agent=initial_agent,
-                    id="execution_status_line",
-                )
-                yield self._execution_status_line
+            # Phase 13.2: Execution status line - shows all agents' states at a glance
+            # Placed between main_container and input_area (docked to bottom)
+            self._execution_status_line = ExecutionStatusLine(
+                agent_ids=agent_ids,
+                focused_agent=initial_agent,
+                id="execution_status_line",
+            )
+            if self._showing_welcome:
+                self._execution_status_line.add_class("hidden")
+            yield self._execution_status_line
 
             self.post_eval_panel = PostEvaluationPanel()
             yield self.post_eval_panel
@@ -3455,8 +3466,9 @@ if TEXTUAL_AVAILABLE:
             """Update theme icon in status bar."""
             try:
                 theme_widget = self.query_one("#status_theme", Static)
-                is_dark = self.coordination_display.theme == "dark"
-                icon = "[dim]D[/]" if is_dark else "[dim]L[/]"
+                theme = self.coordination_display.theme
+                icon_map = {"dark": "D", "light": "L", "transparent": "T"}
+                icon = f"[dim]{icon_map.get(theme, 'D')}[/]"
                 theme_widget.update(icon)
             except Exception:
                 pass  # Widget not mounted yet
@@ -4495,8 +4507,17 @@ Type your question and press Enter to ask the agents.
             2. Marks the winner tab with trophy styling
             3. Creates a FinalPresentationCard in the winner's timeline for streaming
             """
+            with open("/tmp/tui_debug.log", "a") as f:
+                final_added = getattr(self, "_final_header_added", False)
+                quick_highlighted = getattr(self, "_winner_quick_highlighted", False)
+                f.write(
+                    f"DEBUG begin_final_stream: agent={agent_id} _final_header_added={final_added} " f"_winner_quick_highlighted={quick_highlighted}\n",
+                )
+
             # Prevent duplicate cards - check if we've already started or if winner was quick-highlighted
             if hasattr(self, "_final_header_added") and self._final_header_added:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG begin_final_stream: RETURNING EARLY - _final_header_added is True\n")
                 return
             if hasattr(self, "_winner_quick_highlighted") and self._winner_quick_highlighted:
                 # Winner already shown via highlight_winner_quick, skip adding another card
@@ -4542,12 +4563,17 @@ Type your question and press Enter to ask the agents.
                 self._active_agent_id = agent_id
 
             # 3. Create FinalPresentationCard and add to timeline
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG begin_final_stream: Creating card, agent_id={agent_id} in widgets={agent_id in self.agent_widgets}\n")
+
             if agent_id in self.agent_widgets:
                 panel = self.agent_widgets[agent_id]
 
                 try:
                     timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                     self._final_stream_timeline = timeline
+                    with open("/tmp/tui_debug.log", "a") as f:
+                        f.write("DEBUG begin_final_stream: Got timeline\n")
 
                     # Get coordination_tracker for answer label lookup
                     tracker = None
@@ -4584,19 +4610,27 @@ Type your question and press Enter to ask the agents.
                         id="final_presentation_card",
                     )
                     # Tag with current round for CSS visibility switching
-                    card.add_class(f"round-{self._current_round}")
-                    # Enable full-width mode for prominent display
-                    card.add_class("full-width-mode")
+                    current_round = getattr(panel, "_current_round", 1)
+                    card.add_class(f"round-{current_round}")
+                    # Note: Removed full-width-mode to allow tool cards to be visible
+                    # during final presentation (was causing content cutoff issue)
                     timeline.add_widget(card)
                     self._final_presentation_card = card
+                    with open("/tmp/tui_debug.log", "a") as f:
+                        f.write("DEBUG begin_final_stream: Card CREATED and assigned to _final_presentation_card\n")
 
                     # Scroll to show the card
                     timeline.scroll_to_widget("final_presentation_card")
                 except Exception as e:
+                    with open("/tmp/tui_debug.log", "a") as f:
+                        f.write(f"DEBUG begin_final_stream: EXCEPTION creating card: {e}\n")
                     logger.debug(f"Failed to create final presentation card: {e}")
 
         def update_final_stream(self, chunk: str):
             """Append streaming chunks to the FinalPresentationCard."""
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG update_final_stream: chunk_len={len(chunk) if chunk else 0} card_exists={self._final_presentation_card is not None}\n")
+
             if not chunk:
                 return
 
@@ -4605,10 +4639,14 @@ Type your question and press Enter to ask the agents.
                 if not hasattr(self, "_pending_final_chunks"):
                     self._pending_final_chunks = []
                 self._pending_final_chunks.append(chunk)
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG update_final_stream: BUFFERED (no card yet)\n")
                 return
 
             # Flush any pending chunks first (from before card was created)
             if hasattr(self, "_pending_final_chunks") and self._pending_final_chunks:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG update_final_stream: FLUSHING {len(self._pending_final_chunks)} pending chunks\n")
                 for pending_chunk in self._pending_final_chunks:
                     try:
                         self._final_presentation_card.append_chunk(pending_chunk)
@@ -4619,6 +4657,8 @@ Type your question and press Enter to ask the agents.
             # Now append the current chunk
             try:
                 self._final_presentation_card.append_chunk(chunk)
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG update_final_stream: APPENDED to card\n")
             except Exception as e:
                 logger.error(f"FinalPresentationCard.append_chunk failed: {e}")
 
@@ -5585,11 +5625,13 @@ Type your question and press Enter to ask the agents.
                 self.agent_widgets[self._active_agent_id].toggle_task_plan()
 
         def action_toggle_theme(self) -> None:
-            """Toggle between light and dark themes (Ctrl+Shift+T binding)."""
+            """Toggle between dark, light, and transparent themes (Ctrl+Shift+T binding)."""
             from textual.css.stylesheet import Stylesheet
 
             current = self.coordination_display.theme
-            new_theme = "light" if current == "dark" else "dark"
+            # Cycle: dark -> light -> transparent -> dark
+            theme_cycle = {"dark": "light", "light": "transparent", "transparent": "dark"}
+            new_theme = theme_cycle.get(current, "dark")
 
             # Load and apply new CSS
             css_path = self.THEMES_DIR / f"{new_theme}.tcss"
@@ -7010,7 +7052,7 @@ Type your question and press Enter to ask the agents.
         """Panel for individual agent output.
 
         Note: This is a Container, not ScrollableContainer. Scrolling happens
-        in the inner TimelineScrollContainer widget.
+        in the inner TimelineSection widget which inherits from ScrollableContainer.
         """
 
         def __init__(self, agent_id: str, display: TextualTerminalDisplay, key_index: int = 0):

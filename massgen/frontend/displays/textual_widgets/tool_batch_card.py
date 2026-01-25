@@ -101,7 +101,7 @@ class ToolBatchCard(Static, can_focus=True):
 
     def on_mount(self) -> None:
         """Complete appearance animation."""
-        self.set_timer(0.15, self._complete_appearance)
+        self.set_timer(0.3, self._complete_appearance)
 
     def _complete_appearance(self) -> None:
         """Complete the appearance animation."""

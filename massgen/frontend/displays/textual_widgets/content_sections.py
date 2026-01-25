@@ -17,7 +17,6 @@ from typing import Dict, Optional
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import ScrollableContainer, Vertical
-from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import RichLog, Static
 
@@ -431,188 +430,7 @@ class ReasoningSection(Vertical):
         self.add_class("hidden")
 
 
-class TimelineScrollContainer(ScrollableContainer):
-    """ScrollableContainer that detects scroll mode via scroll position changes.
-
-    This container monitors the scroll_y reactive property to detect when the user
-    scrolls away from the bottom (entering scroll mode) or returns to the bottom
-    (exiting scroll mode). It posts messages that parent widgets can handle.
-
-    The _auto_scrolling flag is used to distinguish programmatic scrolls (from
-    auto-scroll) from user-initiated scrolls.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._user_scrolled_up = False
-        self._auto_scrolling = False
-        self._scroll_pending = False
-        self._debug_scroll = False  # Debug flag (disabled for performance)
-
-    def _log(self, msg: str) -> None:
-        """Debug logging helper."""
-        if self._debug_scroll:
-            from datetime import datetime
-
-            with open("/tmp/scroll_debug.log", "a") as f:
-                f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}\n")
-
-    def on_mount(self) -> None:
-        """Log container info on mount."""
-        self._log(f"MOUNT: id={self.id} size={self.size} content_size={self.content_size}")
-        self._log(f"MOUNT: virtual_size={self.virtual_size} container_size={self.container_size}")
-        self._log(f"MOUNT: scrollbar_gutter={self.scrollbar_gutter} show_vertical_scrollbar={self.show_vertical_scrollbar}")
-        # Log parent chain and check for other scrollable containers
-        parent = self.parent
-        chain = []
-        while parent:
-            pinfo = f"{parent.__class__.__name__}(id={getattr(parent, 'id', None)})"
-            # Check if parent has scrolling
-            if hasattr(parent, "scroll_y"):
-                pinfo += f" scroll_y={parent.scroll_y}"
-            if hasattr(parent, "max_scroll_y"):
-                pinfo += f" max_scroll_y={parent.max_scroll_y}"
-            if hasattr(parent, "vertical_scrollbar"):
-                try:
-                    vs = parent.vertical_scrollbar
-                    if vs:
-                        pinfo += f" HAS_SCROLLBAR(pos={vs.position},display={vs.display})"
-                except Exception:
-                    pass
-            chain.append(pinfo)
-            parent = getattr(parent, "parent", None)
-        self._log(f"MOUNT: parent_chain={' -> '.join(chain)}")
-        # Log scrollbar info
-        try:
-            vscroll = self.vertical_scrollbar
-            self._log(f"MOUNT: vertical_scrollbar={vscroll} visible={vscroll.display if vscroll else 'N/A'}")
-        except Exception as e:
-            self._log(f"MOUNT: vertical_scrollbar error: {e}")
-
-    def on_resize(self, event) -> None:
-        """Log resize events to see size changes."""
-        self._log(f"RESIZE: size={self.size} content_size={self.content_size} max_scroll_y={self.max_scroll_y}")
-        try:
-            vscroll = self.vertical_scrollbar
-            if vscroll:
-                self._log(f"RESIZE: scrollbar size={vscroll.size} visible={vscroll.display}")
-        except Exception as e:
-            self._log(f"RESIZE: scrollbar error: {e}")
-
-    def refresh_scrollbar(self) -> None:
-        """Force refresh of the vertical scrollbar.
-
-        Call this after mounting content to ensure the scrollbar
-        position indicator reflects the new content size and scroll position.
-        Textual automatically syncs scrollbar position from scroll_y.
-        """
-        try:
-            vscroll = self.vertical_scrollbar
-            if vscroll:
-                vscroll.refresh()
-                self._log(f"refresh_scrollbar: scroll_y={self.scroll_y:.1f} max={self.max_scroll_y:.1f}")
-        except Exception as e:
-            self._log(f"refresh_scrollbar error: {e}")
-
-    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Detect when user scrolls away from bottom.
-
-        Textual automatically syncs scrollbar position from scroll_y,
-        so we only need to handle scroll mode detection here.
-        """
-        self._log(f"watch_scroll_y: scroll_y={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling}")
-
-        if self._auto_scrolling:
-            return  # Ignore programmatic scrolls
-
-        # Don't trigger scroll mode if there's no scrollable content yet
-        if self.max_scroll_y <= 0:
-            return
-
-        # Check if at top/bottom (with tolerance for float precision)
-        at_top = new_value <= 2
-        at_bottom = new_value >= self.max_scroll_y - 2
-
-        # Phase 11.2: Post scroll position for scroll indicators
-        self.post_message(self.ScrollPositionChanged(at_top=at_top, at_bottom=at_bottom))
-
-        if new_value < old_value and not at_bottom:
-            # User scrolled up - enter scroll mode
-            if not self._user_scrolled_up:
-                self._user_scrolled_up = True
-                self.post_message(self.ScrollModeEntered())
-        elif at_bottom and self._user_scrolled_up:
-            # User scrolled to bottom - exit scroll mode
-            self._user_scrolled_up = False
-            self.post_message(self.ScrollModeExited())
-
-    def scroll_end(self, animate: bool = True, duration: float = 0.15) -> None:
-        """Auto-scroll to end with smooth animation.
-
-        Textual automatically syncs the scrollbar when scroll_y changes,
-        so we just need to call scroll_to/scroll_end and let Textual handle it.
-
-        Args:
-            animate: Whether to animate the scroll (default True for smooth UX)
-            duration: Animation duration in seconds (default 0.15s)
-        """
-        self._log(f"scroll_end called: pending={self._scroll_pending} max_scroll_y={self.max_scroll_y:.1f} current_scroll_y={self.scroll_y:.1f}")
-
-        # Debounce: if scroll is already pending, don't queue another
-        if self._scroll_pending:
-            self._log("scroll_end: SKIPPED (pending)")
-            return
-
-        self._scroll_pending = True
-
-        def do_scroll() -> None:
-            self._log(f"do_scroll executing: max_scroll_y={self.max_scroll_y:.1f} scroll_y before={self.scroll_y:.1f}")
-            self._scroll_pending = False
-            # Set flag BEFORE scroll - it stays set until reset_auto_scroll is called
-            self._auto_scrolling = True
-
-            # Use scroll_to with easing for smooth natural-feeling scroll
-            # Textual handles scrollbar sync automatically when scroll_y changes
-            if animate and self.max_scroll_y > 0:
-                self.scroll_to(y=self.max_scroll_y, animate=True, duration=duration, easing="out_cubic")
-            else:
-                super(TimelineScrollContainer, self).scroll_end(animate=False)
-
-            self._log(f"do_scroll after scroll: scroll_y={self.scroll_y:.1f}")
-            # Reset flag after animation completes
-            self.set_timer(duration + 0.1 if animate else 0.1, self._reset_auto_scroll)
-
-        # Defer scroll until after layout is complete
-        self.call_after_refresh(do_scroll)
-
-    def _reset_auto_scroll(self) -> None:
-        """Reset auto-scrolling flag after scroll completes."""
-        self._log(f"_reset_auto_scroll: scroll_y={self.scroll_y:.1f}")
-        self._auto_scrolling = False
-
-    def reset_scroll_mode(self) -> None:
-        """Reset scroll mode tracking state."""
-        self._user_scrolled_up = False
-
-    class ScrollModeEntered(Message):
-        """Posted when user enters scroll mode by scrolling up."""
-
-    class ScrollModeExited(Message):
-        """Posted when user exits scroll mode by scrolling to bottom."""
-
-    class ScrollPositionChanged(Message):
-        """Posted when scroll position changes - for scroll indicators.
-
-        Phase 11.2: Scroll indicators support.
-        """
-
-        def __init__(self, at_top: bool, at_bottom: bool) -> None:
-            self.at_top = at_top
-            self.at_bottom = at_bottom
-            super().__init__()
-
-
-class TimelineSection(Vertical):
+class TimelineSection(ScrollableContainer):
     """Chronological timeline showing tools and text interleaved.
 
     This widget displays content in the order it arrives, preserving
@@ -621,6 +439,11 @@ class TimelineSection(Vertical):
 
     Coordination/reasoning content is grouped into a collapsible
     ReasoningSection at the top of the timeline.
+
+    Note: TimelineSection inherits from ScrollableContainer directly,
+    eliminating the nested container architecture that caused scrollbar
+    thumb position sync issues. All content is mounted directly into
+    this widget.
 
     Design:
     ```
@@ -643,15 +466,11 @@ class TimelineSection(Vertical):
     TimelineSection {
         width: 100%;
         height: 1fr;
-        padding: 0;
+        padding: 0 2 1 2;
         margin: 0;
-    }
-
-    TimelineSection #timeline_container {
-        width: 100%;
-        height: 1fr;
-        padding: 1 2;
         overflow-y: auto;
+        scrollbar-size: 1 3;
+        scrollbar-gutter: stable;
     }
 
     TimelineSection .timeline-text {
@@ -710,10 +529,6 @@ class TimelineSection(Vertical):
     TimelineSection .hidden {
         display: none;
     }
-
-    TimelineSection #timeline_container .hidden {
-        display: none;
-    }
     """
 
     # Maximum number of items to keep in timeline (prevents memory/performance issues)
@@ -735,45 +550,88 @@ class TimelineSection(Vertical):
         # Content batch: accumulates consecutive thinking/content into single card
         self._current_reasoning_card: Optional[CollapsibleTextCard] = None
         self._current_batch_label: Optional[str] = None  # Track label for batch switching
+        # Scroll detection flags (moved from TimelineScrollContainer)
+        self._user_scrolled_up = False
+        self._auto_scrolling = False
+        self._scroll_pending = False
+        self._debug_scroll = False  # Debug flag (disabled for performance)
 
     def compose(self) -> ComposeResult:
         # Scroll mode indicator (hidden by default)
         yield Static("", id="scroll_mode_indicator", classes="scroll-indicator hidden")
-        # Main timeline content with scroll detection
-        yield TimelineScrollContainer(id="timeline_container")
+        # Content is mounted directly into TimelineSection (no nested container)
 
     def on_mount(self) -> None:
         """Add initial Round 1 banner when timeline is mounted."""
         self.add_separator("Round 1", round_number=1)
 
-    def on_timeline_scroll_container_scroll_mode_entered(
-        self,
-        event: TimelineScrollContainer.ScrollModeEntered,
-    ) -> None:
-        """Handle entering scroll mode when user scrolls up."""
-        if not self._scroll_mode:
-            self._scroll_mode = True
-            self._new_content_count = 0
-            self._update_scroll_indicator()
+    def _log(self, msg: str) -> None:
+        """Debug logging helper."""
+        if self._debug_scroll:
+            from datetime import datetime
 
-    def on_timeline_scroll_container_scroll_mode_exited(
-        self,
-        event: TimelineScrollContainer.ScrollModeExited,
-    ) -> None:
-        """Handle exiting scroll mode when user scrolls to bottom."""
-        if self._scroll_mode:
-            self._scroll_mode = False
-            self._new_content_count = 0
-            self._update_scroll_indicator()
+            with open("/tmp/scroll_debug.log", "a") as f:
+                f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}\n")
 
-    def on_timeline_scroll_container_scroll_position_changed(
-        self,
-        event: TimelineScrollContainer.ScrollPositionChanged,
-    ) -> None:
-        """Handle scroll position changes.
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Detect when user scrolls away from bottom.
 
-        Scroll position is tracked but no longer shows "more above/below" indicators.
+        IMPORTANT: Must call super() to update the scrollbar position!
         """
+        # Call parent's watch_scroll_y to update scrollbar position
+        super().watch_scroll_y(old_value, new_value)
+
+        self._log(f"watch_scroll_y: scroll_y={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling}")
+
+        if self._auto_scrolling:
+            return  # Ignore programmatic scrolls
+
+        # Don't trigger scroll mode if there's no scrollable content yet
+        if self.max_scroll_y <= 0:
+            return
+
+        # Check if at bottom (with tolerance for float precision)
+        at_bottom = new_value >= self.max_scroll_y - 2
+
+        if new_value < old_value and not at_bottom:
+            # User scrolled up - enter scroll mode
+            if not self._user_scrolled_up:
+                self._user_scrolled_up = True
+                if not self._scroll_mode:
+                    self._scroll_mode = True
+                    self._new_content_count = 0
+                    self._update_scroll_indicator()
+        elif at_bottom and self._user_scrolled_up:
+            # User scrolled to bottom - exit scroll mode
+            self._user_scrolled_up = False
+            if self._scroll_mode:
+                self._scroll_mode = False
+                self._new_content_count = 0
+                self._update_scroll_indicator()
+
+    def refresh_scrollbar(self) -> None:
+        """Force refresh of the vertical scrollbar.
+
+        Call this after mounting content to ensure the scrollbar
+        position indicator reflects the new content size and scroll position.
+        Textual automatically syncs scrollbar position from scroll_y.
+        """
+        try:
+            vscroll = self.vertical_scrollbar
+            if vscroll:
+                vscroll.refresh()
+                self._log(f"refresh_scrollbar: scroll_y={self.scroll_y:.1f} max={self.max_scroll_y:.1f}")
+        except Exception as e:
+            self._log(f"refresh_scrollbar error: {e}")
+
+    def _reset_auto_scroll(self) -> None:
+        """Reset auto-scrolling flag after scroll completes."""
+        self._log(f"_reset_auto_scroll: scroll_y={self.scroll_y:.1f}")
+        self._auto_scrolling = False
+
+    def reset_scroll_mode(self) -> None:
+        """Reset scroll mode tracking state."""
+        self._user_scrolled_up = False
 
     def _update_scroll_indicator(self) -> None:
         """Update the scroll mode indicator in the UI."""
@@ -798,23 +656,54 @@ class TimelineSection(Vertical):
             self._new_content_count += 1
             self._update_scroll_indicator()  # Update to show new content count
             return
-        try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            # Use smooth animated scrolling for better UX
-            container.scroll_end(animate=True)
-        except Exception:
-            pass
+        # Use smooth animated scrolling for better UX
+        self._scroll_to_end(animate=True)
+
+    def _scroll_to_end(self, animate: bool = True, duration: float = 0.15) -> None:
+        """Auto-scroll to end with smooth animation.
+
+        Textual automatically syncs the scrollbar when scroll_y changes,
+        so we just need to call scroll_to/scroll_end and let Textual handle it.
+
+        Args:
+            animate: Whether to animate the scroll (default True for smooth UX)
+            duration: Animation duration in seconds (default 0.15s)
+        """
+        self._log(f"_scroll_to_end called: pending={self._scroll_pending} max_scroll_y={self.max_scroll_y:.1f} current_scroll_y={self.scroll_y:.1f}")
+
+        # Debounce: if scroll is already pending, don't queue another
+        if self._scroll_pending:
+            self._log("_scroll_to_end: SKIPPED (pending)")
+            return
+
+        self._scroll_pending = True
+
+        def do_scroll() -> None:
+            self._log(f"do_scroll executing: max_scroll_y={self.max_scroll_y:.1f} scroll_y before={self.scroll_y:.1f}")
+            self._scroll_pending = False
+            # Set flag BEFORE scroll - it stays set until reset_auto_scroll is called
+            self._auto_scrolling = True
+
+            # Use scroll_to with easing for smooth natural-feeling scroll
+            # Textual handles scrollbar sync automatically when scroll_y changes
+            if animate and self.max_scroll_y > 0:
+                self.scroll_to(y=self.max_scroll_y, animate=True, duration=duration, easing="out_cubic")
+            else:
+                self.scroll_end(animate=False)
+
+            self._log(f"do_scroll after scroll: scroll_y={self.scroll_y:.1f}")
+            # Reset flag after animation completes
+            self.set_timer(duration + 0.1 if animate else 0.1, self._reset_auto_scroll)
+
+        # Defer scroll until after layout is complete
+        self.call_after_refresh(do_scroll)
 
     def exit_scroll_mode(self) -> None:
         """Exit scroll mode and scroll to bottom."""
         self._scroll_mode = False
         self._new_content_count = 0
-        try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            container.reset_scroll_mode()  # Reset container state
-            container.scroll_end(animate=False)
-        except Exception:
-            pass
+        self.reset_scroll_mode()  # Reset scroll state
+        self._scroll_to_end(animate=False)
         self._update_scroll_indicator()
 
     def scroll_to_widget(self, widget_id: str) -> None:
@@ -824,9 +713,8 @@ class TimelineSection(Vertical):
             widget_id: The ID of the widget to scroll to (without #)
         """
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            # Find the widget by ID
-            target = container.query_one(f"#{widget_id}")
+            # Find the widget by ID (content is mounted directly in TimelineSection)
+            target = self.query_one(f"#{widget_id}")
             if target:
                 # Scroll so the widget is at the top
                 target.scroll_visible(top=True, animate=False)
@@ -846,8 +734,7 @@ class TimelineSection(Vertical):
     def _trim_old_items(self) -> None:
         """Remove oldest items if we exceed MAX_TIMELINE_ITEMS."""
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            children = list(container.children)
+            children = list(self.children)
 
             # Skip the scroll indicator and truncation notice if present
             content_children = [c for c in children if "scroll-indicator" not in c.classes and "truncation-notice" not in c.classes]
@@ -907,12 +794,12 @@ class TimelineSection(Vertical):
                         truncation_notice.add_class(f"round-{truncated_round}")
 
                         # Find the first remaining item of this round to insert before
-                        remaining_children = list(container.children)
+                        remaining_children = list(self.children)
                         round_items = [c for c in remaining_children if f"round-{truncated_round}" in c.classes and "truncation-notice" not in c.classes]
                         if round_items:
-                            container.mount(truncation_notice, before=round_items[0])
+                            self.mount(truncation_notice, before=round_items[0])
 
-                container.refresh(layout=True)
+                self.refresh(layout=True)
 
         except Exception:
             pass
@@ -952,8 +839,7 @@ class TimelineSection(Vertical):
         self._item_count += 1
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            container.mount(card)
+            self.mount(card)
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
         except Exception:
@@ -1053,8 +939,7 @@ class TimelineSection(Vertical):
         self._item_count += 1
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            container.mount(card)
+            self.mount(card)
             self._auto_scroll()
             self._trim_old_items()
         except Exception:
@@ -1222,8 +1107,7 @@ class TimelineSection(Vertical):
 
         # Mount batch card right after the existing tool card, then remove the old card
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            container.mount(batch_card, after=existing_card)
+            self.mount(batch_card, after=existing_card)
             existing_card.remove()
             del self._tools[pending_tool_id]
             self._auto_scroll()
@@ -1326,8 +1210,6 @@ class TimelineSection(Vertical):
         widget_id = f"tl_text_{self._item_count}"
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-
             classes = "timeline-text"
             if text_class:
                 classes += f" {text_class}"
@@ -1346,7 +1228,7 @@ class TimelineSection(Vertical):
             # Tag with round class for navigation (scroll-to behavior)
             widget.add_class(f"round-{round_number}")
 
-            container.mount(widget)
+            self.mount(widget)
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
         except Exception:
@@ -1373,8 +1255,6 @@ class TimelineSection(Vertical):
         )
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-
             # Check if this is a round/restart/final separator (should be prominent)
             is_round = label.upper().startswith("ROUND") if label else False
             is_restart = "RESTART" in label.upper() if label else False
@@ -1397,7 +1277,7 @@ class TimelineSection(Vertical):
             widget.add_class(f"round-{round_number}")
             logger.debug(f"TimelineSection.add_separator: Adding widget for round {round_number}")
 
-            container.mount(widget)
+            self.mount(widget)
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
             logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
@@ -1431,8 +1311,6 @@ class TimelineSection(Vertical):
             return
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-
             # Close batch if label changed
             if self._current_reasoning_card is not None and self._current_batch_label != label:
                 self._close_reasoning_batch()
@@ -1453,7 +1331,7 @@ class TimelineSection(Vertical):
                 )
                 self._current_reasoning_card.add_class(f"round-{round_number}")
                 self._current_batch_label = label
-                container.mount(self._current_reasoning_card)
+                self.mount(self._current_reasoning_card)
 
             self._auto_scroll()
         except Exception:
@@ -1472,8 +1350,7 @@ class TimelineSection(Vertical):
         widget.add_class(f"round-{round_number}")
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            container.mount(widget)
+            self.mount(widget)
             self._auto_scroll()
         except Exception as e:
             import sys
@@ -1486,12 +1363,24 @@ class TimelineSection(Vertical):
         self._close_reasoning_batch()
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-            container.remove_children()
+            # Keep the scroll indicator, remove everything else
+            indicator = None
+            try:
+                indicator = self.query_one("#scroll_mode_indicator", Static)
+            except Exception:
+                pass
+            self.remove_children()
+            if indicator:
+                self.mount(indicator)
         except Exception:
             pass
         self._tools.clear()
+        self._batches.clear()  # Also clear batch tracking
+        self._tool_to_batch.clear()  # Clear tool-to-batch mapping
         self._item_count = 0
+        # Reset truncation tracking to avoid stale state
+        if hasattr(self, "_truncation_shown_rounds"):
+            self._truncation_shown_rounds.clear()
 
     def clear_tools_tracking(self) -> None:
         """Clear just the tools tracking dict without removing UI elements.
@@ -1532,12 +1421,10 @@ class TimelineSection(Vertical):
             f.write(f"DEBUG: TimelineSection.switch_to_round called! panel={widget_id}, round={round_number}\n")
 
         try:
-            container = self.query_one("#timeline_container", TimelineScrollContainer)
-
             # Find the RestartBanner for this round and scroll to it
             # RestartBanners are tagged with round-X class
             found_separator = False
-            for widget in container.query(f".round-{round_number}"):
+            for widget in self.query(f".round-{round_number}"):
                 # Look for RestartBanner (has the round separator banner)
                 if isinstance(widget, RestartBanner):
                     widget.scroll_visible(animate=True, top=True)
@@ -1549,7 +1436,7 @@ class TimelineSection(Vertical):
             # If no RestartBanner found (e.g., round 1 which may not have one),
             # find the first widget for this round
             if not found_separator:
-                for widget in container.query(f".round-{round_number}"):
+                for widget in self.query(f".round-{round_number}"):
                     widget.scroll_visible(animate=True, top=True)
                     with open("/tmp/tui_debug.log", "a") as f:
                         f.write("DEBUG: TimelineSection.switch_to_round: No RestartBanner, scrolling to first widget\n")
@@ -2453,11 +2340,15 @@ class FinalPresentationCard(Vertical):
         if not chunk:
             return
 
+        # Always accumulate content first (even if widget not ready yet)
+        self._final_content.append(chunk)
+
+        # Check if widget is mounted yet
+        if not self.is_mounted:
+            return  # Content will be displayed on mount via _flush_pending_content
+
         try:
             text_widget = self.query_one("#final_card_text", Static)
-
-            # Accumulate content
-            self._final_content.append(chunk)
 
             # Update the Static widget with all accumulated content
             full_text = "".join(self._final_content)
@@ -2472,6 +2363,16 @@ class FinalPresentationCard(Vertical):
 
         except Exception as e:
             logger.error(f"FinalPresentationCard.append_chunk error: {e}")
+
+    def on_mount(self) -> None:
+        """Flush any pending content when the widget is mounted."""
+        if self._final_content:
+            try:
+                text_widget = self.query_one("#final_card_text", Static)
+                full_text = "".join(self._final_content)
+                text_widget.update(full_text)
+            except Exception as e:
+                logger.error(f"FinalPresentationCard.on_mount flush error: {e}")
 
     def complete(self) -> None:
         """Mark the presentation as complete and show action buttons."""

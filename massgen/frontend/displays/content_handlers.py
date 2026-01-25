@@ -908,6 +908,8 @@ class ToolBatchTracker:
         """Reset the tracker state (e.g., for new round)."""
         self._current_server = None
         self._current_batch_id = None
+        self._pending_tool_id = None
+        self._batched_tool_ids.clear()  # Clear accumulated tool IDs to prevent memory growth
 
     @property
     def current_batch_id(self) -> Optional[str]:

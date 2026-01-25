@@ -1996,12 +1996,20 @@ class CoordinationUI:
                     # Use cached value as fallback if current status doesn't have it
                     effective_selected_agent = selected_agent or getattr(self, "_cached_selected_agent", None)
 
+                    # Debug logging for content routing
+                    with open("/tmp/tui_debug.log", "a") as f:
+                        f.write(f"DEBUG _emit_agent_content: agent={agent_id} selected={effective_selected_agent} chunk_type={chunk_type} content_preview={content[:100] if content else 'None'}...\n")
+
                     if effective_selected_agent and effective_selected_agent == agent_id:
                         vote_results = status.get("vote_results", {})
+                        with open("/tmp/tui_debug.log", "a") as f:
+                            f.write("DEBUG _emit_agent_content: ROUTING TO stream_final_answer_chunk\n")
                         self.display.stream_final_answer_chunk(content, effective_selected_agent, vote_results)
                         if self.logger:
                             self.logger.log_agent_content(agent_id, content, chunk_type)
                         return
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write("DEBUG _emit_agent_content: ROUTING TO update_agent_content\n")
             self.display.update_agent_content(agent_id, content, chunk_type)
             if self.logger:
                 self.logger.log_agent_content(agent_id, content, chunk_type)

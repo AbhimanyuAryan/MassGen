@@ -72,6 +72,17 @@ class CollapsibleTextCard(Static):
         self._chunks: List[str] = [self._content] if self._content else []
         # Add label-based class for CSS targeting (e.g., label-thinking, label-content)
         self.add_class(f"label-{label.lower()}")
+        # Appearance animation state
+        self.add_class("appearing")
+
+    def on_mount(self) -> None:
+        """Complete appearance animation after mounting."""
+        self.set_timer(0.3, self._complete_appearance)
+
+    def _complete_appearance(self) -> None:
+        """Complete the appearance animation by transitioning to appeared state."""
+        self.remove_class("appearing")
+        self.add_class("appeared")
 
     def render(self) -> Text:
         """Render the card content."""

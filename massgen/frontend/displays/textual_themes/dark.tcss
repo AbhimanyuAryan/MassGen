@@ -68,7 +68,7 @@ $agent-8-bg: #26100d;
  */
 
 Screen {
-    background: $bg-base;
+    background: initial;  /* Use terminal's native background */
     color: $fg-primary;
     layers: base overlay;
 }
@@ -82,7 +82,7 @@ Screen {
     width: 100%;
     height: 1fr;
     align: center middle;
-    background: $bg-base;
+    background: initial;  /* Use terminal's native background */
 }
 
 #welcome_screen Label, #welcome_screen Static {
@@ -131,7 +131,7 @@ Screen {
 
 #main_container {
     layout: vertical;
-    background: $bg-base;
+    background: initial;  /* Use terminal's native background */
     height: 1fr;
     padding: 0;
 }
@@ -151,7 +151,7 @@ Screen {
 }
 
 /* Gray out timeline content in cancelled state */
-#main_container.cancelled-state TimelineScrollContainer {
+#main_container.cancelled-state TimelineSection {
     opacity: 0.7;
 }
 
@@ -173,7 +173,7 @@ Screen {
 #agents_container {
     layout: vertical;
     width: 100%;
-    height: 100%;
+    height: 1fr;  /* Use 1fr to respect docked ExecutionStatusLine */
 }
 
 /* === Swimlane Mode === */
@@ -700,7 +700,7 @@ AgentPanel {
     padding: 0;
     width: 100%;
     height: 100%;
-    overflow: hidden;  /* Disable scrolling on AgentPanel - scrolling happens in TimelineScrollContainer */
+    overflow: hidden;  /* Disable scrolling on AgentPanel - scrolling happens in TimelineSection */
 }
 
 /* Vertical container inside AgentPanel - full width, full height */
@@ -709,7 +709,7 @@ AgentPanel > Vertical {
     height: 100%;
     padding: 0;
     margin: 0;
-    overflow: hidden;  /* Scrolling happens in TimelineScrollContainer, not here */
+    overflow: hidden;  /* Scrolling happens in TimelineSection, not here */
 }
 
 /* Agent panel header label - first line with agent name, backend, timer */
@@ -2379,7 +2379,7 @@ ToolCallCard {
     background: transparent;
     border: none;
     border-left: thick $border-default;
-    transition: opacity 150ms out_cubic;
+    transition: opacity 300ms out_expo;
 }
 
 /* Tool card appearance animation - smooth fade in effect */
@@ -2404,7 +2404,7 @@ ToolCallCard.appeared {
 
 /* Smooth opacity transitions for timeline content */
 TimelineSection .timeline-text {
-    transition: opacity 150ms out_cubic;
+    transition: opacity 300ms out_expo;
 }
 
 TimelineSection .timeline-text.appearing {
@@ -2604,7 +2604,7 @@ ToolBatchCard {
     margin: 1 0 1 1;  /* Match ToolCallCard spacing for consistency */
     background: transparent;
     border-left: thick $border-default;
-    transition: opacity 150ms out_cubic;
+    transition: opacity 300ms out_expo;
 }
 
 /* Appearance animation - smooth fade in */
@@ -2670,6 +2670,16 @@ CollapsibleTextCard {
     margin: 1 0;
     background: transparent;
     border-left: solid $border-subtle;
+    transition: opacity 300ms out_expo;
+}
+
+/* Appearance animation - smooth fade in */
+CollapsibleTextCard.appearing {
+    opacity: 0.0;
+}
+
+CollapsibleTextCard.appeared {
+    opacity: 1.0;
 }
 
 CollapsibleTextCard:hover {
@@ -2735,19 +2745,12 @@ ToolSection #tool_container {
 }
 
 /* Timeline Section - chronological view of all content */
+/* TimelineSection inherits from ScrollableContainer directly for proper scrollbar behavior */
 TimelineSection {
     width: 100%;
     height: 1fr;
-    padding: 0;
+    padding: 0 2 1 2;
     margin: 0;
-    overflow: hidden;  /* Scrolling happens in TimelineScrollContainer, not here */
-}
-
-TimelineSection #timeline_container,
-TimelineSection TimelineScrollContainer {
-    width: 100%;
-    height: 1fr;
-    padding: 0;
     background: $bg-base;
     overflow-y: auto;
     scrollbar-size: 2 2;
@@ -4934,6 +4937,23 @@ PlanOptionsPopover #close_btn:hover {
 }
 
 #plan_status.hidden {
+    display: none;
+}
+
+/* === Execution Status Line (Phase 13.2) === */
+/* Multi-agent status showing A ✓ B ... C ✓ at bottom of main content */
+ExecutionStatusLine {
+    dock: bottom;
+    height: 1;
+    width: 100%;
+    background: $bg-surface;
+    color: $fg-muted;
+    text-align: center;
+    content-align: center middle;
+    padding: 0 2;
+}
+
+ExecutionStatusLine.hidden {
     display: none;
 }
 

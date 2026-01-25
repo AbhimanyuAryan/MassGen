@@ -81,11 +81,11 @@ class ExecutionStatusLine(Widget):
 
     def on_mount(self) -> None:
         """Start the pulse animation timer."""
-        self._pulse_timer = self.set_interval(0.4, self._advance_pulse)
+        self._pulse_timer = self.set_interval(0.3, self._advance_pulse)
 
     def _advance_pulse(self) -> None:
         """Advance the pulse animation frame."""
-        self._pulse_frame = (self._pulse_frame + 1) % 4
+        self._pulse_frame = (self._pulse_frame + 1) % 12
 
     def watch__pulse_frame(self, frame: int) -> None:
         """Refresh display when pulse frame changes."""
@@ -149,8 +149,21 @@ class ExecutionStatusLine(Widget):
         # Opening border
         text.append("╭ ", style="dim")
 
-        # Pulsing dots animation: .  ..  ...  ..
-        pulse_patterns = ["   ", ".  ", ".. ", "..."]
+        # Organic 12-frame wave animation: breathing wave with bullet point
+        pulse_patterns = [
+            "   ",
+            ".  ",
+            ".. ",
+            "...",
+            "•..",
+            ".•.",
+            "..•",
+            "...",
+            ".. ",
+            ".  ",
+            "   ",
+            "   ",
+        ]
         pulse_dots = pulse_patterns[self._pulse_frame]
 
         for i, agent_id in enumerate(self._agent_ids):
