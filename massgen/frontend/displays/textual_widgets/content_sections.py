@@ -1383,12 +1383,15 @@ class TimelineSection(ScrollableContainer):
             self._truncation_shown_rounds.clear()
 
     def clear_tools_tracking(self) -> None:
-        """Clear just the tools tracking dict without removing UI elements.
+        """Clear tools and batch tracking dicts without removing UI elements.
 
-        Used when a round completes to reset background tool counts while
-        keeping the visual timeline history intact.
+        Used when a new round starts to reset tool/batch ID tracking while
+        keeping the visual timeline history intact. This prevents tool_id
+        and batch_id collisions between rounds.
         """
         self._tools.clear()
+        self._batches.clear()
+        self._tool_to_batch.clear()
 
     def set_viewed_round(self, round_number: int) -> None:
         """Update which round is currently being viewed.

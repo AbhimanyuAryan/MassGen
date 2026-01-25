@@ -3222,16 +3222,14 @@ if TEXTUAL_AVAILABLE:
                         self.agent_widgets[agent_id] = agent_widget
                         yield agent_widget
 
-            # Phase 13.2: Execution status line - shows all agents' states at a glance
-            # Placed between main_container and input_area (docked to bottom)
-            self._execution_status_line = ExecutionStatusLine(
-                agent_ids=agent_ids,
-                focused_agent=initial_agent,
-                id="execution_status_line",
-            )
-            if self._showing_welcome:
-                self._execution_status_line.add_class("hidden")
-            yield self._execution_status_line
+                # Phase 13.2: Execution status line - shows all agents' states at a glance
+                # Placed at bottom of main content area, above mode bar
+                self._execution_status_line = ExecutionStatusLine(
+                    agent_ids=agent_ids,
+                    focused_agent=initial_agent,
+                    id="execution_status_line",
+                )
+                yield self._execution_status_line
 
             self.post_eval_panel = PostEvaluationPanel()
             yield self.post_eval_panel
@@ -4573,14 +4571,14 @@ Type your question and press Enter to ask the agents.
                     timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                     self._final_stream_timeline = timeline
                     with open("/tmp/tui_debug.log", "a") as f:
-                        f.write("DEBUG begin_final_stream: Got timeline\n")
+                        f.write("DEBUG begin_final_stream: Got timeline (no tool clearing - handled by round transitions)\n")
 
                     # Get coordination_tracker for answer label lookup
                     tracker = None
                     if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
                         tracker = getattr(self.coordination_display.orchestrator, "coordination_tracker", None)
 
-                    # Build vote summary with answer labels (A1.1 format)
+                    # Build formatted vote results for the card
                     vote_counts = vote_results.get("vote_counts", {})
                     winner = vote_results.get("winner", agent_id)
                     is_tie = vote_results.get("is_tie", False)
@@ -7613,6 +7611,8 @@ Type your question and press Enter to ask the agents.
             with open("/tmp/tui_debug.log", "a") as f:
                 f.write(f"DEBUG: show_restart_separator called! attempt={attempt}\n")
 
+            # Mark that non-tool content arrived (prevents future batching across this content)
+            self._batch_tracker.mark_content_arrived()
             # Finalize any current batch when restart occurs
             self._batch_tracker.finalize_current_batch()
 
@@ -7648,6 +7648,19 @@ Type your question and press Enter to ask the agents.
             # Normalize content first, passing tool_call_id
             normalized = ContentNormalizer.normalize(content, content_type, tool_call_id)
 
+            # Debug: Log timeline order to trace file (tool content logged in _add_tool_content to filter planning tools)
+            if not hasattr(self, "_timeline_event_counter"):
+                self._timeline_event_counter = 0
+                # Clear the trace file at start of session
+                with open("/tmp/tui_timeline_trace.log", "w") as f:
+                    f.write("=== TUI Timeline Trace ===\n")
+            # Only log non-tool content here; tool content is logged in _add_tool_content()
+            if not normalized.content_type.startswith("tool_"):
+                self._timeline_event_counter += 1
+                preview = content[:80].replace("\n", "\\n") if content else ""
+                with open("/tmp/tui_timeline_trace.log", "a") as f:
+                    f.write(f"[{self._timeline_event_counter:04d}] type={normalized.content_type} raw={content_type} preview={preview}\n")
+
             # Route based on detected content type
             if normalized.content_type.startswith("tool_"):
                 self._add_tool_content(normalized, content, content_type)
@@ -7678,6 +7691,10 @@ Type your question and press Enter to ask the agents.
             MCP tools from the same server are batched into ToolBatchCard when 2+
             consecutive tools arrive. Single tools appear as normal ToolCallCard.
             """
+            # Flush any pending line buffer content to timeline before processing tool
+            # This ensures thinking/reasoning content that didn't end with newline is preserved
+            self._flush_line_buffer_to_timeline()
+
             # Process through handler
             tool_data = self._tool_handler.process(normalized)
 
@@ -7696,6 +7713,19 @@ Type your question and press Enter to ask the agents.
 
                 # Skip batching for special tool types (planning, subagent)
                 skip_batching = is_planning_tool or is_subagent_tool
+
+                # Debug: Log tool content (skip planning tools for cleaner trace)
+                # Only log new tools (running status) or completions, not args updates
+                if not is_planning_tool:
+                    # Check if this is an args update for existing tool
+                    existing_card = timeline.get_tool(tool_data.tool_id) if tool_data.status == "running" else None
+                    existing_batch = timeline.get_tool_batch(tool_data.tool_id) if tool_data.status == "running" and not skip_batching else None
+                    is_args_update = existing_card is not None or existing_batch is not None
+
+                    if not is_args_update:
+                        self._timeline_event_counter += 1
+                        with open("/tmp/tui_timeline_trace.log", "a") as f:
+                            f.write(f"[{self._timeline_event_counter:04d}] type=tool_{tool_data.status} tool={tool_data.display_name} tool_id={tool_data.tool_id}\n")
 
                 if tool_data.status == "running":
                     # Check if this is an args update for existing tool
@@ -7718,6 +7748,10 @@ Type your question and press Enter to ask the agents.
                     elif not skip_batching:
                         # Check if this MCP tool should be batched
                         action, server_name, batch_id, pending_id = self._batch_tracker.process_tool(tool_data)
+
+                        # Debug: Log batching decision
+                        with open("/tmp/tui_timeline_trace.log", "a") as f:
+                            f.write(f"       BATCH_DECISION: tool={tool_data.display_name} action={action} server={server_name} batch_id={batch_id} pending_id={pending_id}\n")
 
                         if action == "pending":
                             # First MCP tool - show as normal card, track for potential batch
@@ -7786,6 +7820,8 @@ Type your question and press Enter to ask the agents.
             if not normalized.should_display:
                 return
 
+            # Mark that non-tool content arrived (prevents future batching across this content)
+            self._batch_tracker.mark_content_arrived()
             # Finalize any current batch when non-tool content arrives
             self._batch_tracker.finalize_current_batch()
 
@@ -7823,6 +7859,8 @@ Type your question and press Enter to ask the agents.
             if not normalized.should_display:
                 return
 
+            # Mark that non-tool content arrived (prevents future batching across this content)
+            self._batch_tracker.mark_content_arrived()
             # Finalize any current batch when non-tool content arrives
             self._batch_tracker.finalize_current_batch()
 
@@ -7873,6 +7911,26 @@ Type your question and press Enter to ask the agents.
             self._line_buffer = ""
             self.current_line_label.update(Text(""))
 
+        def _flush_line_buffer_to_timeline(self, text_class: str = "thinking-inline") -> None:
+            """Flush any remaining line buffer content to the timeline.
+
+            Called when content type changes (e.g., thinking -> tool) to ensure
+            all content is written, even if it didn't end with a newline.
+            """
+            if self._line_buffer.strip():
+                try:
+                    timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                    timeline.add_text(
+                        self._line_buffer,
+                        style="dim italic",
+                        text_class=text_class,
+                        round_number=self._current_round,
+                    )
+                except Exception:
+                    pass
+                self._line_buffer = ""
+                self.current_line_label.update(Text(""))
+
         def _add_thinking_content(self, normalized, raw_type: str):
             """Route thinking/text content to TimelineSection.
 
@@ -7885,6 +7943,8 @@ Type your question and press Enter to ask the agents.
             if not cleaned:
                 return
 
+            # Mark that non-tool content arrived (prevents future batching across this content)
+            self._batch_tracker.mark_content_arrived()
             # Finalize any current batch when non-tool content arrives
             self._batch_tracker.finalize_current_batch()
 
@@ -7943,6 +8003,11 @@ Type your question and press Enter to ask the agents.
             if not normalized.should_display:
                 return
 
+            # Mark that non-tool content arrived (prevents future batching across this content)
+            self._batch_tracker.mark_content_arrived()
+            # Finalize any current batch when non-tool content arrives
+            self._batch_tracker.finalize_current_batch()
+
             content = normalized.cleaned_content
             # Truncate preview if very long
             preview = content[:100] + "..." if len(content) > 100 else content
@@ -7970,6 +8035,11 @@ Type your question and press Enter to ask the agents.
             """
             if not normalized.should_display:
                 return
+
+            # Mark that non-tool content arrived (prevents future batching across this content)
+            self._batch_tracker.mark_content_arrived()
+            # Finalize any current batch when non-tool content arrives
+            self._batch_tracker.finalize_current_batch()
 
             content = normalized.cleaned_content
 
@@ -8618,6 +8688,8 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.switch_to_round(round_number)
+                # Clear tools tracking so new round's tool_ids don't collide with old round's
+                timeline.clear_tools_tracking()
 
                 # Step 3: Add "Round X" banner at the top of each new round
                 if round_number > 1:
@@ -8701,15 +8773,18 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.switch_to_round(new_round)
+                # Clear tool tracking to prevent tool_id collisions with previous round
+                timeline.clear_tools_tracking()
 
                 # Add "Final Presentation" banner with distinct styling and vote summary
                 timeline.add_separator("FINAL PRESENTATION", round_number=new_round, subtitle=subtitle)
             except Exception as e:
                 logger.error(f"AgentPanel.start_final_presentation timeline error: {e}")
 
-            # Step 3: Reset per-round UI state
+            # Step 4: Reset per-round UI state
             self._hide_completion_footer()
             self._tool_handler.reset()
+            self._batch_tracker.reset()
             self._reasoning_header_shown = False
 
             # Step 4: Clear context display for final presentation (will be updated if needed)

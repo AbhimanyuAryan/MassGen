@@ -170,7 +170,7 @@ Screen {
 #agents_container {
     layout: vertical;
     width: 100%;
-    height: 1fr;  /* Use 1fr to respect docked ExecutionStatusLine */
+    height: 100%;
     background: transparent;  /* Allow terminal background through */
 }
 
@@ -3029,11 +3029,11 @@ StatusBar.consensus-reached #status_votes {
 
 /* === Execution Status Line === */
 ExecutionStatusLine {
-    dock: top;
+    dock: bottom;
     height: 1;
     width: 100%;
     background: transparent;
-    border-bottom: solid $border-subtle;
+    border-top: solid $border-subtle;
     padding: 0 2;
 }
 

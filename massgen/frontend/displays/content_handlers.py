@@ -843,6 +843,18 @@ class ToolBatchTracker:
         self._pending_tool_id: Optional[str] = None  # First tool, not yet batched
         self._batch_counter = 0
         self._batched_tool_ids: set = set()  # Track which tools are in batches
+        self._content_since_last_tool: bool = False  # True if non-tool content arrived
+
+    def mark_content_arrived(self) -> None:
+        """Mark that non-tool content (thinking, text, status) has arrived.
+
+        This is used to prevent batching tools that have content between them.
+        Called whenever non-tool content is added to the timeline.
+        """
+        # Debug: Log when content breaks potential batching
+        with open("/tmp/tui_timeline_trace.log", "a") as f:
+            f.write(f"       CONTENT_BREAK: mark_content_arrived() called, pending={self._pending_tool_id}, batch={self._current_batch_id}\n")
+        self._content_since_last_tool = True
 
     def process_tool(self, tool_data: ToolDisplayData) -> tuple[str, Optional[str], Optional[str], Optional[str]]:
         """Determine how to handle an incoming tool call.
@@ -856,6 +868,12 @@ class ToolBatchTracker:
             - "update_standalone": Update a standalone/pending tool
             - "update_batch": Update existing tool in batch
         """
+        # If content arrived since last tool, finalize batch and start fresh
+        # This ensures chronological order is respected in the timeline
+        if self._content_since_last_tool and tool_data.status == "running":
+            self._finalize_pending()
+            self._content_since_last_tool = False
+
         server_name = get_mcp_server_name(tool_data.tool_name)
 
         # Non-MCP tools get standalone treatment
@@ -910,6 +928,7 @@ class ToolBatchTracker:
         self._current_batch_id = None
         self._pending_tool_id = None
         self._batched_tool_ids.clear()  # Clear accumulated tool IDs to prevent memory growth
+        self._content_since_last_tool = False
 
     @property
     def current_batch_id(self) -> Optional[str]:
