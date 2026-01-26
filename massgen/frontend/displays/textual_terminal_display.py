@@ -4431,8 +4431,14 @@ Type your question and press Enter to ask the agents.
                     if answer:
                         card.append_chunk(answer)
                     card.complete()
+                    # Auto-lock timeline to show only final answer
+                    timeline.lock_to_final_answer("final_presentation_card")
+                    card.set_locked_mode(True)
+                    # Update input placeholder to encourage follow-up
+                    if hasattr(self, "question_input"):
+                        self.question_input.placeholder = "Type your follow-up question..."
                     with open("/tmp/tui_debug.log", "a") as f:
-                        f.write("DEBUG _add_final_completion_card: set_content_and_complete called\n")
+                        f.write("DEBUG _add_final_completion_card: set_content_and_complete called, auto-locked\n")
 
                 self.set_timer(0.1, set_content_and_complete)
 
@@ -4539,6 +4545,26 @@ Type your question and press Enter to ask the agents.
 
                 # Mark the card as complete (shows footer with buttons)
                 self._final_presentation_card.complete()
+
+                # Auto-lock timeline to show only final answer
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG end_post_evaluation: agent_id={agent_id}, in_widgets={agent_id in self.agent_widgets}\n")
+                if agent_id in self.agent_widgets:
+                    panel = self.agent_widgets[agent_id]
+                    try:
+                        timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+                        with open("/tmp/tui_debug.log", "a") as f:
+                            f.write("DEBUG end_post_evaluation: Found timeline, calling lock_to_final_answer\n")
+                        timeline.lock_to_final_answer("final_presentation_card")
+                        self._final_presentation_card.set_locked_mode(True)
+                        # Update input placeholder to encourage follow-up
+                        if hasattr(self, "question_input"):
+                            self.question_input.placeholder = "Type your follow-up question..."
+                        with open("/tmp/tui_debug.log", "a") as f:
+                            f.write("DEBUG end_post_evaluation: set_locked_mode(True) called\n")
+                    except Exception as e:
+                        with open("/tmp/tui_debug.log", "a") as f:
+                            f.write(f"DEBUG end_post_evaluation: EXCEPTION: {e}\n")
 
                 # Phase 12.4: Store final answer for view-based navigation
                 if agent_id in self.agent_widgets:
@@ -4843,6 +4869,19 @@ Type your question and press Enter to ask the agents.
                     card.add_class("completion-only")
                     timeline.add_widget(card)
                     self._final_presentation_card = card
+
+                    # Auto-lock timeline to show only final answer
+                    def auto_lock_after_add():
+                        try:
+                            timeline.lock_to_final_answer("winner_selected_card")
+                            card.set_locked_mode(True)
+                            # Update input placeholder to encourage follow-up
+                            if hasattr(self, "question_input"):
+                                self.question_input.placeholder = "Type your follow-up question..."
+                        except Exception:
+                            pass
+
+                    self.set_timer(0.1, auto_lock_after_add)
 
                     # Scroll to show the card
                     timeline.scroll_to_widget("winner_selected_card")

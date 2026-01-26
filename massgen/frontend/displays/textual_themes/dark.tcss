@@ -2999,9 +2999,8 @@ FinalPresentationCard.full-width-mode #final_card_content {
 }
 
 FinalPresentationCard.full-width-mode #final_card_header {
-    background: #1a4d2e;
-    padding: 1;
-    border-bottom: solid $accent-success 50%;
+    background: transparent;
+    padding: 0 1;
 }
 
 FinalPresentationCard.full-width-mode #final_card_title {
@@ -3009,7 +3008,7 @@ FinalPresentationCard.full-width-mode #final_card_title {
 }
 
 FinalPresentationCard.full-width-mode.completed #final_card_header {
-    background: #1a4d2e;
+    background: transparent;
 }
 
 /* Thinking Section - auto height, shrinks to content */
@@ -4747,7 +4746,7 @@ FinalAnswerView #final_header {
     width: 100%;
     height: auto;
     padding: 0 1;
-    background: #1a4d2e;
+    background: $bg-surface-2;
     border-bottom: solid $accent-success;
 }
 

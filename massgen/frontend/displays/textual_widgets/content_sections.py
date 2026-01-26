@@ -529,6 +529,23 @@ class TimelineSection(ScrollableContainer):
     TimelineSection .hidden {
         display: none;
     }
+
+    /* Answer lock mode: final card fills the space */
+    TimelineSection.answer-locked {
+        overflow-y: hidden;
+        padding: 0;
+    }
+
+    /* Hidden class for non-locked items */
+    TimelineSection .answer-lock-hidden {
+        display: none;
+    }
+
+    /* Locked final card fills available space */
+    TimelineSection .final-card-locked {
+        height: 1fr;
+        margin: 0;
+    }
     """
 
     # Maximum number of items to keep in timeline (prevents memory/performance issues)
@@ -555,6 +572,9 @@ class TimelineSection(ScrollableContainer):
         self._auto_scrolling = False
         self._scroll_pending = False
         self._debug_scroll = False  # Debug flag (disabled for performance)
+        # Answer lock mode: when True, timeline shows only the final answer card
+        self._answer_lock_mode = False
+        self._locked_card_id: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         # Scroll mode indicator (hidden by default)
@@ -730,6 +750,60 @@ class TimelineSection(ScrollableContainer):
     def new_content_count(self) -> int:
         """Number of new items since entering scroll mode."""
         return self._new_content_count
+
+    @property
+    def is_answer_locked(self) -> bool:
+        """Whether the timeline is locked to show only the final answer."""
+        return self._answer_lock_mode
+
+    def lock_to_final_answer(self, card_id: str) -> None:
+        """Lock timeline to show only the final answer card.
+
+        Hides all other timeline content and makes the final card fill
+        the available space for better readability.
+
+        Args:
+            card_id: The ID of the FinalPresentationCard to lock to
+        """
+        if self._answer_lock_mode:
+            return  # Already locked
+
+        self._answer_lock_mode = True
+        self._locked_card_id = card_id
+
+        # Add lock mode class to timeline
+        self.add_class("answer-locked")
+
+        # Hide all children except the final card
+        for child in self.children:
+            child_id = getattr(child, "id", None)
+            if child_id != card_id:
+                child.add_class("answer-lock-hidden")
+            else:
+                child.add_class("final-card-locked")
+
+    def unlock_final_answer(self) -> None:
+        """Unlock timeline to show all content.
+
+        Restores normal timeline view with all tools and text visible.
+        """
+        if not self._answer_lock_mode:
+            return  # Already unlocked
+
+        self._answer_lock_mode = False
+
+        # Remove lock mode class from timeline
+        self.remove_class("answer-locked")
+
+        # Show all children again
+        for child in self.children:
+            child.remove_class("answer-lock-hidden")
+            child.remove_class("final-card-locked")
+
+        self._locked_card_id = None
+
+        # Scroll to show the final card
+        self._scroll_to_end(animate=False)
 
     def _trim_old_items(self) -> None:
         """Remove oldest items if we exceed MAX_TIMELINE_ITEMS."""
@@ -1398,12 +1472,16 @@ class TimelineSection(ScrollableContainer):
                 f.write(f"DEBUG TimelineSection.add_widget: ERROR repr: {repr(e)}\n")
                 # Try to get CSS error details
                 try:
+                    if hasattr(e, "errors"):
+                        f.write(f"DEBUG TimelineSection.add_widget: errors attr: {e.errors}\n")
+                        for err in e.errors:
+                            f.write(f"DEBUG TimelineSection.add_widget: CSS ERROR: {err}\n")
                     if hasattr(e, "rules"):
                         f.write(f"DEBUG TimelineSection.add_widget: rules: {e.rules}\n")
                     # Try printing all attributes
                     f.write(f"DEBUG TimelineSection.add_widget: dir(e): {[a for a in dir(e) if not a.startswith('_')]}\n")
-                except Exception:
-                    pass
+                except Exception as inner:
+                    f.write(f"DEBUG TimelineSection.add_widget: inner error: {inner}\n")
                 f.write(f"DEBUG TimelineSection.add_widget: Traceback:\n{traceback.format_exc()}\n")
 
     def clear(self) -> None:
@@ -2128,17 +2206,17 @@ class FinalPresentationCard(Vertical):
         height: auto;
         margin: 1 0;
         padding: 0;
-        border: solid #ffd700;
-        background: #1a1a1a;
+        border: solid #fab387;
+        background: transparent;
     }
 
     FinalPresentationCard.streaming {
-        border: double #ffd700;
+        border: double #fab387;
     }
 
     FinalPresentationCard.completed {
-        border: solid #3fb950;
-        background: #0d1f14;
+        border: solid #a6e3a1;
+        background: transparent;
     }
 
     /* Hide post_eval and context_paths in completed mode when they have hidden class */
@@ -2154,27 +2232,28 @@ class FinalPresentationCard(Vertical):
         width: 100%;
         height: auto;
         padding: 0 1;
-        background: #2d2510;
-        border-bottom: solid #ffd700 50%;
+        background: transparent;
     }
 
     FinalPresentationCard.completed #final_card_header {
-        background: #1a4d2e;
-        border-bottom: solid #3fb950 50%;
+        background: transparent;
     }
 
     FinalPresentationCard #final_card_title {
-        color: #ffd700;
+        color: #fab387;
         text-style: bold;
     }
 
     FinalPresentationCard.completed #final_card_title {
-        color: #3fb950;
+        color: #a6e3a1;
     }
 
     FinalPresentationCard #final_card_votes {
         color: #8b949e;
         height: 1;
+        border-bottom: solid #45475a;
+        padding-bottom: 1;
+        margin-bottom: 1;
     }
 
     FinalPresentationCard #final_card_content {
@@ -2182,14 +2261,14 @@ class FinalPresentationCard(Vertical):
         height: auto;
         max-height: 30;
         padding: 1 2 0 2;
-        background: #1e1e1e;
+        background: transparent;
         overflow-y: auto;
     }
 
     FinalPresentationCard #final_card_text {
         width: 100%;
         height: auto;
-        background: #1e1e1e;
+        background: transparent;
         color: #e6e6e6;
     }
 
@@ -2283,9 +2362,8 @@ class FinalPresentationCard(Vertical):
     FinalPresentationCard #final_card_footer {
         width: 100%;
         height: auto;
-        padding: 0 2;
-        background: #21262d;
-        border-top: solid #30363d;
+        padding: 1 2;
+        background: transparent;
     }
 
     FinalPresentationCard #final_card_footer.hidden {
@@ -2294,28 +2372,25 @@ class FinalPresentationCard(Vertical):
 
     FinalPresentationCard #final_card_buttons {
         width: 100%;
-        height: 3;
+        height: 1;
     }
 
-    FinalPresentationCard #final_card_buttons Button {
-        margin-right: 1;
-        min-width: 12;
+    /* Footer links - consistent clickable link style */
+    FinalPresentationCard .footer-link {
+        width: auto;
+        height: 1;
+        color: #89b4fa;
+        text-style: underline;
+        padding: 0 1;
     }
 
-    FinalPresentationCard #final_card_copy_btn {
-        background: #238636;
-        color: #ffffff;
-    }
-
-    FinalPresentationCard #final_card_copy_btn:hover {
-        background: #2ea043;
+    FinalPresentationCard .footer-link:hover {
+        color: #b4befe;
+        text-style: bold underline;
     }
 
     FinalPresentationCard #continue_message {
-        color: #58a6ff;
-        text-style: italic;
-        height: 1;
-        margin-top: 1;
+        display: none;
     }
 
     /* Full-width mode - fills available vertical space */
@@ -2331,22 +2406,21 @@ class FinalPresentationCard(Vertical):
 
     /* Enhanced prominence styling for full-width mode */
     FinalPresentationCard.full-width-mode.streaming {
-        border: double #ffd700;
+        border: double #fab387;
     }
 
     FinalPresentationCard.full-width-mode.completed {
-        border: double #3fb950;
-        background: #0d1f14;
+        border: double #a6e3a1;
+        background: transparent;
     }
 
     FinalPresentationCard.full-width-mode #final_card_header {
-        background: #1a4d2e;
-        padding: 1;
-        border-bottom: solid #3fb950 50%;
+        background: transparent;
+        padding: 0 1;
     }
 
     FinalPresentationCard.full-width-mode #final_card_title {
-        color: #3fb950;
+        color: #a6e3a1;
     }
 
     /* Completion-only mode - minimal footer bar */
@@ -2380,6 +2454,21 @@ class FinalPresentationCard(Vertical):
         border: solid #30363d;
         padding: 1 2;
     }
+
+    /* Spacer to push unlock button to the right in footer */
+    FinalPresentationCard #final_card_button_spacer {
+        width: 1fr;
+        height: 1;
+    }
+
+    FinalPresentationCard.locked-mode #final_card_content {
+        height: 1fr;
+        max-height: 999;
+    }
+
+    FinalPresentationCard.locked-mode {
+        height: 1fr;
+    }
     """
 
     def __init__(
@@ -2409,12 +2498,12 @@ class FinalPresentationCard(Vertical):
 
     def compose(self) -> ComposeResult:
         from textual.containers import Horizontal, ScrollableContainer
-        from textual.widgets import Button, Label
+        from textual.widgets import Label
 
         with open("/tmp/tui_debug.log", "a") as f:
             f.write("DEBUG FinalPresentationCard.compose: STARTING\n")
 
-        # Header section
+        # Header section - compact single line
         with Vertical(id="final_card_header"):
             yield Label(self._build_title(), id="final_card_title")
             yield Label(self._build_vote_summary(), id="final_card_votes")
@@ -2452,11 +2541,17 @@ class FinalPresentationCard(Vertical):
                 for path in self.context_paths.get("modified", []):
                     yield Label(f"  ✎ {path}", classes="context-path-modified")
 
-        # Footer with buttons and continue message (hidden until complete)
+        # Footer with link-style actions and continue message (hidden until complete)
         with Vertical(id="final_card_footer", classes="hidden"):
             with Horizontal(id="final_card_buttons"):
-                yield Button("📋 Copy", id="final_card_copy_btn")
-                yield Button("📂 Workspace", id="final_card_workspace_btn")
+                yield Static("📋 Copy", id="final_card_copy_btn", classes="footer-link")
+                yield Static("📂 Workspace", id="final_card_workspace_btn", classes="footer-link")
+                # Spacer to push unlock button to the right
+                yield Static("", id="final_card_button_spacer")
+                # Unlock button - hidden initially, shown when locked
+                link = Static("↩ Previous Work", id="final_card_unlock_btn", classes="footer-link")
+                link.display = False
+                yield link
             yield Label("💬 Type below to continue the conversation", id="continue_message")
 
     def _build_title(self) -> str:
@@ -2475,12 +2570,11 @@ class FinalPresentationCard(Vertical):
         if not vote_counts:
             return ""
 
-        # Format: "Winner: agent_a (2v) | Votes: agent_a(2), agent_b(1)"
-        winner_count = vote_counts.get(winner, 0)
+        # Format: "Winner: agent_a | Votes: agent_a (2), agent_b (1)"
         tie_note = " (tie-breaker)" if is_tie else ""
-        counts_str = ", ".join(f"{aid}({count})" for aid, count in vote_counts.items())
+        counts_str = ", ".join(f"{aid} ({count})" for aid, count in vote_counts.items())
 
-        return f"Winner: {winner} ({winner_count}v){tie_note} | Votes: {counts_str}"
+        return f"Winner: {winner}{tie_note} | Votes: {counts_str}"
 
     def append_chunk(self, chunk: str) -> None:
         """Append streaming content to the card.
@@ -2631,8 +2725,24 @@ class FinalPresentationCard(Vertical):
         return "".join(self._final_content)
 
     def on_click(self, event) -> None:
-        """Handle clicks on the post-eval toggle."""
+        """Handle clicks on footer links and post-eval toggle."""
         from textual.widgets import Label
+
+        widget_id = getattr(event.widget, "id", None) if hasattr(event, "widget") else None
+
+        # Handle footer link clicks
+        if widget_id == "final_card_unlock_btn":
+            self._toggle_lock()
+            event.stop()
+            return
+        elif widget_id == "final_card_copy_btn":
+            self._copy_to_clipboard()
+            event.stop()
+            return
+        elif widget_id == "final_card_workspace_btn":
+            self._open_workspace()
+            event.stop()
+            return
 
         # Check if click was on the toggle label
         try:
@@ -2662,17 +2772,67 @@ class FinalPresentationCard(Vertical):
         except Exception:
             pass
 
-    def on_button_pressed(self, event) -> None:
-        """Handle button presses."""
-        from textual.widgets import Button
+    def _toggle_lock(self) -> None:
+        """Toggle between locked (answer-only) and unlocked (full timeline) view."""
+        # Find parent TimelineSection
+        timeline = None
+        parent = self.parent
+        while parent:
+            if isinstance(parent, TimelineSection):
+                timeline = parent
+                break
+            parent = parent.parent
 
-        if not isinstance(event, Button.Pressed):
+        if not timeline:
             return
 
-        if event.button.id == "final_card_copy_btn":
-            self._copy_to_clipboard()
-        elif event.button.id == "final_card_workspace_btn":
-            self._open_workspace()
+        try:
+            link = self.query_one("#final_card_unlock_btn", Static)
+            link.display = True  # Always keep visible once shown
+
+            if timeline.is_answer_locked:
+                # Unlock: show full timeline
+                timeline.unlock_final_answer()
+                self.remove_class("locked-mode")
+                link.update("⎯ Answer Only")
+            else:
+                # Lock: show only final answer
+                timeline.lock_to_final_answer(self.id or "final_presentation_card")
+                self.add_class("locked-mode")
+                link.update("↩ Previous Work")
+        except Exception:
+            pass
+
+    def set_locked_mode(self, locked: bool) -> None:
+        """Set the locked mode state programmatically.
+
+        Called by textual_terminal_display when auto-locking after final answer.
+
+        Args:
+            locked: Whether to enable locked mode
+        """
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG FinalPresentationCard.set_locked_mode: locked={locked}, is_mounted={self.is_mounted}\n")
+
+        if locked:
+            self.add_class("locked-mode")
+            try:
+                link = self.query_one("#final_card_unlock_btn", Static)
+                link.display = True
+                link.update("↩ Previous Work")
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG FinalPresentationCard.set_locked_mode: link found, set display=True\n")
+            except Exception as e:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG FinalPresentationCard.set_locked_mode: link query failed: {e}\n")
+        else:
+            self.remove_class("locked-mode")
+            try:
+                link = self.query_one("#final_card_unlock_btn", Static)
+                link.display = False
+                link.update("⎯ Answer Only")
+            except Exception:
+                pass
 
     def _copy_to_clipboard(self) -> None:
         """Copy final answer to system clipboard."""
