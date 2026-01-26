@@ -7788,7 +7788,7 @@ Type your question and press Enter to ask the agents.
                 self._add_injection_content(normalized)
             elif normalized.content_type == "reminder":
                 self._add_reminder_content(normalized)
-            elif normalized.content_type in ("thinking", "text"):
+            elif normalized.content_type in ("thinking", "text", "content"):
                 self._add_thinking_content(normalized, content_type)
             else:
                 # Fallback: route to thinking section if displayable
@@ -8025,13 +8025,21 @@ Type your question and press Enter to ask the agents.
             self._line_buffer = ""
             self.current_line_label.update(Text(""))
 
-        def _flush_line_buffer_to_timeline(self, text_class: str = "thinking-inline") -> None:
+        def _flush_line_buffer_to_timeline(self, text_class: str = None) -> None:
             """Flush any remaining line buffer content to the timeline.
 
             Called when content type changes (e.g., thinking -> tool) to ensure
             all content is written, even if it didn't end with a newline.
+
+            Args:
+                text_class: CSS class for the content. If None, uses the last
+                    text_class that was used (tracked via _last_text_class).
             """
             if self._line_buffer.strip():
+                # Use stored text_class if not provided - this preserves the correct
+                # type when flushing buffered content on content type transitions
+                if text_class is None:
+                    text_class = getattr(self, "_last_text_class", "content-inline")
                 try:
                     timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                     timeline.add_text(
@@ -8083,6 +8091,17 @@ Type your question and press Enter to ask the agents.
                 # NOTE: Use normalized.content_type instead of raw_type to ensure
                 # consistent labeling even if the backend sent a different content_type
                 text_class = "thinking-inline" if normalized.content_type == "thinking" else "content-inline"
+
+                # Flush line buffer if content type changed to prevent type mixing
+                # This ensures incomplete lines from previous type don't get labeled with new type
+                if not hasattr(self, "_last_text_class"):
+                    self._last_text_class = text_class
+                if self._last_text_class != text_class and self._line_buffer.strip():
+                    # Flush with the PREVIOUS text_class before switching
+                    prev_text_class = self._last_text_class
+                    timeline.add_text(self._line_buffer, style="dim italic", text_class=prev_text_class, round_number=current_round)
+                    self._line_buffer = ""
+                self._last_text_class = text_class
 
                 def write_line(line: str):
                     # Phase 12: Pass round_number for CSS visibility

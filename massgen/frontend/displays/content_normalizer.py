@@ -23,6 +23,7 @@ ContentType = Literal[
     "tool_failed",
     "tool_info",
     "thinking",
+    "content",  # Explicit content from backend (distinct from thinking)
     "status",
     "presentation",
     "injection",
@@ -545,6 +546,9 @@ class ContentNormalizer:
 
         if raw_type == "thinking":
             return "thinking"
+
+        if raw_type == "content":
+            return "content"
 
         # Auto-detect from content
         if "[INJECTION]" in content or "injection" in raw_type:

@@ -1869,7 +1869,16 @@ class CoordinationUI:
         buffer_len = len(buffer)
 
         # Check if buffer might contain workspace JSON (look at the WHOLE buffer)
-        has_workspace_pattern = '"action_type"' in buffer or '"answer_data"' in buffer or '"action": "new_answer"' in buffer or '"action": "vote"' in buffer or "```json" in buffer
+        # Also detect partial JSON patterns that indicate workspace action is starting
+        has_workspace_pattern = (
+            '"action_type"' in buffer
+            or '"answer_data"' in buffer
+            or '"action": "new_answer"' in buffer
+            or '"action": "vote"' in buffer
+            or '"action":' in buffer
+            or '"action"' in buffer  # Partial JSON key
+            or "```json" in buffer  # JSON key without colon yet
+        )
 
         if has_workspace_pattern:
             # Buffer has workspace JSON patterns - wait for it to complete
@@ -1928,7 +1937,7 @@ class CoordinationUI:
 
                 # For other workspace actions, emit text_before and create tool card
                 if text_before and not ContentNormalizer.is_workspace_state_content(text_before):
-                    await self._emit_agent_content(agent_id, text_before)
+                    await self._emit_agent_content(agent_id, text_before, chunk_type)
 
                 # Create tool card for the workspace action
                 tool_msg = f"🔧 Calling workspace/{action_type}"
@@ -1940,7 +1949,7 @@ class CoordinationUI:
 
                 # Emit any text after the JSON as content (rare but possible)
                 if text_after and not ContentNormalizer.is_workspace_state_content(text_after):
-                    await self._emit_agent_content(agent_id, text_after)
+                    await self._emit_agent_content(agent_id, text_after, chunk_type)
                 return
             else:
                 # Couldn't parse the JSON, just log and skip
@@ -1956,7 +1965,7 @@ class CoordinationUI:
             return
 
         # Emit the buffered content
-        await self._emit_agent_content(agent_id, buffer)
+        await self._emit_agent_content(agent_id, buffer, chunk_type)
 
     async def _emit_agent_content(self, agent_id: str, content: str, chunk_type: str = None):
         """Emit agent content to the display after filtering."""
@@ -2095,13 +2104,15 @@ class CoordinationUI:
                     if json_start > 0:
                         reasoning_part = buffer[:json_start].strip()
                         if reasoning_part and not ContentNormalizer.is_workspace_state_content(reasoning_part):
-                            await self._emit_agent_content(agent_id, reasoning_part)
+                            stored_chunk_type = getattr(self, "_agent_chunk_types", {}).get(agent_id, "content")
+                            await self._emit_agent_content(agent_id, reasoning_part, stored_chunk_type)
                 # Filter workspace state content (CWD, File created, etc.)
                 elif ContentNormalizer.is_workspace_state_content(buffer):
                     if self.logger:
                         self.logger.log_agent_content(agent_id, buffer, "filtered_workspace_state")
                 else:
-                    await self._emit_agent_content(agent_id, buffer)
+                    stored_chunk_type = getattr(self, "_agent_chunk_types", {}).get(agent_id, "content")
+                    await self._emit_agent_content(agent_id, buffer, stored_chunk_type)
         self._agent_content_buffers = {}
 
     async def _flush_final_answer(self):
