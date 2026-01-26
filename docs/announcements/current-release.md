@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.43, featuring Tool Call Batching! 🚀 Consecutive MCP tool calls are now grouped into collapsible tree views—see filesystem operations batched with timing info, expand to view details, and enjoy cleaner final answer presentation with reasoning separated from results. Experience it: massgen --display textual
+We're excited to release MassGen v0.1.43, featuring Tool Call Batching in the TUI! 🚀 Consecutive MCP tool calls are now grouped into collapsible tree views—see filesystem operations batched with timing info, expand to view details, and enjoy cleaner final answer presentation with reasoning separated from results. Experience it: massgen --display textual
 
 ## Install
 
@@ -29,9 +29,9 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.43, featuring Tool Call Batching! 🚀
+We're excited to release MassGen v0.1.43, featuring Tool Call Batching in the TUI! 🚀
 
-**Tool Call Batching**
+**Tool Call Batching (TUI)**
 - Consecutive MCP tool calls grouped into collapsible tree views
 - Shows 3 items by default with "+N more" indicator
 - Click to expand full list of operations

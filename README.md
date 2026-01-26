@@ -173,12 +173,8 @@ pip install --upgrade massgen
 
 # Experience tool call batching - multiple file operations batch into collapsible trees
 uv run massgen --display textual \
-  --config massgen/configs/tools/filesystem/claude_code_single.yaml \
+  --config massgen/configs/providers/gemini/gemini_3_flash.yaml \
   "Create a project structure with src/, tests/, and docs/ directories, then add README.md and requirements.txt"
-
-# Try plan mode with the new PlanOptionsPopover (press 'p' to open plan options)
-uv run massgen --display textual --plan --plan-depth balanced \
-  "Design a CLI tool for managing bookmarks with add, list, search, and delete commands"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
