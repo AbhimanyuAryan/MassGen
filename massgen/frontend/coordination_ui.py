@@ -1982,34 +1982,11 @@ class CoordinationUI:
 
         else:
             # Thinking/content - use the original chunk_type
-            # For displays that support streaming final answer (textual_terminal and web),
-            # route content through stream_final_answer_chunk when the selected agent is streaming
-            if self.orchestrator and hasattr(self.display, "stream_final_answer_chunk"):
-                status = self.orchestrator.get_status()
-                if status:
-                    selected_agent = status.get("selected_agent")
-
-                    # Cache selected_agent when first detected (Fix 2: persist across status changes)
-                    if selected_agent:
-                        self._cached_selected_agent = selected_agent
-
-                    # Use cached value as fallback if current status doesn't have it
-                    effective_selected_agent = selected_agent or getattr(self, "_cached_selected_agent", None)
-
-                    # Debug logging for content routing
-                    with open("/tmp/tui_debug.log", "a") as f:
-                        f.write(f"DEBUG _emit_agent_content: agent={agent_id} selected={effective_selected_agent} chunk_type={chunk_type} content_preview={content[:100] if content else 'None'}...\n")
-
-                    if effective_selected_agent and effective_selected_agent == agent_id:
-                        vote_results = status.get("vote_results", {})
-                        with open("/tmp/tui_debug.log", "a") as f:
-                            f.write("DEBUG _emit_agent_content: ROUTING TO stream_final_answer_chunk\n")
-                        self.display.stream_final_answer_chunk(content, effective_selected_agent, vote_results)
-                        if self.logger:
-                            self.logger.log_agent_content(agent_id, content, chunk_type)
-                        return
+            # Route all content through update_agent_content() so it goes through
+            # the normal content pipeline (ContentNormalizer, tool cards, thinking sections, etc.)
+            # Final presentation content is handled as a new round (N+1) with the same pipeline.
             with open("/tmp/tui_debug.log", "a") as f:
-                f.write("DEBUG _emit_agent_content: ROUTING TO update_agent_content\n")
+                f.write(f"DEBUG _emit_agent_content: agent={agent_id} chunk_type={chunk_type} ROUTING TO update_agent_content\n")
             self.display.update_agent_content(agent_id, content, chunk_type)
             if self.logger:
                 self.logger.log_agent_content(agent_id, content, chunk_type)

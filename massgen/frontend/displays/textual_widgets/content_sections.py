@@ -1381,12 +1381,30 @@ class TimelineSection(ScrollableContainer):
         widget.add_class(f"round-{round_number}")
 
         try:
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG TimelineSection.add_widget: mounting widget type={type(widget).__name__}, id={widget.id}\n")
             self.mount(widget)
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG TimelineSection.add_widget: mounted, widget.is_mounted={widget.is_mounted}\n")
             self._auto_scroll()
         except Exception as e:
             import sys
+            import traceback
 
             print(f"[ERROR] add_widget failed: {e}", file=sys.stderr)
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG TimelineSection.add_widget: ERROR: {e}\n")
+                f.write(f"DEBUG TimelineSection.add_widget: ERROR str: {str(e)}\n")
+                f.write(f"DEBUG TimelineSection.add_widget: ERROR repr: {repr(e)}\n")
+                # Try to get CSS error details
+                try:
+                    if hasattr(e, "rules"):
+                        f.write(f"DEBUG TimelineSection.add_widget: rules: {e.rules}\n")
+                    # Try printing all attributes
+                    f.write(f"DEBUG TimelineSection.add_widget: dir(e): {[a for a in dir(e) if not a.startswith('_')]}\n")
+                except Exception:
+                    pass
+                f.write(f"DEBUG TimelineSection.add_widget: Traceback:\n{traceback.format_exc()}\n")
 
     def clear(self) -> None:
         """Clear all timeline content."""
@@ -2123,6 +2141,15 @@ class FinalPresentationCard(Vertical):
         background: #0d1f14;
     }
 
+    /* Hide post_eval and context_paths in completed mode when they have hidden class */
+    FinalPresentationCard.completed #final_card_post_eval.hidden,
+    FinalPresentationCard.completed #final_card_context_paths.hidden {
+        display: none;
+        height: 0;
+        padding: 0;
+        margin: 0;
+    }
+
     FinalPresentationCard #final_card_header {
         width: 100%;
         height: auto;
@@ -2153,9 +2180,8 @@ class FinalPresentationCard(Vertical):
     FinalPresentationCard #final_card_content {
         width: 100%;
         height: auto;
-        min-height: 5;
-        max-height: 25;
-        padding: 1 2;
+        max-height: 30;
+        padding: 1 2 0 2;
         background: #1e1e1e;
         overflow-y: auto;
     }
@@ -2163,7 +2189,6 @@ class FinalPresentationCard(Vertical):
     FinalPresentationCard #final_card_text {
         width: 100%;
         height: auto;
-        min-height: 3;
         background: #1e1e1e;
         color: #e6e6e6;
     }
@@ -2225,10 +2250,40 @@ class FinalPresentationCard(Vertical):
         height: auto;
     }
 
-    FinalPresentationCard #final_card_footer {
+    FinalPresentationCard #final_card_context_paths {
         width: 100%;
         height: auto;
         padding: 1 2;
+        background: #161b22;
+        border-top: dashed #30363d;
+    }
+
+    FinalPresentationCard #final_card_context_paths.hidden {
+        display: none;
+    }
+
+    FinalPresentationCard #context_paths_header {
+        color: #58a6ff;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    FinalPresentationCard #context_paths_list {
+        height: auto;
+    }
+
+    FinalPresentationCard .context-path-new {
+        color: #3fb950;
+    }
+
+    FinalPresentationCard .context-path-modified {
+        color: #d29922;
+    }
+
+    FinalPresentationCard #final_card_footer {
+        width: 100%;
+        height: auto;
+        padding: 0 2;
         background: #21262d;
         border-top: solid #30363d;
     }
@@ -2271,7 +2326,6 @@ class FinalPresentationCard(Vertical):
 
     FinalPresentationCard.full-width-mode #final_card_content {
         height: 1fr;
-        max-height: none;
         overflow-y: auto;
     }
 
@@ -2294,6 +2348,38 @@ class FinalPresentationCard(Vertical):
     FinalPresentationCard.full-width-mode #final_card_title {
         color: #3fb950;
     }
+
+    /* Completion-only mode - minimal footer bar */
+    /* Content already shown through normal pipeline, just show action buttons */
+    FinalPresentationCard.completion-only {
+        border: none;
+        background: transparent;
+        margin: 0;
+        padding: 0;
+    }
+
+    FinalPresentationCard.completion-only #final_card_header {
+        display: none;
+    }
+
+    FinalPresentationCard.completion-only #final_card_content {
+        display: none;
+    }
+
+    FinalPresentationCard.completion-only #final_card_post_eval {
+        display: none;
+    }
+
+    FinalPresentationCard.completion-only #final_card_context_paths {
+        display: none;
+    }
+
+    FinalPresentationCard.completion-only #final_card_footer {
+        display: block;
+        background: #161b22;
+        border: solid #30363d;
+        padding: 1 2;
+    }
     """
 
     def __init__(
@@ -2301,19 +2387,25 @@ class FinalPresentationCard(Vertical):
         agent_id: str,
         model_name: str = "",
         vote_results: Optional[Dict] = None,
+        context_paths: Optional[Dict] = None,
+        completion_only: bool = False,
         id: Optional[str] = None,
     ) -> None:
         super().__init__(id=id or "final_presentation_card")
         self.agent_id = agent_id
         self.model_name = model_name
         self.vote_results = vote_results or {}
+        self.context_paths = context_paths or {}
         self._final_content: list = []
         self._post_eval_content: list = []
-        self._is_streaming = True
+        self._is_streaming = not completion_only
         self._post_eval_expanded = False
         self._post_eval_status = "none"  # none, evaluating, verified
         self._text_widget: Optional[Static] = None  # Direct reference to text widget
-        self.add_class("streaming")
+        if completion_only:
+            self.add_class("completion-only")
+        else:
+            self.add_class("streaming")
 
     def compose(self) -> ComposeResult:
         from textual.containers import Horizontal, ScrollableContainer
@@ -2344,6 +2436,21 @@ class FinalPresentationCard(Vertical):
                 yield Label("", id="post_eval_toggle")
             with ScrollableContainer(id="post_eval_details", classes="collapsed"):
                 yield Static("", id="post_eval_content")
+
+        # Context paths section (hidden if no paths)
+        has_paths = bool(self.context_paths.get("new") or self.context_paths.get("modified"))
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG FinalPresentationCard.compose: context_paths={self.context_paths}, has_paths={has_paths}\n")
+        with Vertical(id="final_card_context_paths", classes="" if has_paths else "hidden"):
+            new_count = len(self.context_paths.get("new", []))
+            mod_count = len(self.context_paths.get("modified", []))
+            total = new_count + mod_count
+            yield Label(f"📂 Files Written ({total})", id="context_paths_header")
+            with Vertical(id="context_paths_list"):
+                for path in self.context_paths.get("new", []):
+                    yield Label(f"  ✚ {path}", classes="context-path-new")
+                for path in self.context_paths.get("modified", []):
+                    yield Label(f"  ✎ {path}", classes="context-path-modified")
 
         # Footer with buttons and continue message (hidden until complete)
         with Vertical(id="final_card_footer", classes="hidden"):
@@ -2473,6 +2580,13 @@ class FinalPresentationCard(Vertical):
         # Flush any buffered content that arrived before mount
         self._try_update_text()
 
+        # In completion-only mode, show footer immediately and mark as completed
+        # (content has already been shown through the normal pipeline)
+        if self.has_class("completion-only"):
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write("DEBUG FinalPresentationCard.on_mount: completion-only mode, calling complete()\n")
+            self.complete()
+
     def _on_compose(self) -> None:
         """Called after compose() completes - use this to flush content."""
         with open("/tmp/tui_debug.log", "a") as f:
@@ -2485,11 +2599,17 @@ class FinalPresentationCard(Vertical):
         """Mark the presentation as complete and show action buttons."""
         from textual.widgets import Label
 
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG FinalPresentationCard.complete: CALLED, has_class completion-only={self.has_class('completion-only')}\n")
+
         self._is_streaming = False
 
         # Update styling
         self.remove_class("streaming")
-        self.add_class("completed")
+        # Only add completed class if not in completion-only mode
+        # (completion-only mode has its own styling via the class)
+        if not self.has_class("completion-only"):
+            self.add_class("completed")
 
         # Update title to show completed
         try:

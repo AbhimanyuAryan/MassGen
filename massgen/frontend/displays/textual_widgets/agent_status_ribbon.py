@@ -7,7 +7,7 @@ activity indicator, timeout display, tasks progress, and token/cost tracking.
 """
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -511,6 +511,7 @@ class AgentStatusRibbon(Widget):
         # View state tracking
         self._has_final_answer: Dict[str, bool] = {}  # agent_id -> has final answer
         self._viewing_final_answer: Dict[str, bool] = {}  # agent_id -> viewing final answer
+        self._final_presentation_rounds: Dict[str, Set[int]] = {}  # agent_id -> set of final presentation round numbers
         self._dropdown_open = False
 
     def compose(self) -> ComposeResult:
@@ -586,13 +587,14 @@ class AgentStatusRibbon(Widget):
         except Exception:
             pass
 
-    def set_round(self, agent_id: str, round_number: int, is_context_reset: bool = False) -> None:
+    def set_round(self, agent_id: str, round_number: int, is_context_reset: bool = False, is_final_presentation: bool = False) -> None:
         """Set the current round for an agent.
 
         Args:
             agent_id: The agent ID
             round_number: The round number
             is_context_reset: Whether this round started with a context reset
+            is_final_presentation: Whether this is the final presentation round
         """
         if agent_id not in self._rounds:
             self._rounds[agent_id] = []
@@ -601,6 +603,12 @@ class AgentStatusRibbon(Widget):
         existing_rounds = [r[0] for r in self._rounds[agent_id]]
         if round_number not in existing_rounds:
             self._rounds[agent_id].append((round_number, is_context_reset))
+
+        # Track final presentation rounds
+        if is_final_presentation:
+            if agent_id not in self._final_presentation_rounds:
+                self._final_presentation_rounds[agent_id] = set()
+            self._final_presentation_rounds[agent_id].add(round_number)
 
         self._current_round[agent_id] = round_number
 
@@ -688,12 +696,20 @@ class AgentStatusRibbon(Widget):
                 has_more = True
 
             # Build the label text with individual underlines: "[u]R1[/u] · [u]R2[/u] · [u]✓[/u]"
+            # Final presentation rounds are shown as "F" in gold/green color
             parts = []
             if has_more:
                 parts.append("[u]◀[/u]")
 
+            # Get final presentation rounds for this agent
+            final_rounds = self._final_presentation_rounds.get(self.current_agent, set())
+
             for round_num, _ in visible_rounds:
-                parts.append(f"[u]R{round_num}[/u]")
+                if round_num in final_rounds:
+                    # Final presentation round - show as "F" with special gold color
+                    parts.append("[bold #3fb950][u]F[/u][/bold #3fb950]")
+                else:
+                    parts.append(f"[u]R{round_num}[/u]")
 
             if has_final:
                 parts.append("[u]✓[/u]")

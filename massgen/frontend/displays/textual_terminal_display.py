@@ -1595,35 +1595,22 @@ class TextualTerminalDisplay(TerminalDisplay):
             return ""
 
     def show_final_answer(self, answer: str, vote_results=None, selected_agent=None):
-        """Show final answer with flush effect."""
+        """Show final answer completion card.
+
+        Note: With the "final presentation as round N+1" approach, content has already
+        been displayed through the normal pipeline (thinking, tools, response).
+        This method adds the completion card and persists the final answer.
+        """
         if not selected_agent:
             return
 
-        stream_buffer = self._final_stream_buffer.strip() if hasattr(self, "_final_stream_buffer") else ""
-        display_answer = answer or stream_buffer
+        display_answer = answer or ""
 
         # Add context path writes footer if any files were written
         context_writes_footer = self._get_context_path_writes_footer()
         if context_writes_footer:
             display_answer = display_answer.rstrip() + "\n" + context_writes_footer
-            # Also update the stream buffer so the footer appears in the final display
-            if hasattr(self, "_final_stream_buffer") and self._final_stream_buffer:
-                self._final_stream_buffer = self._final_stream_buffer.rstrip() + "\n" + context_writes_footer
 
-        if self._final_stream_active:
-            # Update the stream with the footer before ending
-            if context_writes_footer and self._app:
-                self._call_app_method("update_final_stream", self._final_stream_buffer)
-            self._end_final_answer_stream()
-        elif not stream_buffer and self._app:
-            self._final_stream_active = True
-            self._final_stream_buffer = display_answer
-            self._call_app_method(
-                "begin_final_stream",
-                selected_agent,
-                vote_results or {},
-            )
-            self._call_app_method("update_final_stream", display_answer)
         self._final_answer_metadata = {
             "selected_agent": selected_agent,
             "vote_results": vote_results or {},
@@ -1638,6 +1625,7 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         self._write_to_system_file("Final presentation ready.")
 
+        # Add completion card (post-evaluation section + action buttons)
         if self._app:
             self._call_app_method(
                 "show_final_presentation",
@@ -2003,62 +1991,16 @@ class TextualTerminalDisplay(TerminalDisplay):
             return None
 
     def stream_final_answer_chunk(self, chunk: str, selected_agent: Optional[str], vote_results: Optional[Dict[str, Any]] = None):
-        """Stream incoming final presentation content into the Textual UI."""
+        """DEPRECATED: Final presentation content now flows through update_agent_content().
+
+        This method is kept for backwards compatibility but is no longer called.
+        Content routing in coordination_ui.py sends all content through the normal
+        pipeline, and final presentation is treated as round N+1.
+        """
         # Debug logging
         with open("/tmp/tui_debug.log", "a") as f:
-            f.write(f"DEBUG stream_final_answer_chunk: agent={selected_agent} chunk_len={len(chunk) if chunk else 0} chunk_preview={chunk[:100] if chunk else 'None'}...\n")
-
-        if not chunk:
-            return
-
-        # Don't stream if no valid agent is selected
-        if not selected_agent:
-            return
-
-        if not self._final_stream_active:
-            if self._app:
-                self._app.buffer_flush_interval = min(self._app.buffer_flush_interval, 0.05)
-            self._final_stream_active = True
-            self._final_stream_buffer = ""
-            self._final_answer_metadata = {
-                "selected_agent": selected_agent,
-                "vote_results": vote_results or {},
-            }
-            self._final_presentation_agent = selected_agent
-            if self._app:
-                self._call_app_method(
-                    "begin_final_stream",
-                    selected_agent,
-                    vote_results or {},
-                )
-
-        # Preserve natural spacing; avoid forcing newlines between streamed chunks
-        spacer = ""
-        if self._final_stream_buffer:
-            prev = self._final_stream_buffer[-1]
-            next_char = chunk[0] if chunk else ""
-            if not prev.isspace() and next_char and not next_char.isspace():
-                spacer = " "
-        self._final_stream_buffer += f"{spacer}{chunk}"
-
-        if self._app:
-            self._call_app_method("update_final_stream", chunk)
-
-    def _end_final_answer_stream(self):
-        """Hide streaming panel when final presentation completes."""
-        if not self._final_stream_active:
-            return
-        self._final_stream_active = False
-        if self._app:
-            self._call_app_method("end_final_stream")
-        if self._final_stream_buffer and not self._final_answer_cache:
-            final_content = self._final_stream_buffer.strip()
-            self._persist_final_presentation(
-                final_content,
-                self._final_presentation_agent,
-                self._final_answer_metadata.get("vote_results"),
-            )
-            self._final_answer_cache = final_content
+            f.write(f"DEBUG stream_final_answer_chunk: DEPRECATED - called but no-op. agent={selected_agent}\n")
+        # No-op - content now flows through update_agent_content()
 
     def _prepare_agent_content(self, agent_id: str, content: str, content_type: str) -> Optional[str]:
         """Normalize agent content, apply filters, and truncate noisy sections."""
@@ -4366,14 +4308,144 @@ Type your question and press Enter to ask the agents.
             # Celebrate the winner
             self._celebrate_winner(selected_agent, answer)
 
-            # Show final answer in winner's AgentPanel via FinalPresentationCard
-            # Check if stream was already started (begin_final_stream returns early if so)
-            already_streamed = hasattr(self, "_final_header_added") and self._final_header_added
-            self.begin_final_stream(selected_agent, vote_results or {})
-            # Only add content if this is a fresh stream (not already streamed via show_final_answer)
-            if answer and not already_streamed:
-                self.update_final_stream(answer)
-            self.end_final_stream()
+            # Add completion card with the final answer
+            self._add_final_completion_card(selected_agent, vote_results or {}, answer)
+
+        def _add_final_completion_card(self, agent_id: str, vote_results: Dict[str, Any], answer: str = ""):
+            """Add completion card with the final answer at the end of final presentation.
+
+            This card provides:
+            - Final answer content
+            - Vote summary
+            - Action buttons (Copy, Workspace)
+            - Continue conversation prompt
+            """
+            with open("/tmp/tui_debug.log", "a") as f:
+                already_added = getattr(self, "_final_completion_added", False)
+                f.write(f"DEBUG _add_final_completion_card: agent={agent_id}, _final_completion_added={already_added}\n")
+
+            # Prevent duplicate cards
+            if hasattr(self, "_final_completion_added") and self._final_completion_added:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG _add_final_completion_card: RETURNING EARLY - already added\n")
+                return
+            self._final_completion_added = True
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write("DEBUG _add_final_completion_card: Set _final_completion_added=True\n")
+            self._final_header_added = True  # Compat flag for other code paths
+
+            # Track for post-evaluation routing
+            self._final_presentation_agent = agent_id
+
+            # 1. Auto-switch to winner's tab and mark with trophy
+            if self._tab_bar:
+                self._tab_bar.set_active(agent_id)
+                self._tab_bar.set_winner(agent_id)
+
+            # 2. Update ExecutionStatusLine: all agents to done
+            if self._execution_status_line:
+                for aid in self._execution_status_line._agent_ids:
+                    self._execution_status_line.set_agent_state(aid, "done")
+
+            # 3. Show the winner's panel (hide others)
+            if agent_id in self.agent_widgets:
+                if self._active_agent_id and self._active_agent_id in self.agent_widgets:
+                    self.agent_widgets[self._active_agent_id].add_class("hidden")
+                self.agent_widgets[agent_id].remove_class("hidden")
+                self._active_agent_id = agent_id
+
+            if agent_id not in self.agent_widgets:
+                return
+
+            panel = self.agent_widgets[agent_id]
+
+            try:
+                timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                # Get coordination_tracker for answer label lookup
+                tracker = None
+                if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                    tracker = getattr(self.coordination_display.orchestrator, "coordination_tracker", None)
+
+                # Build formatted vote results for the card
+                vote_counts = vote_results.get("vote_counts", {})
+                winner = vote_results.get("winner", agent_id)
+                is_tie = vote_results.get("is_tie", False)
+
+                def get_answer_label(aid):
+                    """Convert agent ID to answer label (e.g., 'A1.1')."""
+                    if tracker:
+                        label = tracker.get_latest_answer_label(aid)
+                        if label:
+                            return label.replace("agent", "A")
+                        num = tracker._get_agent_number(aid)
+                        return f"A{num}" if num else aid
+                    return aid
+
+                # Build formatted vote results for the card
+                formatted_vote_results = {
+                    "vote_counts": {get_answer_label(aid): cnt for aid, cnt in vote_counts.items()},
+                    "winner": get_answer_label(winner),
+                    "is_tie": is_tie,
+                }
+
+                # Get context paths from orchestrator
+                context_paths = {}
+                if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                    orch = self.coordination_display.orchestrator
+                    if hasattr(orch, "get_context_path_writes_categorized"):
+                        context_paths = orch.get_context_path_writes_categorized()
+
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG _add_final_completion_card: context_paths={context_paths}\n")
+
+                # Remove any existing completion card to avoid duplicate ID issues
+                try:
+                    existing_card = timeline.query_one("#final_presentation_card", FinalPresentationCard)
+                    existing_card.remove()
+                    with open("/tmp/tui_debug.log", "a") as f:
+                        f.write("DEBUG _add_final_completion_card: Removed existing card\n")
+                except Exception:
+                    pass  # No existing card, that's fine
+
+                # Create the final answer card with content
+                card = FinalPresentationCard(
+                    agent_id=agent_id,
+                    vote_results=formatted_vote_results,
+                    context_paths=context_paths,
+                    id="final_presentation_card",
+                )
+
+                # Tag with current round for CSS visibility switching
+                current_round = getattr(panel, "_current_round", 1)
+                card.add_class(f"round-{current_round}")
+
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG _add_final_completion_card: Adding card with round-{current_round}, answer_len={len(answer) if answer else 0}\n")
+
+                timeline.add_widget(card)
+                self._final_presentation_card = card
+
+                # Set the answer content and mark as complete
+                def set_content_and_complete():
+                    if answer:
+                        card.append_chunk(answer)
+                    card.complete()
+                    with open("/tmp/tui_debug.log", "a") as f:
+                        f.write("DEBUG _add_final_completion_card: set_content_and_complete called\n")
+
+                self.set_timer(0.1, set_content_and_complete)
+
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG _add_final_completion_card: Card CREATED and added to timeline, card.display={card.display}, card.visible={card.visible}\n")
+
+                # Scroll to show the card
+                timeline.scroll_to_widget("final_presentation_card")
+
+            except Exception as e:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG _add_final_completion_card: EXCEPTION: {e}\n")
+                logger.debug(f"Failed to create final completion card: {e}")
 
         def show_post_evaluation(self, content: str, agent_id: str):
             """Show post-evaluation content in the FinalPresentationCard.
@@ -4498,12 +4570,13 @@ Type your question and press Enter to ask the agents.
                         pass
 
         def begin_final_stream(self, agent_id: str, vote_results: Dict[str, Any]):
-            """Start final presentation streaming using unified FinalPresentationCard.
+            """DEPRECATED: Start final presentation streaming.
 
-            This method:
-            1. Auto-switches to the winner's tab
-            2. Marks the winner tab with trophy styling
-            3. Creates a FinalPresentationCard in the winner's timeline for streaming
+            This method is kept for backwards compatibility but is no longer the
+            primary path. Use _add_final_completion_card() instead.
+
+            Final presentation content now flows through the normal pipeline
+            (update_agent_content), and a completion card is added at the end.
             """
             with open("/tmp/tui_debug.log", "a") as f:
                 final_added = getattr(self, "_final_header_added", False)
@@ -4625,9 +4698,14 @@ Type your question and press Enter to ask the agents.
                     logger.debug(f"Failed to create final presentation card: {e}")
 
         def update_final_stream(self, chunk: str):
-            """Append streaming chunks to the FinalPresentationCard."""
+            """DEPRECATED: Append streaming chunks to the FinalPresentationCard.
+
+            This method is kept for backwards compatibility but is no longer the
+            primary path. Final presentation content now flows through the normal
+            pipeline (update_agent_content).
+            """
             with open("/tmp/tui_debug.log", "a") as f:
-                f.write(f"DEBUG update_final_stream: chunk_len={len(chunk) if chunk else 0} card_exists={self._final_presentation_card is not None}\n")
+                f.write(f"DEBUG update_final_stream: DEPRECATED - chunk_len={len(chunk) if chunk else 0}\n")
 
             if not chunk:
                 return
@@ -4661,9 +4739,11 @@ Type your question and press Enter to ask the agents.
                 logger.error(f"FinalPresentationCard.append_chunk failed: {e}")
 
         def end_final_stream(self):
-            """Mark the final presentation streaming as complete.
+            """DEPRECATED: Mark the final presentation streaming as complete.
 
-            Note: The footer with buttons is shown via the card after post-evaluation.
+            This method is kept for backwards compatibility but is no longer the
+            primary path. The completion card (with footer) is now added via
+            _add_final_completion_card().
             """
             # Only end if we actually started
             if not getattr(self, "_final_header_added", False):
@@ -4751,7 +4831,7 @@ Type your question and press Enter to ask the agents.
                         "is_tie": is_tie,
                     }
 
-                    # Create the unified card - content will be streamed via update_final_stream
+                    # Create the completion card (no streaming content - answer is already in timeline)
                     card = FinalPresentationCard(
                         agent_id=winner_id,
                         vote_results=formatted_vote_results,
@@ -4759,20 +4839,10 @@ Type your question and press Enter to ask the agents.
                     )
                     # Tag with current round for CSS visibility switching
                     card.add_class(f"round-{self._current_round}")
+                    # Use completion-only mode - content already in timeline via normal pipeline
+                    card.add_class("completion-only")
                     timeline.add_widget(card)
                     self._final_presentation_card = card
-
-                    # Flush any pending chunks that arrived before card was created (Bug 1 fix)
-                    if hasattr(self, "_pending_final_chunks") and self._pending_final_chunks:
-                        for pending_chunk in self._pending_final_chunks:
-                            try:
-                                card.append_chunk(pending_chunk)
-                            except Exception as e:
-                                self.log.error(f"Error flushing pending chunk: {e}")
-                        self._pending_final_chunks = []
-
-                    # Don't call complete() - streaming content will come via update_final_stream
-                    # and show_final_answer will call end_final_stream -> end_post_evaluation -> complete()
 
                     # Scroll to show the card
                     timeline.scroll_to_widget("winner_selected_card")
@@ -4801,6 +4871,7 @@ Type your question and press Enter to ask the agents.
 
             # Reset final presentation tracking flags for the new turn
             self._final_header_added = False
+            self._final_completion_added = False  # Reset completion card flag
             self._post_eval_header_added = False
             self._post_eval_footer_added = False
             self._final_stream_content = ""
@@ -7136,6 +7207,10 @@ Type your question and press Enter to ask the agents.
             self._transition_timer: Optional[Any] = None
             self._pending_round_transition: Optional[Tuple[int, bool]] = None  # (round_num, is_context_reset)
 
+            # Final presentation tracking
+            # When True, content flows through the normal pipeline but is tagged as final presentation
+            self._is_final_presentation_round: bool = False
+
         def compose(self) -> ComposeResult:
             with Vertical():
                 # NOTE: Agent header row removed in Phase 8c/10 - redundant with tab bar + status ribbon
@@ -8755,6 +8830,7 @@ Type your question and press Enter to ask the agents.
             self._current_round = new_round
             self._viewed_round = new_round
             self._current_view = "round"
+            self._is_final_presentation_round = True  # Mark as final presentation round
 
             # Step 2: Build vote summary subtitle using answer labels (e.g., "A1.1")
             subtitle = ""
@@ -8793,12 +8869,12 @@ Type your question and press Enter to ask the agents.
             # Step 4: Clear context display for final presentation (will be updated if needed)
             self._restore_context_for_round(new_round)
 
-            # Step 5: Update ribbon to show "Final" instead of round number
+            # Step 5: Update ribbon to show "F" for final presentation round
             try:
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
-                    # Use a special indicator for final presentation
-                    app._status_ribbon.set_round(self.agent_id, new_round)
+                    # Mark this as a final presentation round - shows "F" instead of "R{n}"
+                    app._status_ribbon.set_round(self.agent_id, new_round, is_final_presentation=True)
             except Exception:
                 pass
 
