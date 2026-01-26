@@ -2,7 +2,7 @@
   <!-- Styles and Animations -->
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700family=Inter:wght@400;700display=swap');
-    
+
     text { font-family: 'Inter', sans-serif; fill: #2c3e50; }
     .label { font-family: 'Roboto Mono', monospace; font-size: 13px; font-weight: 600; }
     .formula { font-size: 28px; font-weight: 700; fill: #2c3e50; }
@@ -15,13 +15,13 @@
     .phase-circle { fill: #fff; stroke: #bdc3c7; stroke-width: 1.5; }
     .phase-hand { stroke: #e67e22; stroke-width: 2.5; stroke-linecap: round; }
     .phase-center { fill: #e67e22; }
-    
+
     @keyframes moveWave {
       from { transform: translateX(0); }
       to { transform: translateX(-200px); }
     }
     .moving-group { animation: moveWave 4s linear infinite; }
-    
+
     .c1 { stroke: #3498db; }
     .c2 { stroke: #2ecc71; }
     .c3 { stroke: #9b59b6; }
@@ -47,11 +47,11 @@
     <line x1="0" y1="-280" x2="0" y2="280" class="axis" />
     <text x="-40" y="0" class="label" text-anchor="middle" transform="rotate(-90 -40 0)">AMPLITUDE</text>
     <text x="200" y="310" class="label" text-anchor="middle">TIME / DISTANCE (2λ)</text>
-    
+
     <clipPath id="clipLeft">
       <rect x="0" y="-300" width="400" height="600" />
     </clipPath>
-    
+
     <g clip-path="url(#clipLeft)">
       <g class="moving-group">
         <!-- Sum Wave Path (Hand-calculated for interesting features) -->
@@ -63,7 +63,7 @@
   <!-- Middle Third: Fourier Components -->
   <g transform="translate(520, 50)">
     <text x="0" y="30" class="label" font-size="18">B. FOURIER DECOMPOSITION</text>
-    
+
     <!-- Components -->
     <g transform="translate(0, 100)">
       <line x1="0" y1="0" x2="400" y2="0" class="axis" opacity="0.5" />
@@ -130,7 +130,7 @@
   <!-- Right Third: Spectrum Analysis -->
   <g transform="translate(970, 50)">
     <text x="0" y="30" class="label" font-size="18">C. SPECTRUM ANALYSIS</text>
-    
+
     <!-- Phase Spectrum -->
     <g transform="translate(0, 100)">
       <text x="0" y="-10" class="label" font-size="14" fill="#e67e22">PHASE SPECTRUM (φ)</text>
@@ -155,7 +155,7 @@
       <line x1="0" y1="240" x2="380" y2="240" class="axis" />
       <line x1="0" y1="0" x2="0" y2="240" class="axis" />
       <text x="-35" y="120" class="label" text-anchor="middle" transform="rotate(-90 -35 120)">MAGNITUDE</text>
-      
+
       <!-- Bars scaled to amplitudes -->
       <rect x="30" y="60" width="30" height="180" class="bar" fill="#3498db" /> <text x="45" y="260" class="label" text-anchor="middle">f</text>
       <rect x="80" y="100" width="30" height="140" class="bar" fill="#2ecc71" /> <text x="95" y="260" class="label" text-anchor="middle">2f</text>
@@ -172,6 +172,6 @@
   <text x="700" y="770" class="formula" text-anchor="middle">
     g(t) = Σ <tspan font-style="italic" font-family="serif">Aₙ</tspan> sin(2π<tspan font-style="italic" font-family="serif">nf</tspan>t + φₙ)
   </text>
-  
+
   <text x="700" y="25" font-size="22" font-weight="bold" text-anchor="middle" fill="#2c3e50">FOURIER SERIES DECOMPOSITION OF A PERIODIC SIGNAL</text>
 </svg>

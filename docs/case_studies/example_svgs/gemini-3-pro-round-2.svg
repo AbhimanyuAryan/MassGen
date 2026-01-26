@@ -6,7 +6,7 @@
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#333" />
     </marker>
-    
+
     <style>
       /* Colors for the 7 harmonics */
       .c1 { stroke: #E53935; fill: #E53935; } /* Red */
@@ -22,14 +22,14 @@
       text { fill: #333; }
       .wave-path { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
       .complex-wave { stroke: #212121; stroke-width: 4; }
-      
+
       /* Animation Keyframes for traveling wave effect */
       /* The paths are generated double the visible width. We translate left by half the total width. */
       @keyframes travelLeft {
         0% { transform: translateX(0px); }
         100% { transform: translateX(-400px); }
       }
-      
+
       .animated-wave-container {
         animation: travelLeft 4s linear infinite;
       }
@@ -55,12 +55,12 @@
   <g transform="translate(50, 50)">
     <text x="0" y="-20" font-size="24" font-weight="bold">Complex Periodic Wave S(t)</text>
     <rect x="0" y="0" width="400" height="700" class="grid-bg"/>
-    
+
     <line x1="0" y1="350" x2="420" y2="350" class="axis"/> <line x1="0" y1="700" x2="0" y2="0" class="axis"/> <text x="410" y="375" text-anchor="end">Time (t)</text>
     <text x="-10" y="20" text-anchor="end">Amplitude</text>
     <text x="200" y="375" text-anchor="middle">2π (T)</text>
     <text x="400" y="375" text-anchor="middle">4π (2T)</text>
-    
+
     <g clip-path="url(#wave-clip)">
       <g class="animated-wave-container">
          <use href="#path-complex" class="wave-path complex-wave"/>
@@ -70,7 +70,7 @@
 
   <g transform="translate(520, 50)">
     <text x="0" y="-20" font-size="24" font-weight="bold">Decomposition (Components)</text>
-    
+
     <g transform="translate(0, 0)">
         <text x="-10" y="55" text-anchor="end" font-size="14">f=7f, A=0.08</text>
         <line x1="0" y1="50" x2="410" y2="50" class="axis" stroke-width="1"/>
@@ -110,7 +110,7 @@
 
   <g transform="translate(1000, 50)">
     <text x="0" y="-20" font-size="24" font-weight="bold">Fourier Spectra</text>
-    
+
     <g transform="translate(20, 40)">
        <rect x="-10" y="-30" width="380" height="60" fill="#eef" rx="10"/>
        <text x="10" y="10" font-size="20" font-style="italic">
@@ -161,7 +161,7 @@
 
     <g transform="translate(0, 400)">
       <text x="0" y="-20" font-size="18" font-weight="bold">Magnitude Spectrum (A<tspan dy="5" font-size="12">n</tspan><tspan dy="-5">)</tspan></text>
-      
+
       <line x1="0" y1="300" x2="380" y2="300" class="axis"/>
       <line x1="0" y1="300" x2="0" y2="0" class="axis"/>
       <text x="370" y="325" text-anchor="end">Frequency (nf)</text>

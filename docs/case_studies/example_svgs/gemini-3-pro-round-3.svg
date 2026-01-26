@@ -4,7 +4,7 @@
     <pattern id="gridPattern" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e1e8ed" stroke-width="1"/>
     </pattern>
-    
+
     <!-- Clipping for Animation -->
     <clipPath id="clipLeft">
       <rect x="0" y="-200" width="400" height="400" />
@@ -22,7 +22,7 @@
 
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500family=Inter:wght@400;700display=swap');
-    
+
     text { font-family: 'Inter', sans-serif; fill: #2c3e50; }
     .label { font-family: 'Fira Code', monospace; font-size: 11px; fill: #7f8c8d; }
     .title { font-size: 24px; font-weight: 700; fill: #2c3e50; }
@@ -30,21 +30,21 @@
     .formula { font-size: 22px; font-family: 'Times New Roman', serif; font-style: italic; }
     .axis { stroke: #34495e; stroke-width: 1.5; fill: none; }
     .grid-bg { fill: url(#gridPattern); }
-    
+
     /* Animation: Seamless Traveling wave */
     @keyframes moveWave {
       from { transform: translateX(0); }
       to { transform: translateX(-300px); }
     }
     .moving-wave { animation: moveWave 4s linear infinite; }
-    
+
     /* Connection lines pulsing */
     @keyframes pulseLine {
       0%, 100% { opacity: 0.2; }
       50% { opacity: 0.5; }
     }
     .conn-line { stroke: #95a5a6; stroke-width: 1; stroke-dasharray: 4,4; animation: pulseLine 2s ease-in-out infinite; }
-    
+
     /* Phase Indicators */
     @keyframes rotateH1 { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     @keyframes rotateH2 { from { transform: rotate(0deg); } to { transform: rotate(720deg); } }
@@ -53,7 +53,7 @@
     @keyframes rotateH5 { from { transform: rotate(0deg); } to { transform: rotate(1800deg); } }
     @keyframes rotateH6 { from { transform: rotate(0deg); } to { transform: rotate(2160deg); } }
     @keyframes rotateH7 { from { transform: rotate(0deg); } to { transform: rotate(2520deg); } }
-    
+
     .phase-h1 { animation: rotateH1 4s linear infinite; }
     .phase-h2 { animation: rotateH2 4s linear infinite; }
     .phase-h3 { animation: rotateH3 4s linear infinite; }
@@ -80,12 +80,12 @@
     <path d="M 0,-200 V 200 M 0,0 H 400" class="axis" />
     <text x="150" y="20" class="label" text-anchor="middle">T</text>
     <text x="300" y="20" class="label" text-anchor="middle">2T</text>
-    
+
     <g clip-path="url(#clipLeft)">
       <g class="moving-wave">
         <!-- Sum of 7 harmonics: A=[1, 0.6, 0.4, 0.3, 0.2, 0.15, 0.1]*100, phi=[0, 45, 90, 180, -45, 120, 0] -->
         <!-- Path spans 3T (900px) -->
-        <path d="M 0,-42 L 20,41 L 40,94 L 60,95 L 80,59 L 100,-1 L 120,-63 L 140,-102 L 160,-109 L 180,-85 L 200,-35 L 220,38 L 240,105 L 260,132 L 280,111 L 300,-42 L 320,41 L 340,94 L 360,95 L 380,59 L 400,-1 L 420,-63 L 440,-102 L 460,-109 L 480,-85 L 500,-35 L 520,38 L 540,105 L 560,132 L 580,111 L 600,-42 L 620,41 L 640,94 L 660,95 L 680,59 L 700,-1 L 720,-63 L 740,-102 L 760,-109 L 780,-85 L 800,-35 L 820,38 L 840,105 L 860,132 L 880,111 L 900,-42" 
+        <path d="M 0,-42 L 20,41 L 40,94 L 60,95 L 80,59 L 100,-1 L 120,-63 L 140,-102 L 160,-109 L 180,-85 L 200,-35 L 220,38 L 240,105 L 260,132 L 280,111 L 300,-42 L 320,41 L 340,94 L 360,95 L 380,59 L 400,-1 L 420,-63 L 440,-102 L 460,-109 L 480,-85 L 500,-35 L 520,38 L 540,105 L 560,132 L 580,111 L 600,-42 L 620,41 L 640,94 L 660,95 L 680,59 L 700,-1 L 720,-63 L 740,-102 L 760,-109 L 780,-85 L 800,-35 L 820,38 L 840,105 L 860,132 L 880,111 L 900,-42"
               fill="none" stroke="url(#gradComplex)" stroke-width="4" stroke-linejoin="round" />
       </g>
     </g>
@@ -101,7 +101,7 @@
   <!-- COLUMN 2: HARMONIC DECOMPOSITION -->
   <g transform="translate(540, 100)">
     <text x="150" y="0" class="section-title" text-anchor="middle">Components</text>
-    
+
     <!-- Harmonics 1 to 7 -->
     <!-- h1 -->
     <g transform="translate(0, 50)">
@@ -221,7 +221,7 @@
       <rect x="220" y="190" width="25" height="50" fill="#1abc9c" rx="2" />
       <rect x="260" y="210" width="25" height="30" fill="#3498db" rx="2" />
       <rect x="300" y="220" width="25" height="20" fill="#9b59b6" rx="2" />
-      
+
       <g class="label" transform="translate(40, 260)">
         <text x="32" y="0" text-anchor="middle">f</text>
         <text x="72" y="0" text-anchor="middle">2f</text>

@@ -20,21 +20,21 @@
 
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700family=Inter:wght@400;600display=swap');
-    
+
     text { font-family: 'Inter', sans-serif; fill: #2c3e50; }
     .label { font-family: 'Roboto Mono', monospace; font-size: 12px; font-weight: 600; }
     .title { font-size: 28px; font-weight: 700; fill: #2c3e50; }
     .formula { font-size: 24px; font-family: 'Times New Roman', serif; font-style: italic; }
     .axis { stroke: #34495e; stroke-width: 2; fill: none; }
     .grid-bg { fill: url(#gridPattern); }
-    
+
     /* Animation: Traveling wave */
     @keyframes moveWave {
       from { transform: translateX(0); }
       to { transform: translateX(-200px); }
     }
     .moving-wave { animation: moveWave 4s linear infinite; }
-    
+
     /* Phase indicator rotation */
     @keyframes rotatePhase1 { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     @keyframes rotatePhase2 { from { transform: rotate(0deg); } to { transform: rotate(720deg); } }
@@ -43,7 +43,7 @@
     @keyframes rotatePhase5 { from { transform: rotate(0deg); } to { transform: rotate(1800deg); } }
     @keyframes rotatePhase6 { from { transform: rotate(0deg); } to { transform: rotate(2160deg); } }
     @keyframes rotatePhase7 { from { transform: rotate(0deg); } to { transform: rotate(2520deg); } }
-    
+
     .phase-h1 { animation: rotatePhase1 4s linear infinite; }
     .phase-h2 { animation: rotatePhase2 4s linear infinite; }
     .phase-h3 { animation: rotatePhase3 4s linear infinite; }
@@ -59,7 +59,7 @@
     .harmonic-5 { stroke: #1abc9c; }
     .harmonic-6 { stroke: #e67e22; }
     .harmonic-7 { stroke: #34495e; }
-    
+
     .conn-line { stroke: #bdc3c7; stroke-width: 1; stroke-dasharray: 4,2; opacity: 0.4; }
   </style>
 
@@ -67,7 +67,7 @@
   <rect width="1400" height="800" class="grid-bg" />
 
   <text x="700" y="50" class="title" text-anchor="middle">Fourier Series Decomposition: Spectral Analysis</text>
-  
+
   <!-- Formula Area -->
   <g transform="translate(700, 750)">
     <rect x="-400" y="-40" width="800" height="60" rx="10" fill="white" stroke="#bdc3c7" stroke-width="1" />
@@ -85,12 +85,12 @@
     <text x="200" y="20" class="label" text-anchor="middle">T</text>
     <text x="300" y="20" class="label" text-anchor="middle">3T/2</text>
     <text x="400" y="20" class="label" text-anchor="middle">2T</text>
-    
+
     <g clip-path="url(#clipLeft)">
       <g class="moving-wave">
         <!-- Mathematically calculated sum of 7 harmonics -->
         <!-- Points calculated for x from 0 to 600, period 200 -->
-        <path d="M 0,41 L 10,76 L 20,93 L 30,83 L 40,60 L 50,67 L 60,111 L 70,147 L 80,132 L 90,69 L 100,0 L 110,-69 L 120,-132 L 130,-147 L 140,-111 L 150,-67 L 160,-60 L 170,-83 L 180,-93 L 190,-76 L 200,-41 L 210,41 L 220,76 L 230,93 L 240,83 L 250,60 L 260,67 L 270,111 L 280,147 L 290,132 L 300,69 L 310,0 L 320,-69 L 330,-132 L 340,-147 L 350,-111 L 360,-67 L 370,-60 L 380,-83 L 390,-93 L 400,-76 L 410,-41 L 420,41 L 430,76 L 440,93 L 450,83 L 460,60 L 470,67 L 480,111 L 490,147 L 500,132 L 510,69 L 520,0 L 530,-69 L 540,-132 L 550,-147 L 560,-111 L 570,-67 L 580,-60 L 590,-83 L 600,-93" 
+        <path d="M 0,41 L 10,76 L 20,93 L 30,83 L 40,60 L 50,67 L 60,111 L 70,147 L 80,132 L 90,69 L 100,0 L 110,-69 L 120,-132 L 130,-147 L 140,-111 L 150,-67 L 160,-60 L 170,-83 L 180,-93 L 190,-76 L 200,-41 L 210,41 L 220,76 L 230,93 L 240,83 L 250,60 L 260,67 L 270,111 L 280,147 L 290,132 L 300,69 L 310,0 L 320,-69 L 330,-132 L 340,-147 L 350,-111 L 360,-67 L 370,-60 L 380,-83 L 390,-93 L 400,-76 L 410,-41 L 420,41 L 430,76 L 440,93 L 450,83 L 460,60 L 470,67 L 480,111 L 490,147 L 500,132 L 510,69 L 520,0 L 530,-69 L 540,-132 L 550,-147 L 560,-111 L 570,-67 L 580,-60 L 590,-83 L 600,-93"
               fill="none" stroke="url(#gradComplex)" stroke-width="4" stroke-linejoin="round" />
       </g>
     </g>
@@ -99,7 +99,7 @@
   <!-- MIDDLE THIRD: COMPONENTS -->
   <g transform="translate(520, 80)">
     <text x="200" y="0" class="label" text-anchor="middle" font-size="16">HARMONIC COMPONENTS</text>
-    
+
     <!-- Component f -->
     <g transform="translate(0, 60)">
       <line x1="0" y1="0" x2="400" y2="0" class="axis" opacity="0.3" />

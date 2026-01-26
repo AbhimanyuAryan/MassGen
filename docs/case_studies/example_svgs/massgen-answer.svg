@@ -68,7 +68,7 @@ Animation: CSS custom propert drives an inline JS re-sampling of all sine paths.
 
       .phaseCircle { fill: rgba(39,111,191,0.08); stroke: #93a6bf; stroke-width: 1.2; }
       .phaseHand { stroke-width: 2.2; stroke-linecap: round; }
-      
+
       /* Distinct Harmonic Colors */
       .c1-stroke { stroke: #dc2626; } .c1-fill { fill: #dc2626; }
       .c2-stroke { stroke: #ea580c; } .c2-fill { fill: #ea580c; }
@@ -459,7 +459,7 @@ Animation: CSS custom propert drives an inline JS re-sampling of all sine paths.
           const staticPhase = (Phi[i] * 180 / Math.PI); // Convert to degrees
           const animatedRotation = (n * omega * 180 / Math.PI); // Each harmonic rotates at n times the base frequency
           const totalRotation = staticPhase + animatedRotation;
-          
+
           if(phaseHands[i]){
             phaseHands[i].setAttribute('transform', `rotate(${totalRotation.toFixed(2)})`);
           }

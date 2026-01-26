@@ -224,7 +224,7 @@
     <g clip-path="url(#clipMid)">
       <!-- Component axes + waves -->
       <!-- Components are drawn with dashed-rolling animation; duration scales with harmonic n -->
-      <!-- Frequencies / amplitudes / phases (chosen): 
+      <!-- Frequencies / amplitudes / phases (chosen):
            A1=0.90, φ1=0.30π
            A2=0.55, φ2=-0.55π
            A3=0.42, φ3=0.80π

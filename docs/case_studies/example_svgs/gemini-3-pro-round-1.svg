@@ -10,7 +10,7 @@
       .label-text { font-size: 14px; fill: #555; }
       .title-text { font-size: 18px; font-weight: bold; fill: #333; }
       .formula-text { font-size: 20px; font-family: 'Times New Roman', serif; fill: #333; }
-      
+
       /* Wave Styles */
       .complex-wave { fill: none; stroke: #2c3e50; stroke-width: 3; }
       .component-wave { fill: none; stroke-width: 2; }
@@ -21,9 +21,9 @@
       .comp-5 { stroke: #f1c40f; }
       .comp-6 { stroke: #e67e22; }
       .comp-7 { stroke: #1abc9c; }
-      
+
       .connection-line { fill: none; stroke: #bdc3c7; stroke-width: 1; stroke-dasharray: 4 4; }
-      
+
       /* Spectrum Styles */
       .bar { fill: #34495e; opacity: 0.8; }
       .phase-circle { fill: none; stroke: #7f8c8d; stroke-width: 2; }
@@ -52,7 +52,7 @@
   <g transform="translate(50, 50)">
     <text x="200" y="-20" class="title-text" text-anchor="middle">Complex Periodic Wave y(t)</text>
     <rect x="0" y="0" width="400" height="600" class="grid-bg"/>
-    
+
     <line x1="0" y1="300" x2="400" y2="300" class="axis-line" /> <line x1="0" y1="0" x2="0" y2="600" class="axis-line" />   <text x="410" y="305" class="label-text">t (2 Periods)</text>
     <text x="-10" y="20" class="label-text" text-anchor="end">Amp</text>
     <text x="0" y="320" class="label-text">0</text>
@@ -156,7 +156,7 @@
 
 
   <g transform="translate(980, 50)">
-    
+
     <text x="180" y="-20" class="title-text" text-anchor="middle">Frequency Domain Formula</text>
      <rect x="10" y="10" width="340" height="60" fill="white" stroke="#bdc3c7" rx="5"/>
     <text x="180" y="45" class="formula-text" text-anchor="middle">y(t) = Σ Aₙ sin(nωt + φₙ)</text>
@@ -165,7 +165,7 @@
     <g transform="translate(0, 120)">
       <text x="180" y="-15" class="title-text" text-anchor="middle" font-size="16px">Phase Spectrum (φₙ)</text>
       <rect x="0" y="0" width="360" height="100" class="grid-bg"/>
-      
+
       <g transform="translate(30, 50)">
         <circle r="30" class="phase-circle comp-1" opacity="0.3"/>
         <g>
@@ -229,7 +229,7 @@
       <rect x="0" y="0" width="360" height="300" class="grid-bg"/>
       <line x1="0" y1="300" x2="360" y2="300" class="axis-line"/>
       <line x1="0" y1="0" x2="0" y2="300" class="axis-line"/>
-      
+
       <text x="370" y="305" class="label-text">Frequency</text>
       <text x="-10" y="10" class="label-text" text-anchor="end">Magnitude</text>
 
