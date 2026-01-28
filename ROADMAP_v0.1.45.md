@@ -1,218 +1,141 @@
-# MassGen v0.1.44 Roadmap
+# MassGen v0.1.45 Roadmap
 
 ## Overview
 
-Version 0.1.44 focuses on improving context compression and log analysis workflows.
+Version 0.1.45 focuses on improving subagent display and visibility in the TUI.
 
-- **OpenAI Responses /compact Endpoint** (Required): Use OpenAI's native context compression instead of custom summarization
-- **Add Model Selector for Log Analysis** (Required): Allow users to choose which model to use for log analysis
+- **Subagent TUI Streaming** (Required): Stream and display subagents almost identically to main process
+- **Single Source of Truth** (Required): Refactor TUI to use unified display components for all agents
 
 ## Key Technical Priorities
 
-1. **OpenAI Responses /compact Endpoint**: Native API-level context compression
-   **Use Case**: Reduce token usage and improve response quality with native compression
+1. **Subagent TUI Streaming**: Real-time subagent visualization with clickable timeline views
+   **Use Case**: Better visibility into subagent execution, improved debugging workflows
 
-2. **Add Model Selector for Log Analysis**: Configurable model selection for analysis
-   **Use Case**: Flexibility in choosing analysis model based on cost/quality tradeoffs
+2. **Unified Display Components**: Shared TUI components for consistent rendering across agent types
+   **Use Case**: Code reusability, consistent user experience, easier maintenance
 
 ## Key Milestones
 
-### Milestone 1: OpenAI Responses /compact Endpoint (REQUIRED)
+### Milestone 1: Subagent TUI Streaming (REQUIRED)
 
-**Goal**: Use OpenAI's native `/compact` endpoint instead of custom summarization
+**Goal**: Stream and display subagents almost identically to main process in TUI
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
-**Issue**: [#739](https://github.com/massgen/MassGen/issues/739)
+**Issue**: [#821](https://github.com/Leezekun/MassGen/issues/821)
 
 #### 1.1 Research & Design
-- [ ] Study OpenAI's `/compact` endpoint API
-- [ ] Evaluate compression quality vs custom summarization
-- [ ] Design integration approach with existing compression system
-- [ ] Plan fallback strategy for non-OpenAI backends
+- [ ] Study current TUI architecture and event streaming
+- [ ] Design subagent preview card component
+- [ ] Design subagent timeline view interaction
+- [ ] Plan event routing from subagents to TUI
 
-#### 1.2 Implementation
-- [ ] Add `/compact` endpoint support to OpenAI backend
-- [ ] Integrate with existing context compression triggers
-- [ ] Handle edge cases (rate limits, API errors)
-- [ ] Add configuration options for compression behavior
+#### 1.2 Subagent Preview Cards
+- [ ] Create collapsible subagent preview card component
+- [ ] Show subagent metadata (ID, status, model)
+- [ ] Display real-time streaming preview
+- [ ] Add click handler to expand to full timeline
 
-#### 1.3 Testing & Optimization
-- [ ] Benchmark compression quality
-- [ ] Compare token usage vs custom summarization
-- [ ] Test with various context sizes
-- [ ] Optimize for cost efficiency
+#### 1.3 Subagent Timeline View
+- [ ] Design modal or expanded view for full subagent timeline
+- [ ] Reuse existing timeline components for subagent display
+- [ ] Ensure identical tool card rendering
+- [ ] Support navigation between multiple subagents
 
-#### 1.4 Documentation
-- [ ] Document new compression behavior
-- [ ] Update configuration reference
-- [ ] Add usage examples
-- [ ] Note limitations and fallback behavior
+#### 1.4 Event Streaming Integration
+- [ ] Route subagent events to TUI display
+- [ ] Handle subagent lifecycle events (start, progress, complete)
+- [ ] Support concurrent subagent streaming
+- [ ] Add error handling for subagent failures
+
+#### 1.5 Testing & Polish
+- [ ] Test with multiple concurrent subagents
+- [ ] Verify tool displays match main agent formatting
+- [ ] Test click interactions and navigation
+- [ ] Add loading states and transitions
 
 **Success Criteria**:
-- OpenAI `/compact` endpoint integration working
-- Token usage reduced compared to custom summarization
-- Fallback to custom summarization for non-OpenAI backends
-- Documentation complete
+- Subagents stream to TUI in real-time with preview cards
+- Clicking subagent card shows full timeline view
+- Tool displays identical between main agents and subagents
+- Supports multiple concurrent subagents
 
 ---
 
-### Milestone 2: Add Model Selector for Log Analysis (REQUIRED)
+### Milestone 2: Single Source of Truth for TUI Display (REQUIRED)
 
-**Goal**: Allow users to choose which model to use for `massgen logs analyze` self-analysis mode
+**Goal**: Refactor TUI display creation to use shared components for main agents and subagents
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
-**Issue**: [#766](https://github.com/massgen/MassGen/issues/766)
+**Related Issue**: [#821](https://github.com/Leezekun/MassGen/issues/821)
 
-#### 2.1 CLI Enhancement
-- [ ] Add `--model` flag to `massgen logs analyze` command
-- [ ] Support model selection via environment variable
-- [ ] Add model list/discovery option
-- [ ] Validate model availability before analysis
+#### 2.1 Component Architecture Refactor
+- [ ] Identify shared display components (tool cards, status, timeline)
+- [ ] Extract reusable components from main TUI
+- [ ] Create unified event parser for all agent types
+- [ ] Design component API for agent-agnostic rendering
 
-#### 2.2 Configuration Support
-- [ ] Add default analysis model to config
-- [ ] Support per-provider model defaults
-- [ ] Add cost estimation for selected model
-- [ ] Handle model fallbacks gracefully
+#### 2.2 Unified Event Parsing
+- [ ] Create shared event parser for streaming chunks
+- [ ] Support both main agent and subagent event formats
+- [ ] Handle tool calls, thinking, text content uniformly
+- [ ] Add extensibility for future agent types
 
-#### 2.3 User Experience
-- [ ] Add interactive model selection (optional)
-- [ ] Display cost estimate before analysis
-- [ ] Show model capabilities relevant to analysis
-- [ ] Provide recommendations based on log size
+#### 2.3 Component Integration
+- [ ] Update main TUI to use new shared components
+- [ ] Update subagent display to use same components
+- [ ] Ensure consistent styling and behavior
+- [ ] Add configuration for component customization
 
 #### 2.4 Testing & Documentation
-- [ ] Test with various models across providers
-- [ ] Benchmark analysis quality vs cost
-- [ ] Document model selection options
-- [ ] Add usage examples
+- [ ] Test component reuse across different agent types
+- [ ] Verify styling consistency
+- [ ] Document component API and usage
+- [ ] Add examples for extending display components
 
 **Success Criteria**:
-- Model selector working for log analysis command
-- Users can choose from available models
-- Cost estimates displayed
-- Documentation complete
+- Shared components used by both main and subagent displays
+- Identical event parsing for all agent types
+- No duplicated display code
+- Easy to extend for future agent types
 
 ---
 
-## Success Criteria
+## Timeline
 
-### Functional Requirements
+**Target Release**: January 30, 2026
 
-**OpenAI Responses /compact Endpoint:**
-- [ ] `/compact` endpoint integrated for OpenAI backend
-- [ ] Compression triggers seamlessly
-- [ ] Token usage reduced
-- [ ] Fallback working for other backends
+### Week 1 (Jan 28-30)
+- Research & Design (Milestone 1.1)
+- Component Architecture Refactor (Milestone 2.1)
+- Subagent Preview Cards (Milestone 1.2)
 
-**Model Selector for Log Analysis:**
-- [ ] `--model` flag functional
-- [ ] Multiple providers supported
-- [ ] Cost estimates accurate
-- [ ] Documentation complete
+### Week 2 (Jan 31-Feb 2)
+- Subagent Timeline View (Milestone 1.3)
+- Unified Event Parsing (Milestone 2.2)
+- Event Streaming Integration (Milestone 1.4)
 
-### Performance Requirements
-- [ ] Compression maintains response quality
-- [ ] No degradation in existing workflows
-- [ ] Cost reduction measurable
-
-### Quality Requirements
-- [ ] All tests passing
-- [ ] Comprehensive documentation
-- [ ] Error handling is robust
-- [ ] User-facing messages are clear
+### Week 3 (Feb 3-5)
+- Component Integration (Milestone 2.3)
+- Testing & Polish (Milestone 1.5, 2.4)
+- Documentation updates
 
 ---
 
-## Dependencies & Risks
+## Success Metrics
 
-### Dependencies
-- **OpenAI /compact**: OpenAI API availability, existing compression system
-- **Model Selector**: Model registry, token manager pricing data
-
-### Risks & Mitigations
-1. **API Changes**: *Mitigation*: Monitor OpenAI API updates, implement version checking
-2. **Compression Quality**: *Mitigation*: Benchmark against custom summarization, allow user choice
-3. **Model Availability**: *Mitigation*: Graceful fallbacks, clear error messages
+- **Subagent Visibility**: All subagent activity visible in TUI with real-time streaming
+- **User Experience**: Consistent display quality between main agents and subagents
+- **Code Quality**: Single source of truth for display components, no duplication
+- **Extensibility**: Easy to add support for new agent types in future
 
 ---
 
-## Future Enhancements (Post-v0.1.44)
+## Resources
 
-### v0.1.45 Plans
-- **Improve Log Sharing and Analysis**: Enhanced log sharing workflows and analysis tools
-- **Claude Code Plugin for MassGen Agents**: Plugin for spawning MassGen agents from Claude Code
-
-### v0.1.46 Plans
-- **Refactor ask_others for Targeted Agent Queries**: Support targeted queries to specific agents via subagent spawning
-
-### Long-term Vision
-- **Adaptive Context Management**: Dynamic context windows based on task requirements
-- **Advanced Compression Strategies**: Multi-provider compression with quality optimization
-- **Cost Analytics**: Detailed cost tracking and budget management
-
----
-
-## Timeline Summary
-
-| Phase | Focus | Key Deliverables | Owner | Priority |
-|-------|-------|------------------|-------|----------|
-| Phase 1 | OpenAI /compact Endpoint | API integration, compression | @ncrispino | **REQUIRED** |
-| Phase 2 | Model Selector | CLI enhancement, config support | @ncrispino | **REQUIRED** |
-
-**Target Release**: January 29, 2026
-
----
-
-## Getting Started
-
-### For Contributors
-
-**OpenAI Responses /compact Endpoint:**
-1. Review existing context compression in `massgen/backend/`
-2. Study OpenAI `/compact` endpoint documentation
-3. Implement integration with compression triggers
-4. Test with various context sizes
-
-**Model Selector for Log Analysis:**
-1. Review `massgen logs analyze` command implementation
-2. Add `--model` flag support
-3. Integrate with model registry for validation
-4. Add cost estimation display
-
-### For Users
-
-- v0.1.44 brings compression and analysis improvements:
-
-  **OpenAI /compact Endpoint:**
-  - Automatic use of OpenAI's native compression
-  - Reduced token usage for long conversations
-  - Maintained response quality
-
-  **Model Selector for Log Analysis:**
-  - Choose any model for log analysis
-  - See cost estimates before analysis
-  - Flexibility based on cost/quality needs
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development setup and workflow
-- Code standards and testing requirements
-- Pull request process
-- Documentation guidelines
-
-**Contact Track Owner:**
-- OpenAI /compact Endpoint: @ncrispino on Discord (nickcrispino)
-- Model Selector: @ncrispino on Discord (nickcrispino)
-
----
-
-*This roadmap reflects v0.1.44 priorities focusing on OpenAI context compression and log analysis model selection.*
-
-**Last Updated:** January 26, 2026
-**Maintained By:** MassGen Team
+- **Issue**: [#821 - Improve subagent display in TUI](https://github.com/Leezekun/MassGen/issues/821)
+- **Owner**: @ncrispino (nickcrispino on Discord)
+- **Related PRs**: TBD
+- **Documentation**: `docs/dev_notes/tui_subagent_display.md` (to be created)

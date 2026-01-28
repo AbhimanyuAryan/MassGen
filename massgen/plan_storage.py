@@ -292,6 +292,7 @@ class PlanStorage:
             metadata = session.load_metadata()
             metadata.status = "ready"
             # Store context paths for use during execution
+            # Empty list [] means "no new paths provided, retain existing value".
             if context_paths:
                 metadata.context_paths = context_paths
             session.save_metadata(metadata)

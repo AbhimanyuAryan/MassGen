@@ -205,6 +205,7 @@ class TuiModeState:
         self.last_planning_question = None
         self.planning_started_turn = None
         self.selected_plan_id = None
+        self.planning_context_paths = None
 
     def reset_plan_state_with_error(self, error_msg: str) -> str:
         """Reset plan state due to an error.
