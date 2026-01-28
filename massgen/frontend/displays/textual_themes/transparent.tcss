@@ -2336,7 +2336,7 @@ TimelineSection .timeline-text.thinking-inline {
     color: #6e7681;
     border-left: none;
     padding: 0 0 0 2;
-    margin: 0 0 0 1;
+    margin: 1 0 1 1;
     text-style: italic;
 }
 
