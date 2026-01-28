@@ -73,6 +73,8 @@ class TuiModeState:
     last_planning_question: Optional[str] = None
     # Track which turn planning was initiated on
     planning_started_turn: Optional[int] = None
+    # Store context paths from planning phase for execution
+    planning_context_paths: Optional[List[Dict[str, Any]]] = None
 
     # Agent mode: "multi" | "single"
     agent_mode: str = "multi"
