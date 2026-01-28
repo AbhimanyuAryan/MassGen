@@ -431,7 +431,7 @@ pip install massgen==X.X.X
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 ```
 
-### 11. Validate Documentation
+### 12. Validate Documentation
 
 Check that required documentation exists:
 
@@ -449,7 +449,7 @@ git diff v0.1.33..HEAD -- massgen/token_manager/token_manager.py
 ls docs/source/examples/case_studies/
 ```
 
-### 12. Character Count Check
+### 13. Character Count Check
 
 Verify announcement fits LinkedIn's ~3000 char limit:
 
@@ -460,7 +460,7 @@ cat docs/announcements/current-release.md docs/announcements/feature-highlights.
 # Should be < 3000
 ```
 
-### 13. Suggest Screenshot/Media
+### 14. Suggest Screenshot/Media
 
 Based on the changes in this release, suggest what screenshot or GIF to capture:
 
@@ -505,7 +505,7 @@ Based on this release's changes, recommend capturing:
 **Media type:** Static screenshot is fine (no complex animation needed)
 ```
 
-### 14. Output Summary
+### 15. Output Summary
 
 Print a checklist:
 

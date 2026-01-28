@@ -90,8 +90,8 @@ Press ``Shift+Tab`` once to enter Planning mode.
 
 Click the plan options button to set:
 
-* **Plan Depth**: thorough, balanced, or quick
-* **Broadcast Mode**: human (ask user), agents (agent coordination), or none (autonomous)
+* **Plan Depth**: shallow (5-10 tasks), medium (20-50 tasks), or deep (100-200+ tasks)
+* **Broadcast Mode**: agents (agent coordination), human (ask user), or false (autonomous)
 
 **Step 3: Create Plan**
 
