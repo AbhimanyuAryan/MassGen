@@ -126,6 +126,29 @@ Quick Start
 
 :doc:`quickstart/installation` · :doc:`quickstart/running-massgen` · :doc:`quickstart/configuration`
 
+Video Tutorials
+---------------
+
+.. raw:: html
+
+   <div style="text-align: center; margin: 20px 0;">
+     <a href="https://www.youtube.com/watch?v=JMCnQL615Ek" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 10px 20px; background: #ff0000; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 1em; box-shadow: 0 2px 10px rgba(255, 0, 0, 0.3);">
+       ▶️ Getting Started
+     </a>
+   </div>
+
+Learn how to install, configure, and run your first multi-agent collaboration with MassGen.
+
+.. raw:: html
+
+   <div style="text-align: center; margin: 20px 0;">
+     <a href="https://www.youtube.com/watch?v=Dfz3D460EDs" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 10px 20px; background: #ff0000; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 1em; box-shadow: 0 2px 10px rgba(255, 0, 0, 0.3);">
+       ▶️ Develop on MassGen
+     </a>
+   </div>
+
+Explore how to build custom agents and tools with MassGen.
+
 Key Features
 ------------
 
@@ -185,29 +208,6 @@ Supported Models
 ----------------
 
 **Claude** (Anthropic) · **Gemini** (Google) · **GPT** (OpenAI) · **Grok** (xAI) · **Azure OpenAI** · **Groq** · **Together** · **LM Studio** · :doc:`and more... <reference/supported_models>`
-
-Video Tutorials
----------------
-
-.. raw:: html
-
-   <div style="text-align: center; margin: 20px 0;">
-     <a href="https://www.youtube.com/watch?v=JMCnQL615Ek" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 10px 20px; background: #ff0000; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 1em; box-shadow: 0 2px 10px rgba(255, 0, 0, 0.3);">
-       ▶️ Getting Started
-     </a>
-   </div>
-
-Learn how to install, configure, and run your first multi-agent collaboration with MassGen.
-
-.. raw:: html
-
-   <div style="text-align: center; margin: 20px 0;">
-     <a href="https://www.youtube.com/watch?v=Dfz3D460EDs" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 10px 20px; background: #ff0000; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 1em; box-shadow: 0 2px 10px rgba(255, 0, 0, 0.3);">
-       ▶️ Develop on MassGen
-     </a>
-   </div>
-
-Explore how to build custom agents and tools with MassGen.
 
 Documentation
 -------------
