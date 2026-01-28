@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=Dp2oldJJImw">
+  <a href="https://www.youtube.com/watch?v=5JofXWf_Ok8">
     <img src="docs/source/_static/images/readme.gif" alt="MassGen case study -- Berkeley Agentic AI Summit Question" width="800">
   </a>
 </p>

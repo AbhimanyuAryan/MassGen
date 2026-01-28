@@ -30,7 +30,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=Dp2oldJJImw">
+  <a href="https://www.youtube.com/watch?v=5JofXWf_Ok8">
     <img src="https://raw.githubusercontent.com/Leezekun/MassGen/main/docs/source/_static/images/thumbnail.png" alt="MassGen case study -- Berkeley Agentic AI Summit Question" width="800">
   </a>
 </p>
