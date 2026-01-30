@@ -16,7 +16,7 @@ Design Philosophy:
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from massgen.events import EventType, MassGenEvent
 
@@ -486,7 +486,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int = 1,
-    ) -> Optional[ContentOutput]:
+    ) -> Optional[Union[ContentOutput, List[ContentOutput]]]:
         """Process a structured MassGenEvent from events.jsonl.
 
         This is the entry point for processing events from the subagent's
@@ -747,7 +747,8 @@ class ContentProcessor:
         event: MassGenEvent,
     ) -> Optional[ContentOutput]:
         """Handle round_start event from events.jsonl."""
-        round_num = event.data.get("round_number", 1)
+        # round_number is a top-level field on MassGenEvent, not in data
+        round_num = event.round_number
 
         return ContentOutput(
             output_type="separator",
@@ -791,21 +792,33 @@ class ContentProcessor:
         tool_call_id = chunk.get("tool_call_id")
 
         # Skip non-display chunks (verbose diagnostic messages like "Arguments for Calling...")
+        # but still allow tool calls/outputs so timelines can update.
         if not chunk.get("display", True):
-            return None
+            if chunk_type != "tool_calls" and status != "function_call_output":
+                return None
 
         # Handle tool_calls - create tool start entries
         if chunk_type == "tool_calls":
             tool_calls = chunk.get("tool_calls", [])
-            outputs = []
+            outputs: List[ContentOutput] = []
             for tc in tool_calls:
                 tc_id = tc.get("id", "")
                 func = tc.get("function", {})
                 tool_name = func.get("name", "unknown")
                 args_str = func.get("arguments", "{}")
 
-                # Filter out internal coordination tools (task_plan, etc.)
-                if ContentNormalizer.is_filtered_tool(tool_name):
+                # Filter out internal coordination tools (task_plan, etc.),
+                # but keep planning tools so task plans can update.
+                try:
+                    from massgen.frontend.displays.task_plan_support import (
+                        is_planning_tool,
+                    )
+                except Exception:
+
+                    def is_planning_tool(_name: str) -> bool:  # type: ignore[assignment]
+                        return False
+
+                if ContentNormalizer.is_filtered_tool(tool_name) and not is_planning_tool(tool_name):
                     continue
 
                 # Parse arguments
@@ -818,15 +831,8 @@ class ContentProcessor:
                 server_name = get_mcp_server_name(tool_name)
                 display_name = format_tool_display_name(tool_name)
 
-                # Get actual tool name (strip mcp__ prefix)
-                actual_tool_name = tool_name
-                if tool_name.startswith("mcp__"):
-                    parts = tool_name.split("__")
-                    if len(parts) >= 3:
-                        actual_tool_name = "__".join(parts[2:])
-
                 # Get category info
-                category_info = get_tool_category(actual_tool_name)
+                category_info = get_tool_category(tool_name)
 
                 # Create args summary
                 args_full = str(args) if not isinstance(args, str) else args
@@ -835,7 +841,7 @@ class ContentProcessor:
                 # Create ToolDisplayData
                 tool_data = ToolDisplayData(
                     tool_id=tc_id,
-                    tool_name=actual_tool_name,
+                    tool_name=tool_name,
                     display_name=display_name,
                     tool_type="mcp" if server_name else "tool",
                     category=category_info["category"],
@@ -868,9 +874,11 @@ class ContentProcessor:
                     ),
                 )
 
-            # Return first output (caller should handle multiple if needed)
-            # In practice, stream_chunk tool_calls are processed one at a time
-            return outputs[0] if outputs else None
+            if not outputs:
+                return None
+            if len(outputs) == 1:
+                return outputs[0]
+            return outputs
 
         # Handle tool results (function_call_output status)
         if status == "function_call_output" and tool_call_id:

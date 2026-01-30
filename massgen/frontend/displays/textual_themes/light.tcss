@@ -136,10 +136,28 @@ Screen {
     padding: 0;
 }
 
+#main_split {
+    layout: horizontal;
+    width: 100%;
+    height: 1fr;
+}
+
 #agents_container {
     layout: vertical;
-    width: 100%;
+    width: 1fr;
     height: 100%;
+}
+
+#subagent_side_panel {
+    width: 45%;
+    min-width: 40;
+    height: 100%;
+    border-left: solid $border-default;
+    background: $bg-base;
+}
+
+#subagent_side_panel.hidden {
+    display: none;
 }
 
 /* === Agent Tab Bar === */

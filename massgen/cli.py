@@ -166,6 +166,41 @@ def _setup_event_streaming() -> None:
         emitter.add_listener(stream_to_stdout)
 
 
+def _setup_timeline_event_recording() -> None:
+    """Emit timeline_entry events derived from streaming events (env-gated)."""
+    import os
+
+    if not os.environ.get("MASSGEN_TUI_TIMELINE_EVENTS"):
+        return
+
+    from .events import get_event_emitter
+    from .frontend.displays.timeline_event_recorder import TimelineEventRecorder
+
+    emitter = get_event_emitter()
+    if not emitter:
+        return
+
+    def emit_line(line: str) -> None:
+        emitter.emit_raw("timeline_entry", line=line)
+
+    recorder = TimelineEventRecorder(emit_line)
+
+    def record_event(event):
+        try:
+            recorder.handle_event(event)
+        except Exception:
+            pass
+
+    emitter.add_listener(record_event)
+
+    try:
+        import atexit
+
+        atexit.register(recorder.flush)
+    except Exception:
+        pass
+
+
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -7101,6 +7136,7 @@ async def main(args):
         # --stream-events implies --automation
         args.automation = True
         _setup_event_streaming()
+        _setup_timeline_event_recording()
 
     # Configure Logfire observability if requested
     if getattr(args, "logfire", False):

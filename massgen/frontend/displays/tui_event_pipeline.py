@@ -89,7 +89,14 @@ class TimelineEventAdapter:
             return
 
         output = self._processor.process_event(event, self._round_number)
-        if output and output.output_type != "skip":
+        if not output:
+            return
+        if isinstance(output, list):
+            for item in output:
+                if item and item.output_type != "skip":
+                    self._apply_output(item)
+            return
+        if output.output_type != "skip":
             self._apply_output(output)
 
     def flush(self) -> None:
@@ -121,18 +128,26 @@ class TimelineEventAdapter:
         else:
             return
 
-        if not chunk_dict.get("display", True):
-            return
-
         chunk_type = chunk_dict.get("type", "")
         content = chunk_dict.get("content")
         status = chunk_dict.get("status")
         tool_call_id = chunk_dict.get("tool_call_id")
 
+        if not chunk_dict.get("display", True):
+            if chunk_type != "tool_calls" and not (status == "function_call_output" and tool_call_id):
+                return
+
         # Structured tool calls / function outputs (Responses API)
         if chunk_type == "tool_calls" or (status == "function_call_output" and tool_call_id):
             output = self._processor.process_event(event, self._round_number)
-            if output and output.output_type != "skip":
+            if not output:
+                return
+            if isinstance(output, list):
+                for item in output:
+                    if item and item.output_type != "skip":
+                        self._apply_output(item)
+                return
+            if output.output_type != "skip":
                 self._apply_output(output)
             return
 

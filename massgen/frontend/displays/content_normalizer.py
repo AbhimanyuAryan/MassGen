@@ -379,6 +379,7 @@ class ContentNormalizer:
 
         Some tools are internal coordination tools that clutter the timeline:
         - task_plan tools (create_task_plan, etc.)
+        - planning tools (planning__agent_name)
 
         Args:
             tool_name: The tool name to check
@@ -389,6 +390,7 @@ class ContentNormalizer:
         filtered_patterns = [
             "task_plan",
             "create_task_plan",
+            "planning__",  # Filter out planning tools like planning__dylan_discog
         ]
         tool_lower = tool_name.lower()
         return any(pattern in tool_lower for pattern in filtered_patterns)

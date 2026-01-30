@@ -815,7 +815,7 @@ def log_coordination_step(step: str, details: dict = None):
         log.opt(colors=True).debug("<red>🔄 {}: {}</red>", step, details or {})
 
 
-def log_streaming_debug(chunk: Any):
+def log_streaming_debug(chunk: Any, agent_id: str | None = None):
     """
     Log full StreamChunk to events.jsonl for detailed debugging.
 
@@ -824,10 +824,11 @@ def log_streaming_debug(chunk: Any):
 
     Args:
         chunk: The StreamChunk object to log
+        agent_id: Optional agent ID to associate with the chunk
     """
     # Use event emitter for structured logging
     if _EVENT_EMITTER is not None:
-        _EVENT_EMITTER.emit_stream_chunk(chunk)
+        _EVENT_EMITTER.emit_stream_chunk(chunk, agent_id=agent_id)
     else:
         # Fallback to loguru if event emitter not initialized
         log = logger.bind(category="streaming_debug")

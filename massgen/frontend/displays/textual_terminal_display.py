@@ -46,8 +46,11 @@ try:
         ThinkingContentHandler,
         ToolBatchTracker,
         ToolContentHandler,
+        format_tool_display_name,
+        get_tool_category,
     )
     from .content_normalizer import ContentNormalizer
+    from .shared.tool_registry import clean_tool_arguments, clean_tool_result
 
     # Import extracted modals from the new textual/ package
     from .textual import (  # Browser modals; Status modals; Coordination modals; Content modals; Input modals; Shortcuts modal; Workspace modals; Agent output modal
@@ -177,342 +180,10 @@ TOOL_PATTERNS = {
     "session_complete": re.compile(r"✅ \[MCP\] Session completed"),
 }
 
-# Tool category detection - maps tool names to semantic categories
-TOOL_CATEGORIES = {
-    "filesystem": {
-        "icon": "📁",
-        "color": "green",
-        "patterns": [
-            "read_file",
-            "write_file",
-            "list_directory",
-            "create_directory",
-            "delete_file",
-            "move_file",
-            "copy_file",
-            "file_exists",
-            "mcp__filesystem",
-            "read_text_file",
-            "write_text_file",
-            "get_file_info",
-            "search_files",
-            "list_allowed_directories",
-        ],
-    },
-    "web": {
-        "icon": "🌐",
-        "color": "blue",
-        "patterns": [
-            "web_search",
-            "search_web",
-            "google_search",
-            "fetch_url",
-            "browse",
-            "http_get",
-            "http_post",
-            "scrape",
-            "crawl",
-            "mcp__brave",
-            "mcp__web",
-            "mcp__fetch",
-        ],
-    },
-    "code": {
-        "icon": "💻",
-        "color": "yellow",
-        "patterns": [
-            "execute_command",
-            "run_code",
-            "bash",
-            "python",
-            "shell",
-            "exec",
-            "terminal",
-            "command",
-            "run_script",
-            "execute_python",
-            "mcp__code",
-            "mcp__shell",
-            "mcp__terminal",
-        ],
-    },
-    "database": {
-        "icon": "🗄️",
-        "color": "magenta",
-        "patterns": [
-            "query",
-            "sql",
-            "database",
-            "db_",
-            "select",
-            "insert",
-            "mcp__postgres",
-            "mcp__sqlite",
-            "mcp__mysql",
-            "mcp__mongo",
-            "arbitrary_query",
-            "schema_reference",
-        ],
-    },
-    "git": {
-        "icon": "🔀",
-        "color": "red",
-        "patterns": [
-            "git_",
-            "commit",
-            "push",
-            "pull",
-            "branch",
-            "merge",
-            "mcp__git",
-            "clone",
-            "checkout",
-            "diff",
-            "log",
-        ],
-    },
-    "api": {
-        "icon": "🔌",
-        "color": "cyan",
-        "patterns": [
-            "api_",
-            "rest_",
-            "graphql",
-            "request",
-            "endpoint",
-            "mcp__slack",
-            "mcp__discord",
-            "mcp__twitter",
-            "mcp__notion",
-        ],
-    },
-    "ai": {
-        "icon": "🤖",
-        "color": "bright_magenta",
-        "patterns": [
-            "llm_",
-            "ai_",
-            "generate",
-            "embed",
-            "chat_completion",
-            "mcp__openai",
-            "mcp__anthropic",
-            "mcp__gemini",
-        ],
-    },
-    "weather": {
-        "icon": "🌤️",
-        "color": "bright_cyan",
-        "patterns": [
-            "weather",
-            "forecast",
-            "temperature",
-            "get-forecast",
-            "mcp__weather",
-        ],
-    },
-    "memory": {
-        "icon": "🧠",
-        "color": "bright_yellow",
-        "patterns": [
-            "memory",
-            "remember",
-            "recall",
-            "store",
-            "retrieve",
-            "mcp__memory",
-            "knowledge",
-            "context",
-        ],
-    },
-}
+# Tool category utilities imported from shared module
 
 
-def _get_tool_category(tool_name: str) -> dict:
-    """Determine the semantic category of a tool based on its name.
-
-    Args:
-        tool_name: The tool name (e.g., "mcp__filesystem__read_file")
-
-    Returns:
-        Dict with icon, color, and category name
-    """
-    tool_lower = tool_name.lower()
-
-    for category, info in TOOL_CATEGORIES.items():
-        for pattern in info["patterns"]:
-            if pattern in tool_lower:
-                return {
-                    "category": category,
-                    "icon": info["icon"],
-                    "color": info["color"],
-                }
-
-    # Default for unknown tools
-    return {
-        "category": "tool",
-        "icon": "🔧",
-        "color": "cyan",
-    }
-
-
-def _format_tool_name(tool_name: str) -> str:
-    """Format tool name for display - strip prefixes and clean up.
-
-    Args:
-        tool_name: Raw tool name (e.g., "mcp__filesystem__read_file")
-
-    Returns:
-        Cleaned display name (e.g., "read_file")
-    """
-    # Strip common prefixes
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
-        if len(parts) >= 3:
-            # mcp__server__tool -> tool (server)
-            return f"{parts[-1]} ({parts[1]})"
-        elif len(parts) == 2:
-            return parts[1]
-
-    return tool_name
-
-
-def _clean_tool_arguments(args_str: str) -> str:
-    """Clean up tool arguments for display - extract key info from dicts/JSON.
-
-    Args:
-        args_str: Raw arguments string (may be dict repr or JSON)
-
-    Returns:
-        Clean, readable summary of the arguments
-    """
-    import json
-
-    args_str = args_str.strip()
-
-    # Try to parse as JSON/dict
-    try:
-        # Handle dict-like strings
-        if args_str.startswith("{") or args_str.startswith("Arguments:"):
-            clean = args_str.replace("Arguments:", "").strip()
-            # Try JSON parse
-            try:
-                data = json.loads(clean)
-            except json.JSONDecodeError:
-                # Try eval for dict repr (safely)
-                import ast
-
-                try:
-                    data = ast.literal_eval(clean)
-                except (ValueError, SyntaxError):
-                    data = None
-
-            if isinstance(data, dict):
-                # Extract key fields for nice display
-                parts = []
-                for key, value in data.items():
-                    # Skip long content fields
-                    if key in ("content", "body", "text", "data") and isinstance(value, str) and len(value) > 50:
-                        parts.append(f"{key}: [{len(value)} chars]")
-                    # Shorten paths
-                    elif key in ("path", "file", "directory", "work_dir") and isinstance(value, str):
-                        # Show just filename or last part of path
-                        short_path = value.split("/")[-1] if "/" in value else value
-                        if len(value) > 40:
-                            parts.append(f"{key}: .../{short_path}")
-                        else:
-                            parts.append(f"{key}: {value}")
-                    # Truncate command
-                    elif key == "command" and isinstance(value, str):
-                        if len(value) > 60:
-                            parts.append(f"{key}: {value[:60]}...")
-                        else:
-                            parts.append(f"{key}: {value}")
-                    # Skip internal fields
-                    elif key.startswith("_"):
-                        continue
-                    # Show other fields truncated
-                    elif isinstance(value, str) and len(value) > 50:
-                        parts.append(f"{key}: {value[:50]}...")
-                    elif isinstance(value, (list, dict)):
-                        parts.append(f"{key}: [{type(value).__name__}]")
-                    else:
-                        parts.append(f"{key}: {value}")
-
-                if parts:
-                    return " | ".join(parts[:3])  # Max 3 fields
-                return "[no args]"
-    except Exception:
-        pass
-
-    # Fallback: just truncate
-    if len(args_str) > 80:
-        return args_str[:80] + "..."
-    return args_str
-
-
-def _clean_tool_result(result_str: str, tool_name: str = "") -> str:
-    """Clean up tool result for display - summarize long output.
-
-    Args:
-        result_str: Raw result string
-        tool_name: Tool name for context-aware formatting
-
-    Returns:
-        Clean, readable summary of the result
-    """
-    import json
-
-    result_str = result_str.strip()
-
-    # Handle common MCP result formats
-    if result_str.startswith("{"):
-        try:
-            data = json.loads(result_str)
-            if isinstance(data, dict):
-                # Check for success/error status
-                if "success" in data:
-                    status = "✓" if data["success"] else "✗"
-                    if "message" in data:
-                        return f"{status} {data['message'][:60]}"
-                    return f"{status} completed"
-
-                # Check for content result
-                if "content" in data:
-                    content = data["content"]
-                    if isinstance(content, str):
-                        lines = content.count("\n") + 1
-                        return f"[{lines} lines]"
-                    return "[content]"
-
-                # Check for exit code (command execution)
-                if "exit_code" in data:
-                    code = data["exit_code"]
-                    status = "✓" if code == 0 else f"exit {code}"
-                    return status
-
-                # Generic dict - show key count
-                return f"[{len(data)} fields]"
-        except json.JSONDecodeError:
-            pass
-
-    # Handle path-related results
-    if "Parent directory does not exist" in result_str:
-        return "✗ directory not found"
-    if "does not exist" in result_str:
-        return "✗ not found"
-    if "Permission denied" in result_str:
-        return "✗ permission denied"
-
-    # Handle file content (multiple lines)
-    lines = result_str.split("\n")
-    if len(lines) > 5:
-        return f"[{len(lines)} lines]"
-
-    # Short result - show truncated
-    if len(result_str) > 60:
-        return result_str[:60] + "..."
-    return result_str
+# Tool argument and result cleaning functions imported from shared module
 
 
 def _parse_tool_message(content: str) -> dict:
@@ -537,8 +208,8 @@ def _parse_tool_message(content: str) -> dict:
     def enrich_with_category(parsed: dict) -> dict:
         """Add category info to parsed result."""
         if "tool_name" in parsed:
-            parsed["category"] = _get_tool_category(parsed["tool_name"])
-            parsed["display_name"] = _format_tool_name(parsed["tool_name"])
+            parsed["category"] = get_tool_category(parsed["tool_name"])
+            parsed["display_name"] = format_tool_display_name(parsed["tool_name"])
         return parsed
 
     # Check MCP start patterns
@@ -658,159 +329,7 @@ def _process_line_buffer(
     return buffer
 
 
-# Language mapping for syntax highlighting
-FILE_LANG_MAP = {
-    ".py": "python",
-    ".js": "javascript",
-    ".ts": "typescript",
-    ".jsx": "jsx",
-    ".tsx": "tsx",
-    ".json": "json",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".toml": "toml",
-    ".html": "html",
-    ".css": "css",
-    ".scss": "scss",
-    ".sh": "bash",
-    ".bash": "bash",
-    ".zsh": "zsh",
-    ".rs": "rust",
-    ".go": "go",
-    ".java": "java",
-    ".kt": "kotlin",
-    ".swift": "swift",
-    ".c": "c",
-    ".cpp": "cpp",
-    ".h": "c",
-    ".hpp": "cpp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".sql": "sql",
-    ".xml": "xml",
-    ".r": "r",
-    ".lua": "lua",
-    ".vim": "vim",
-    ".dockerfile": "dockerfile",
-}
-
-# Binary file extensions to reject for preview
-BINARY_EXTENSIONS = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".bmp",
-    ".ico",
-    ".webp",
-    ".pdf",
-    ".doc",
-    ".docx",
-    ".xls",
-    ".xlsx",
-    ".ppt",
-    ".pptx",
-    ".zip",
-    ".tar",
-    ".gz",
-    ".bz2",
-    ".7z",
-    ".rar",
-    ".exe",
-    ".dll",
-    ".so",
-    ".dylib",
-    ".mp3",
-    ".mp4",
-    ".wav",
-    ".avi",
-    ".mov",
-    ".mkv",
-    ".pyc",
-    ".pyo",
-    ".class",
-    ".o",
-    ".obj",
-}
-
-
-def render_file_preview(
-    file_path: Path,
-    max_size: int = 50000,
-    theme: str = "monokai",
-) -> Tuple[Any, bool]:
-    """Render file content with syntax highlighting or markdown.
-
-    Args:
-        file_path: Path to the file to preview.
-        max_size: Maximum file size in bytes to render (default 50KB).
-        theme: Syntax highlighting theme (default "monokai").
-
-    Returns:
-        Tuple of (renderable, is_rich) where:
-        - renderable: Rich Markdown, Syntax, or plain string
-        - is_rich: True if renderable is a Rich object, False for plain text
-    """
-    from rich.markdown import Markdown
-    from rich.syntax import Syntax
-
-    try:
-        ext = file_path.suffix.lower()
-
-        # Handle binary files
-        if ext in BINARY_EXTENSIONS:
-            return f"[Binary file: {ext}]", False
-
-        # Check file size
-        if file_path.stat().st_size > max_size:
-            return f"[File too large: {file_path.stat().st_size:,} bytes]", False
-
-        # Read content
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return "[Binary or non-UTF-8 file]", False
-
-        # Empty file
-        if not content.strip():
-            return "[Empty file]", False
-
-        # Markdown files - render as Markdown
-        if ext in (".md", ".markdown"):
-            return Markdown(content), True
-
-        # Code files - render with syntax highlighting
-        if ext in FILE_LANG_MAP:
-            return (
-                Syntax(
-                    content,
-                    FILE_LANG_MAP[ext],
-                    theme=theme,
-                    line_numbers=True,
-                    word_wrap=True,
-                ),
-                True,
-            )
-
-        # Special files without extensions
-        if file_path.name.lower() in ("dockerfile", "makefile", "jenkinsfile"):
-            lang = file_path.name.lower()
-            if lang == "makefile":
-                lang = "make"
-            return Syntax(content, lang, theme=theme, line_numbers=True, word_wrap=True), True
-
-        # Default: plain text (truncate if very long)
-        lines = content.split("\n")
-        if len(lines) > 500:
-            content = "\n".join(lines[:500]) + f"\n\n... [{len(lines) - 500} more lines]"
-        return content, False
-
-    except FileNotFoundError:
-        return "[File not found]", False
-    except PermissionError:
-        return "[Permission denied]", False
-    except Exception as e:
-        return f"[Error reading file: {e}]", False
+# File preview utilities imported from shared module
 
 
 # Emoji fallback mapping for terminals without Unicode support
@@ -2995,6 +2514,9 @@ if TEXTUAL_AVAILABLE:
             self._tab_bar: Optional[AgentTabBar] = None
             self._status_ribbon: Optional[AgentStatusRibbon] = None
             self._execution_status_line: Optional[ExecutionStatusLine] = None
+            # Side panel removed - using separate SubagentScreen
+            # self._subagent_side_panel: Optional[Container] = None
+            # self._subagent_view: Optional[SubagentView] = None
             self._active_agent_id: Optional[str] = None
             # Final presentation state (streams into winner's AgentPanel)
             self._final_presentation_agent: Optional[str] = None
@@ -3170,15 +2692,20 @@ if TEXTUAL_AVAILABLE:
 
             # Main container with agent panels (hidden during welcome)
             with Container(id="main_container", classes="hidden" if self._showing_welcome else ""):
-                with Container(id="agents_container"):
-                    for idx, agent_id in enumerate(agent_ids):
-                        # Only first agent is visible, rest are hidden
-                        is_hidden = idx > 0
-                        agent_widget = AgentPanel(agent_id, self.coordination_display, idx + 1)
-                        if is_hidden:
-                            agent_widget.add_class("hidden")
-                        self.agent_widgets[agent_id] = agent_widget
-                        yield agent_widget
+                with Horizontal(id="main_split"):
+                    with Container(id="agents_container"):
+                        for idx, agent_id in enumerate(agent_ids):
+                            # Only first agent is visible, rest are hidden
+                            is_hidden = idx > 0
+                            agent_widget = AgentPanel(agent_id, self.coordination_display, idx + 1)
+                            if is_hidden:
+                                agent_widget.add_class("hidden")
+                            self.agent_widgets[agent_id] = agent_widget
+                            yield agent_widget
+
+                    # Subagent side panel removed - now using separate SubagentScreen
+                    # self._subagent_side_panel = Container(id="subagent_side_panel", classes="hidden")
+                    # yield self._subagent_side_panel
 
                 # Phase 13.2: Execution status line - shows all agents' states at a glance
                 # Placed at bottom of main content area, above mode bar
@@ -5243,9 +4770,9 @@ Type your question and press Enter to ask the agents.
 
         @keyboard_action
         def action_show_subagents(self):
-            """Show subagent modal for first running subagent.
+            """Show subagent screen for first running subagent.
 
-            Searches all agent panels for subagent cards and opens the modal
+            Searches all agent panels for subagent cards and opens the screen
             for the first running subagent found (or first overall).
             """
             # Find subagent cards in all agent panels
@@ -5257,15 +4784,36 @@ Type your question and press Enter to ask the agents.
                             # Find first running subagent
                             running = [sa for sa in card.subagents if sa.status == "running"]
                             if running:
-                                self.push_screen(SubagentScreen(running[0], card.subagents))
+                                screen = SubagentScreen(
+                                    subagent=running[0],
+                                    all_subagents=card.subagents,
+                                )
+                                self.push_screen(screen)
                                 return
                             # Fallback to first subagent
-                            self.push_screen(SubagentScreen(card.subagents[0], card.subagents))
+                            screen = SubagentScreen(
+                                subagent=card.subagents[0],
+                                all_subagents=card.subagents,
+                            )
+                            self.push_screen(screen)
                             return
                 except Exception:
                     continue
 
             self.notify("No active subagents", severity="information", timeout=2)
+
+        # Side panel methods removed - now using separate SubagentScreen
+        # def _open_subagent_side_panel(
+        #     self,
+        #     subagent: SubagentDisplayData,
+        #     all_subagents: List[SubagentDisplayData],
+        # ) -> None:
+        #     """Open the right-panel subagent view."""
+        #     ...
+        #
+        # def _close_subagent_side_panel(self) -> None:
+        #     """Close the right-panel subagent view."""
+        #     ...
 
         def _switch_to_agent(self, agent_id: str) -> None:
             """Switch the visible agent tab.
@@ -5713,8 +5261,8 @@ Type your question and press Enter to ask the agents.
             event.stop()
 
         def on_subagent_card_open_modal(self, event: SubagentCard.OpenModal) -> None:
-            """Handle subagent card click - show full-screen subagent view."""
-            # Use SubagentScreen for full TUI experience from events.jsonl
+            """Handle subagent card click - open separate screen."""
+            # Push to dedicated subagent screen (full screen, not side panel)
             screen = SubagentScreen(
                 subagent=event.subagent,
                 all_subagents=event.all_subagents,
@@ -5722,12 +5270,18 @@ Type your question and press Enter to ask the agents.
             self.push_screen(screen)
             event.stop()
 
+        # Close handler removed - SubagentScreen handles its own closing
+        # def on_subagent_view_close_requested(self, event: SubagentView.CloseRequested) -> None:
+        #     """Handle close request from the right-panel subagent view."""
+        #     ...
+
         def on_tasks_clicked(self, event: TasksClicked) -> None:
             """Handle tasks label click in ribbon - show task plan modal."""
             if event.agent_id in self.agent_widgets:
                 panel = self.agent_widgets[event.agent_id]
-                if panel._active_task_plan_tasks:
-                    modal = TaskPlanModal(tasks=panel._active_task_plan_tasks)
+                tasks = panel.get_task_plan_tasks()
+                if tasks:
+                    modal = TaskPlanModal(tasks=tasks)
                     self.push_screen(modal)
             event.stop()
 
@@ -7302,12 +6856,17 @@ Type your question and press Enter to ask the agents.
             # Timeout state tracking (for per-agent timeout display)
             self._timeout_state: Optional[Dict[str, Any]] = None
 
-            # Task plan tracking for toggle feature
-            self._active_task_plan_id: Optional[str] = None
-            self._active_task_plan_tasks: Optional[List[Dict[str, Any]]] = None
-            self._task_plan_visible: bool = False
-            self._task_plan_toggle_id = f"task_plan_toggle_{self._dom_safe_id}"
-            self._task_plan_display_id = f"task_plan_display_{self._dom_safe_id}"
+            # Task plan host (shared pinned UI)
+            from massgen.frontend.displays.textual_widgets.task_plan_host import (
+                TaskPlanHost,
+            )
+
+            self._task_plan_host = TaskPlanHost(
+                agent_id=self.agent_id,
+                ribbon=None,
+                id=f"task_plan_host_{self._dom_safe_id}",
+                classes="pinned-task-plan hidden",
+            )
 
             # Phase 12: CSS-based round navigation (no storage needed - widgets stay in DOM)
             self._current_round: int = 1  # which round content is being received
@@ -7355,8 +6914,7 @@ Type your question and press Enter to ask the agents.
                     yield Label("Single-agent mode active", classes="not-in-use-sublabel")
 
                 # Pinned task plan - stays at top, collapsible (hidden until task plan created)
-                self._pinned_task_plan_id = f"pinned_task_plan_{self._dom_safe_id}"
-                yield Container(id=self._pinned_task_plan_id, classes="pinned-task-plan hidden")
+                yield self._task_plan_host
 
                 # Chronological timeline layout - tools and text interleaved
                 yield TimelineSection(id=self._timeline_section_id)
@@ -7422,6 +6980,7 @@ Type your question and press Enter to ask the agents.
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_round(self.agent_id, 1, False)
                     logger.debug(f"AgentPanel.on_mount: Initialized ribbon with Round 1 for {self.agent_id}")
+                    self._task_plan_host.set_ribbon(app._status_ribbon)
             except Exception as e:
                 logger.debug(f"AgentPanel.on_mount: Failed to initialize ribbon: {e}")
 
@@ -7507,24 +7066,11 @@ Type your question and press Enter to ask the agents.
                 plan_id: ID of the task plan (tool_id)
                 operation: Type of operation (create, update, etc.)
             """
-            self._active_task_plan_id = plan_id
-            # Deep copy each task dict to avoid reference issues
-            self._active_task_plan_tasks = [t.copy() for t in tasks] if tasks else None
+            self._task_plan_host.update_task_plan(tasks, plan_id=plan_id, operation=operation)
 
-            # Debug: log task statuses
-            if tasks:
-                completed = sum(1 for t in tasks if t.get("status") in ("completed", "verified"))
-                verified = sum(1 for t in tasks if t.get("status") == "verified")
-                in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
-                tui_log(f"update_task_plan: {completed} completed, {verified} verified, {in_progress} in_progress (of {len(tasks)} total)")
-
-                # Update ribbon tasks display
-                try:
-                    ribbon = self.coordination_display._agent_status_ribbon
-                    if ribbon:
-                        ribbon.set_tasks(self.agent_id, completed, len(tasks))
-                except Exception:
-                    pass
+        def get_task_plan_tasks(self) -> Optional[List[Dict[str, Any]]]:
+            """Return the active task plan tasks, if any."""
+            return self._task_plan_host.get_active_tasks()
 
         def _refresh_header(self) -> None:
             """Refresh the header display.
@@ -7537,19 +7083,7 @@ Type your question and press Enter to ask the agents.
 
         def toggle_task_plan(self) -> None:
             """Toggle the visibility of the pinned task plan."""
-            if not self._active_task_plan_tasks:
-                return
-
-            self._task_plan_visible = not self._task_plan_visible
-
-            try:
-                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
-                if self._task_plan_visible:
-                    pinned_container.remove_class("collapsed")
-                else:
-                    pinned_container.add_class("collapsed")
-            except Exception:
-                pass
+            self._task_plan_host.toggle()
 
         def _update_pinned_task_plan(
             self,
@@ -7566,38 +7100,13 @@ Type your question and press Enter to ask the agents.
                 operation: Type of operation
                 show_notification: Whether to show update notification in timeline
             """
-            from massgen.frontend.displays.textual_widgets import TaskPlanCard
-
             try:
-                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
-
-                # Find existing card or create new one
-                existing_card = None
-                try:
-                    existing_card = pinned_container.query_one(TaskPlanCard)
-                except Exception:
-                    pass
-
-                if existing_card:
-                    # Update existing card (per-task highlighting handled inside)
-                    existing_card.update_tasks(tasks, focused_task_id=focused_task_id, operation=operation)
-                else:
-                    # Create new card
-                    card = TaskPlanCard(
-                        tasks=tasks,
-                        focused_task_id=focused_task_id,
-                        operation=operation,
-                        id=f"pinned_card_{self._dom_safe_id}",
-                    )
-                    pinned_container.mount(card)
-
-                # Show the pinned area
-                pinned_container.remove_class("hidden")
-                self._task_plan_visible = True
-
-                # NOTE: Task update notifications removed - pinned task card at top
-                # already shows current status, so inline notifications are redundant
-
+                self._task_plan_host.update_pinned_task_plan(
+                    tasks=tasks,
+                    focused_task_id=focused_task_id,
+                    operation=operation,
+                    show_notification=show_notification,
+                )
             except Exception as e:
                 tui_log(f"_update_pinned_task_plan error: {e}")
 
@@ -7731,7 +7240,7 @@ Type your question and press Enter to ask the agents.
 
             elif event == "arguments":
                 args = parsed.get("arguments", parsed.get("raw", ""))
-                args_clean = _clean_tool_arguments(args)
+                args_clean = clean_tool_arguments(args)
                 content = f"      └ {args_clean}"
                 return self._make_full_width_bar(content, f"{bg_alt}")
 
@@ -7767,7 +7276,7 @@ Type your question and press Enter to ask the agents.
                         result_part = raw[raw.index(": {") + 2 :]
                     elif "Results" in raw and "{" in raw:
                         result_part = raw[raw.index("{") :]
-                    clean_result = _clean_tool_result(result_part)
+                    clean_result = clean_tool_result(result_part)
                     content = f"      └ {clean_result}"
                     return self._make_full_width_bar(content, f"{bg_alt}")
 
@@ -7776,13 +7285,13 @@ Type your question and press Enter to ask the agents.
                     args_part = raw
                     if "Arguments:" in raw:
                         args_part = raw[raw.index("Arguments:") :]
-                    clean_args = _clean_tool_arguments(args_part)
+                    clean_args = clean_tool_arguments(args_part)
                     content = f"      └ {clean_args}"
                     return self._make_full_width_bar(content, f"{bg_alt}")
 
                 # Check if it looks like raw dict/JSON output
                 if "{" in raw and "}" in raw:
-                    clean = _clean_tool_result(raw)
+                    clean = clean_tool_result(raw)
                     content = f"      └ {clean}"
                     return self._make_full_width_bar(content, f"{bg_alt}")
 
@@ -8280,22 +7789,10 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
 
-                # Look for the most recent TaskPlanCard by active task plan ID
-                task_plan_card = None
-                if self._active_task_plan_id:
-                    try:
-                        from massgen.frontend.displays.textual_widgets import (
-                            TaskPlanCard,
-                        )
+                # Prefer pinned TaskPlanCard hosted above timeline
+                task_plan_card = self._task_plan_host.get_task_plan_card()
 
-                        task_plan_card = timeline.query_one(
-                            f"#task_plan_{self._active_task_plan_id}",
-                            TaskPlanCard,
-                        )
-                    except Exception:
-                        pass
-
-                # If no card found by ID, try to find any TaskPlanCard in timeline
+                # If no pinned card found, try to find any TaskPlanCard in timeline
                 if not task_plan_card:
                     try:
                         from massgen.frontend.displays.textual_widgets import (
@@ -8330,26 +7827,10 @@ Type your question and press Enter to ask the agents.
                 self.content_log.write(Text(f"💡 Reminder: {preview}", style="bold yellow"))
 
         def _is_planning_mcp_tool(self, tool_name: str) -> bool:
-            """Check if a tool is a Planning MCP tool (should show TaskPlanCard instead of tool card).
+            """Check if a tool is a Planning MCP tool (should show TaskPlanCard instead of tool card)."""
+            from massgen.frontend.displays.task_plan_support import is_planning_tool
 
-            Args:
-                tool_name: The tool name to check
-
-            Returns:
-                True if this is a Planning MCP tool
-            """
-            planning_tools = [
-                "create_task_plan",
-                "update_task_status",
-                "add_task",
-                "edit_task",
-                "get_task_plan",
-                "delete_task",
-                "get_ready_tasks",
-                "get_blocked_tasks",
-            ]
-            tool_lower = tool_name.lower()
-            return any(pt in tool_lower for pt in planning_tools)
+            return is_planning_tool(tool_name)
 
         def _is_subagent_tool(self, tool_name: str) -> bool:
             """Check if a tool is a subagent tool (should show SubagentCard instead of tool card).
@@ -8690,106 +8171,12 @@ Type your question and press Enter to ask the agents.
             tui_log(f"_check_and_display_subagent_card: added SubagentCard with {len(subagents)} subagents")
 
         def _check_and_display_task_plan(self, tool_data, timeline) -> None:
-            """Check if tool result is from Planning MCP and display/update TaskPlanCard.
-
-            Instead of adding a new card each time, this method:
-            - Creates a single persistent TaskPlanCard on first create_task_plan
-            - Updates that same card in place for subsequent updates
-
-            Planning MCP tools include:
-            - create_task_plan
-            - update_task_status
-            - add_task
-            - edit_task
-            - get_task_plan
-            """
-            import json
-
-            # Planning MCP tool names
-            PLANNING_TOOLS = {
-                "create_task_plan": "create",
-                "update_task_status": "update",
-                "add_task": "add",
-                "edit_task": "edit",
-                "get_task_plan": "get",
-            }
-
-            # Check if tool name matches a planning tool
-            tool_name = tool_data.tool_name.lower()
-            tui_log(f"_check_and_display_task_plan: tool_name={tool_name}")
-            operation = None
-            for planning_tool, op in PLANNING_TOOLS.items():
-                if planning_tool in tool_name:
-                    operation = op
-                    break
-
-            if not operation:
-                tui_log(f"_check_and_display_task_plan: no operation match for {tool_name}")
-                return
-
-            # Try to parse the result as JSON to extract tasks
-            result = tool_data.result_full
-            tui_log(f"_check_and_display_task_plan: result_full={result[:200] if result else 'None'}...")
-            if not result:
-                tui_log("_check_and_display_task_plan: no result_full")
-                return
-
-            try:
-                result_data = json.loads(result)
-            except (json.JSONDecodeError, TypeError) as e:
-                tui_log(f"_check_and_display_task_plan: JSON parse error: {e}")
-                return
-
-            # Check if the result has task data
-            if not isinstance(result_data, dict):
-                return
-
-            # Extract tasks list
-            tasks = []
-            focused_task_id = None
-
-            if "tasks" in result_data:
-                tasks = result_data["tasks"]
-            elif "plan" in result_data and isinstance(result_data["plan"], dict):
-                tasks = result_data["plan"].get("tasks", [])
-
-            # For update_task_status, update the existing task plan with the new status
-            if operation in ("update", "edit") and "task" in result_data:
-                updated_task = result_data["task"]
-                focused_task_id = updated_task.get("id")
-                updated_status = updated_task.get("status")
-                tui_log(f"_check_and_display_task_plan: update/edit - task_id={focused_task_id}, new_status={updated_status}")
-
-                # If we have a cached task plan, update it with the new task status
-                if self._active_task_plan_tasks and not tasks:
-                    tasks = [t.copy() for t in self._active_task_plan_tasks]  # Deep copy task dicts
-                    # Update the task in our cached list
-                    task_found = False
-                    for i, task in enumerate(tasks):
-                        if task.get("id") == focused_task_id:
-                            tui_log(f"_check_and_display_task_plan: found task at index {i}, old_status={task.get('status')}")
-                            tasks[i] = updated_task.copy()  # Copy the updated task too
-                            task_found = True
-                            break
-                    if not task_found:
-                        tui_log(f"_check_and_display_task_plan: task {focused_task_id} NOT found in cached tasks")
-
-            if not tasks:
-                tui_log("_check_and_display_task_plan: no tasks found in result")
-                return
-
-            tui_log(f"_check_and_display_task_plan: found {len(tasks)} tasks, updating pinned area")
-
-            # Update the pinned task plan area (shows notification for updates)
-            self._update_pinned_task_plan(
-                tasks=tasks,
-                focused_task_id=focused_task_id,
-                operation=operation,
-                show_notification=(operation != "create"),  # Only show notification for updates
+            """Check if tool result is from Planning MCP and display/update TaskPlanCard."""
+            from massgen.frontend.displays.task_plan_support import (
+                update_task_plan_from_tool,
             )
 
-            # Update the agent panel's task plan tracking
-            self.update_task_plan(tasks, plan_id=tool_data.tool_id, operation=operation)
+            update_task_plan_from_tool(self._task_plan_host, tool_data, timeline, log=tui_log)
 
         def _clear_timeline(self):
             """Clear the timeline for a new session/round."""
@@ -8804,19 +8191,8 @@ Type your question and press Enter to ask the agents.
 
         def _reset_round_state(self):
             """Reset per-round state (task plan, background tools indicator, etc.)."""
-            # Clear task plan tracking
-            self._active_task_plan_id = None
-            self._active_task_plan_tasks = None
-
-            # Clear pinned task plan UI container
-            try:
-                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
-                pinned_container.remove_children()
-                pinned_container.add_class("hidden")
-                pinned_container.remove_class("collapsed")
-                self._task_plan_visible = True  # Reset visibility state for next round
-            except Exception:
-                pass
+            # Clear task plan tracking + UI
+            self._task_plan_host.clear()
 
             # Clear tools tracking (resets bg count) but keep visual timeline
             try:
@@ -9398,13 +8774,14 @@ Type your question and press Enter to ask the agents.
             Returns:
                 Formatted task plan string or None if no active plan.
             """
-            if not self._active_task_plan_tasks:
+            tasks = self._task_plan_host.get_active_tasks()
+            if not tasks:
                 return None
 
-            total = len(self._active_task_plan_tasks)
+            total = len(tasks)
             # Count both "completed" and "verified" as done
-            completed = sum(1 for t in self._active_task_plan_tasks if t.get("status") in ("completed", "verified"))
-            in_progress = sum(1 for t in self._active_task_plan_tasks if t.get("status") == "in_progress")
+            completed = sum(1 for t in tasks if t.get("status") in ("completed", "verified"))
+            in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
 
             # Format: "Tasks: 3/9" or "Tasks: 3/9 ●2" if tasks in progress
             task_text = f"Tasks: {completed}/{total}"

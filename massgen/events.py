@@ -117,6 +117,9 @@ class EventType:
     # Stream debugging (replaces streaming_debug.log)
     STREAM_CHUNK = "stream_chunk"
 
+    # Timeline transcript lines (debugging/parity checks)
+    TIMELINE_ENTRY = "timeline_entry"
+
     # Error events
     ERROR = "error"
 

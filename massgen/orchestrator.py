@@ -5722,6 +5722,13 @@ Your answer:"""
         context_labels = self.coordination_tracker.get_agent_context_labels(agent_id)
         round_type = "voting" if answers else "initial_answer"
 
+        # Emit round_start event for TUI display (round banners)
+        from massgen.logger_config import get_event_emitter
+
+        event_emitter = get_event_emitter()
+        if event_emitter:
+            event_emitter.emit_round_start(round_number=current_round, agent_id=agent_id)
+
         span_attributes = {
             "massgen.agent_id": agent_id,
             "massgen.iteration": self.coordination_tracker.current_iteration,

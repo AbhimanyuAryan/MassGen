@@ -16,6 +16,8 @@ from textual.events import Click
 from textual.message import Message
 from textual.widgets import Static
 
+from massgen.frontend.displays.shared import format_tool_display_name, get_tool_category
+
 if TYPE_CHECKING:
     pass
 
@@ -82,204 +84,13 @@ class InjectionToggle(Static):
         logger.info("[InjectionToggle] callback completed")
 
 
-# Tool category detection - maps tool names to semantic categories
-# Icons removed - rely on color-coded left border for category indication
-TOOL_CATEGORIES = {
-    "filesystem": {
-        "color": "#5a9d8a",  # Softer teal (was #4ec9b0)
-        "patterns": [
-            "read_file",
-            "write_file",
-            "list_directory",
-            "create_directory",
-            "delete_file",
-            "move_file",
-            "copy_file",
-            "file_exists",
-            "get_file_info",
-            "read_multiple_files",
-            "edit_file",
-            "directory_tree",
-            "search_files",
-            "find_files",
-        ],
-    },
-    "web": {
-        "color": "#6a8db0",  # Softer blue (was #569cd6)
-        "patterns": [
-            "web_search",
-            "search_web",
-            "google_search",
-            "fetch_url",
-            "http_request",
-            "browse",
-            "scrape",
-            "download",
-        ],
-    },
-    "code": {
-        "color": "#b8b896",  # Softer yellow (was #dcdcaa)
-        "patterns": [
-            "execute_command",
-            "run_code",
-            "bash",
-            "python",
-            "shell",
-            "terminal",
-            "exec",
-            "run_script",
-            "execute",
-        ],
-    },
-    "database": {
-        "color": "#a67db0",  # Softer purple (was #c586c0)
-        "patterns": [
-            "query",
-            "sql",
-            "database",
-            "db_",
-            "select",
-            "insert",
-            "update",
-            "delete_record",
-        ],
-    },
-    "git": {
-        "color": "#c06050",  # Softer red (was #f14e32)
-        "patterns": [
-            "git_",
-            "commit",
-            "push",
-            "pull",
-            "clone",
-            "branch",
-            "merge",
-            "checkout",
-            "diff",
-            "log",
-            "status",
-        ],
-    },
-    "api": {
-        "color": "#a88068",  # Softer orange (was #ce9178)
-        "patterns": [
-            "api_",
-            "request",
-            "post",
-            "get",
-            "put",
-            "patch",
-            "rest",
-            "graphql",
-            "endpoint",
-        ],
-    },
-    "ai": {
-        "color": "#7ab0d0",  # Softer cyan (was #9cdcfe)
-        "patterns": [
-            "generate",
-            "complete",
-            "chat",
-            "embed",
-            "model",
-            "inference",
-            "predict",
-            "classify",
-        ],
-    },
-    "memory": {
-        "color": "#90b088",  # Softer green (was #b5cea8)
-        "patterns": [
-            "memory",
-            "remember",
-            "recall",
-            "store",
-            "retrieve",
-            "knowledge",
-            "context",
-        ],
-    },
-    "workspace": {
-        "color": "#50a8c8",  # Softer blue (was #4fc1ff)
-        "patterns": [
-            "workspace",
-            "new_answer",
-            "vote",
-            "answer",
-            "coordination",
-        ],
-    },
-    "human_input": {
-        "color": "#b89040",  # Softer gold (was #d29922)
-        "patterns": [
-            "human_input",
-            "user_input",
-            "injected_input",
-        ],
-    },
-    "subagent": {
-        "color": "#9070c0",  # Softer purple (was #9070c0)
-        "patterns": [
-            "spawn_subagent",
-            "subagent",
-            "list_subagents",
-            "get_subagent_result",
-            "check_subagent_status",
-        ],
-    },
-}
+# Tool category utilities imported from shared module
 
 
-def get_tool_category(tool_name: str) -> dict:
-    """Get category info for a tool name.
-
-    Args:
-        tool_name: The tool name to categorize.
-
-    Returns:
-        Dict with color and category name.
-    """
-    tool_lower = tool_name.lower()
-
-    # Check MCP tools (format: mcp__server__tool)
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
-        if len(parts) >= 3:
-            actual_tool = parts[-1]
-            tool_lower = actual_tool.lower()
-
-    # Check against category patterns
-    for category_name, info in TOOL_CATEGORIES.items():
-        for pattern in info["patterns"]:
-            if pattern in tool_lower:
-                return {
-                    "color": info["color"],
-                    "category": category_name,
-                }
-
-    # Default to generic tool
-    return {"color": "#858585", "category": "tool"}
+# get_tool_category imported from shared module
 
 
-def format_tool_display_name(tool_name: str) -> str:
-    """Format tool name for display.
-
-    Args:
-        tool_name: Raw tool name.
-
-    Returns:
-        Formatted display name.
-    """
-    # Handle MCP tools: mcp__server__tool -> server/tool
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
-        if len(parts) >= 3:
-            return f"{parts[1]}/{parts[2]}"
-        elif len(parts) == 2:
-            return parts[1]
-
-    # Handle snake_case
-    return tool_name.replace("_", " ").title()
+# format_tool_display_name imported from shared module
 
 
 class ToolCallCard(Static):

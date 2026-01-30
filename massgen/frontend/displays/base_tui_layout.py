@@ -31,6 +31,7 @@ from .content_handlers import (
     ToolDisplayData,
 )
 from .content_normalizer import ContentNormalizer, NormalizedContent
+from .shared import tui_log
 
 
 def _process_line_buffer(
@@ -60,13 +61,7 @@ def _process_line_buffer(
     return buffer
 
 
-def tui_log(msg: str) -> None:
-    """Log to TUI debug file."""
-    try:
-        with open("/tmp/tui_debug.log", "a") as f:
-            f.write(f"[BaseTUILayout] {msg}\n")
-    except Exception:
-        pass
+# tui_log imported from shared module
 
 
 class BaseTUILayoutMixin:
@@ -553,14 +548,14 @@ class BaseTUILayoutMixin:
                 timeline.clear_tools_tracking()
 
             # Add "Round X" banner
-            if round_number > 1:
-                subtitle = "Restart"
+            if round_number >= 1:
+                subtitle = "Restart" if round_number > 1 else None
                 if is_context_reset:
-                    subtitle += " • Context cleared"
+                    subtitle = (subtitle or "") + " • Context cleared"
                 timeline.add_separator(
                     f"Round {round_number}",
                     round_number=round_number,
-                    subtitle=subtitle,
+                    subtitle=subtitle if subtitle else None,
                 )
         except Exception as e:
             tui_log(f"start_new_round error: {e}")

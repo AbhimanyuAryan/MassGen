@@ -1,0 +1,121 @@
+# -*- coding: utf-8 -*-
+"""
+Shared helpers for Planning MCP task plan display.
+
+This keeps the main TUI and subagent TUI in sync by centralizing:
+- planning tool detection
+- task plan extraction from tool results
+- pinned TaskPlanCard updates
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Callable, Dict, List, Optional
+
+# Planning MCP tool names -> operation label
+_PLANNING_TOOL_OPERATIONS = {
+    "create_task_plan": "create",
+    "update_task_status": "update",
+    "add_task": "add",
+    "edit_task": "edit",
+    "get_task_plan": "get",
+}
+
+# Planning tool names used for tool filtering (skip normal tool cards)
+_PLANNING_TOOL_NAMES = {
+    "create_task_plan",
+    "update_task_status",
+    "add_task",
+    "edit_task",
+    "get_task_plan",
+    "delete_task",
+    "get_ready_tasks",
+    "get_blocked_tasks",
+}
+
+
+def is_planning_tool(tool_name: str) -> bool:
+    """Return True if tool_name matches a Planning MCP tool."""
+    tool_lower = tool_name.lower()
+    return any(name in tool_lower for name in _PLANNING_TOOL_NAMES)
+
+
+def update_task_plan_from_tool(
+    host: Any,
+    tool_data: Any,
+    timeline: Any,
+    log: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Update the pinned task plan from a Planning MCP tool result.
+
+    Expects host to provide:
+    - get_active_tasks() -> Optional[List[Dict[str, Any]]]
+    - update_pinned_task_plan(...)
+    - update_task_plan(...)
+
+    Returns True if a planning tool was handled, False otherwise.
+    """
+
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+
+    tool_name = tool_data.tool_name.lower()
+    operation = None
+    for planning_tool, op in _PLANNING_TOOL_OPERATIONS.items():
+        if planning_tool in tool_name:
+            operation = op
+            break
+
+    if not operation:
+        return False
+
+    result = tool_data.result_full
+    _log(f"_task_plan: tool_name={tool_name}")
+    if not result:
+        _log("_task_plan: no result_full")
+        return True
+
+    try:
+        result_data = json.loads(result)
+    except (json.JSONDecodeError, TypeError) as exc:
+        _log(f"_task_plan: JSON parse error: {exc}")
+        return True
+
+    if not isinstance(result_data, dict):
+        return True
+
+    tasks: List[Dict[str, Any]] = []
+    focused_task_id: Optional[str] = None
+
+    if "tasks" in result_data:
+        tasks = result_data["tasks"]
+    elif "plan" in result_data and isinstance(result_data["plan"], dict):
+        tasks = result_data["plan"].get("tasks", [])
+
+    if operation in ("update", "edit") and "task" in result_data:
+        updated_task = result_data["task"]
+        focused_task_id = updated_task.get("id")
+
+        # If we have cached tasks and no explicit list, patch the cache
+        if host.get_active_tasks() and not tasks:
+            tasks = [t.copy() for t in host.get_active_tasks()]  # type: ignore[attr-defined]
+            for i, task in enumerate(tasks):
+                if task.get("id") == focused_task_id:
+                    tasks[i] = updated_task.copy()
+                    break
+
+    if not tasks:
+        _log("_task_plan: no tasks found")
+        return True
+
+    _log(f"_task_plan: updating pinned area with {len(tasks)} tasks")
+    host.update_pinned_task_plan(  # type: ignore[attr-defined]
+        tasks=tasks,
+        focused_task_id=focused_task_id,
+        operation=operation,
+        show_notification=(operation != "create"),
+    )
+    host.update_task_plan(tasks, plan_id=tool_data.tool_id, operation=operation)  # type: ignore[attr-defined]
+    return True

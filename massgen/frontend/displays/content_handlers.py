@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from .content_normalizer import ContentNormalizer, NormalizedContent
+from .shared import get_tool_category as shared_get_tool_category
 
 
 def get_mcp_server_name(tool_name: str) -> Optional[str]:
@@ -86,175 +87,34 @@ class ToolState:
     tool_call_id: Optional[str] = None  # Unique ID for this tool call  # Store full args when they arrive
 
 
-# Tool categories with icons and colors (same as tool_card.py)
-TOOL_CATEGORIES = {
-    "filesystem": {
-        "icon": "📁",
-        "color": "#4ec9b0",
-        "patterns": [
-            "read_file",
-            "write_file",
-            "list_directory",
-            "create_directory",
-            "delete_file",
-            "move_file",
-            "copy_file",
-            "file_exists",
-            "get_file_info",
-            "read_multiple_files",
-            "edit_file",
-            "directory_tree",
-            "search_files",
-            "find_files",
-        ],
-    },
-    "web": {
-        "icon": "🌐",
-        "color": "#569cd6",
-        "patterns": [
-            "web_search",
-            "search_web",
-            "google_search",
-            "fetch_url",
-            "http_request",
-            "browse",
-            "scrape",
-            "download",
-        ],
-    },
-    "code": {
-        "icon": "💻",
-        "color": "#dcdcaa",
-        "patterns": [
-            "execute_command",
-            "run_code",
-            "bash",
-            "python",
-            "shell",
-            "terminal",
-            "exec",
-            "run_script",
-            "execute",
-        ],
-    },
-    "database": {
-        "icon": "🗄️",
-        "color": "#c586c0",
-        "patterns": [
-            "query",
-            "sql",
-            "database",
-            "db_",
-            "select",
-            "insert",
-            "update",
-            "delete_record",
-        ],
-    },
-    "git": {
-        "icon": "📦",
-        "color": "#f14e32",
-        "patterns": [
-            "git_",
-            "commit",
-            "push",
-            "pull",
-            "clone",
-            "branch",
-            "merge",
-            "checkout",
-            "diff",
-            "log",
-            "status",
-        ],
-    },
-    "api": {
-        "icon": "🔌",
-        "color": "#ce9178",
-        "patterns": [
-            "api_",
-            "request",
-            "post",
-            "get",
-            "put",
-            "patch",
-            "rest",
-            "graphql",
-            "endpoint",
-        ],
-    },
-    "ai": {
-        "icon": "🤖",
-        "color": "#9cdcfe",
-        "patterns": [
-            "generate",
-            "complete",
-            "chat",
-            "embed",
-            "model",
-            "inference",
-            "predict",
-            "classify",
-        ],
-    },
-    "memory": {
-        "icon": "🧠",
-        "color": "#b5cea8",
-        "patterns": [
-            "memory",
-            "remember",
-            "recall",
-            "store",
-            "retrieve",
-            "knowledge",
-            "context",
-        ],
-    },
-    "workspace": {
-        "icon": "📝",
-        "color": "#4fc1ff",
-        "patterns": [
-            "workspace",
-            "new_answer",
-            "vote",
-            "answer",
-            "coordination",
-        ],
-    },
-    "human_input": {
-        "icon": "💬",
-        "color": "#d29922",  # Warning/gold color to match queued input banner
-        "patterns": [
-            "human_input",
-            "user_input",
-            "injected_input",
-        ],
-    },
-}
+# Tool category utilities imported from shared module
 
 
 def get_tool_category(tool_name: str) -> Dict[str, str]:
-    """Get category info for a tool name."""
-    tool_lower = tool_name.lower()
+    """Get category info for a tool name.
 
-    # Handle MCP tools (format: mcp__server__tool)
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
-        if len(parts) >= 3:
-            tool_lower = parts[-1].lower()
-
-    # Check against category patterns
-    for category_name, info in TOOL_CATEGORIES.items():
-        for pattern in info["patterns"]:
-            if pattern in tool_lower:
-                return {
-                    "icon": info["icon"],
-                    "color": info["color"],
-                    "category": category_name,
-                }
-
-    # Default to generic tool
-    return {"icon": "🔧", "color": "#858585", "category": "tool"}
+    Wrapper around shared.get_tool_category() that adds 'icon' field
+    for backwards compatibility with this module's existing code.
+    """
+    result = shared_get_tool_category(tool_name)
+    # Add default icon since shared version doesn't include icons
+    icon_map = {
+        "filesystem": "📁",
+        "web": "🌐",
+        "code": "💻",
+        "database": "🗄️",
+        "git": "📦",
+        "api": "🔌",
+        "ai": "🤖",
+        "memory": "🧠",
+        "workspace": "📝",
+        "human_input": "💬",
+        "weather": "🌤️",
+        "subagent": "🔗",
+        "tool": "🔧",
+    }
+    result["icon"] = icon_map.get(result.get("category", "tool"), "🔧")
+    return result
 
 
 def format_tool_display_name(tool_name: str) -> str:

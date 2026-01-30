@@ -405,13 +405,14 @@ class SubagentTuiModal(ModalScreen[None]):
         # Process the event and add to timeline
         output = self._content_processor.process_event(event, self._round_number)
         if output:
-            # Update round number from round_start events
-            if output.output_type == "separator" and output.round_number:
-                self._round_number = output.round_number
-
             try:
                 timeline = self.query_one("#subagent-timeline", TimelineSection)
-                self._apply_output_to_timeline(timeline, output)
+                outputs = output if isinstance(output, list) else [output]
+                for item in outputs:
+                    # Update round number from round_start events
+                    if item.output_type == "separator" and item.round_number:
+                        self._round_number = item.round_number
+                    self._apply_output_to_timeline(timeline, item)
             except Exception:
                 pass
 
@@ -525,11 +526,12 @@ class SubagentTuiModal(ModalScreen[None]):
             for event in events:
                 output = self._content_processor.process_event(event, self._round_number)
                 if output:
-                    # Update round number from round_start events
-                    if output.output_type == "separator" and output.round_number:
-                        self._round_number = output.round_number
-
-                    self._apply_output_to_timeline(timeline, output)
+                    outputs = output if isinstance(output, list) else [output]
+                    for item in outputs:
+                        # Update round number from round_start events
+                        if item.output_type == "separator" and item.round_number:
+                            self._round_number = item.round_number
+                        self._apply_output_to_timeline(timeline, item)
 
             # Flush any remaining batch
             final_output = self._content_processor.flush_pending_batch(self._round_number)

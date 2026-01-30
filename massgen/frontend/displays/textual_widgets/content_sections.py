@@ -556,6 +556,7 @@ class TimelineSection(ScrollableContainer):
         self._tools: Dict[str, ToolCallCard] = {}
         self._batches: Dict[str, ToolBatchCard] = {}  # batch_id -> ToolBatchCard
         self._tool_to_batch: Dict[str, str] = {}  # tool_id -> batch_id mapping
+        self._tool_rounds: Dict[str, int] = {}  # tool_id -> round_number
         self._item_count = 0
         self._reasoning_section_id = f"reasoning_{id}" if id else "reasoning_section"
         # Scroll mode: when True, auto-scroll is paused (user is reading history)
@@ -895,6 +896,12 @@ class TimelineSection(ScrollableContainer):
         widget_id = self.id or "unknown"
         with open("/tmp/tui_debug.log", "a") as f:
             f.write(f"DEBUG: TimelineSection.add_tool: panel={widget_id}, tool={tool_data.tool_name}, round={round_number}, viewed={self._viewed_round}\n")
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_tool
+
+            record_tool(tool_data, round_number, action="add")
+        except Exception:
+            pass
 
         card = ToolCallCard(
             tool_name=tool_data.tool_name,
@@ -910,6 +917,7 @@ class TimelineSection(ScrollableContainer):
         card.add_class(f"round-{round_number}")
 
         self._tools[tool_data.tool_id] = card
+        self._tool_rounds[tool_data.tool_id] = round_number
         self._item_count += 1
 
         try:
@@ -930,6 +938,13 @@ class TimelineSection(ScrollableContainer):
         """
         if tool_id not in self._tools:
             return
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_tool
+
+            round_number = self._tool_rounds.get(tool_id, self._viewed_round)
+            record_tool(tool_data, round_number, action="update")
+        except Exception:
+            pass
 
         card = self._tools[tool_id]
 
@@ -1011,6 +1026,12 @@ class TimelineSection(ScrollableContainer):
 
         self._batches[batch_id] = card
         self._item_count += 1
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_batch
+
+            record_batch(round_number, "start", batch_id, server_name)
+        except Exception:
+            pass
 
         try:
             self.mount(card)
@@ -1053,7 +1074,15 @@ class TimelineSection(ScrollableContainer):
 
         batch_card.add_tool(item)
         self._tool_to_batch[tool_data.tool_id] = batch_id
+        self._tool_rounds[tool_data.tool_id] = self._viewed_round
         self._auto_scroll()
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_batch_tool
+
+            round_number = self._tool_rounds.get(tool_data.tool_id, self._viewed_round)
+            record_batch_tool(tool_data, round_number, batch_id, "add")
+        except Exception:
+            pass
 
     def update_tool_in_batch(self, tool_id: str, tool_data: ToolDisplayData) -> bool:
         """Update a tool within a batch card.
@@ -1096,6 +1125,13 @@ class TimelineSection(ScrollableContainer):
 
         batch_card.update_tool(tool_id, item)
         self._auto_scroll()
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_batch_tool
+
+            round_number = self._tool_rounds.get(tool_id, self._viewed_round)
+            record_batch_tool(tool_data, round_number, batch_id, "update")
+        except Exception:
+            pass
         return True
 
     def get_batch(self, batch_id: str) -> Optional[ToolBatchCard]:
@@ -1178,6 +1214,17 @@ class TimelineSection(ScrollableContainer):
         self._batches[batch_id] = batch_card
         self._tool_to_batch[pending_tool_id] = batch_id
         self._tool_to_batch[new_tool_data.tool_id] = batch_id
+        self._tool_rounds[new_tool_data.tool_id] = round_number
+        try:
+            from massgen.frontend.displays.timeline_transcript import (
+                record_batch,
+                record_batch_tool,
+            )
+
+            record_batch(round_number, "convert", batch_id, server_name)
+            record_batch_tool(new_tool_data, round_number, batch_id, "add")
+        except Exception:
+            pass
 
         # Mount batch card right after the existing tool card, then remove the old card
         try:
@@ -1306,6 +1353,13 @@ class TimelineSection(ScrollableContainer):
                 # Short content - simple inline display
                 widget = Static(content, id=widget_id, classes=classes)
 
+            try:
+                from massgen.frontend.displays.timeline_transcript import record_text
+
+                record_text(content, text_class or "text", round_number)
+            except Exception:
+                pass
+
             # Tag with round class for navigation (scroll-to behavior)
             widget.add_class(f"round-{round_number}")
 
@@ -1362,6 +1416,14 @@ class TimelineSection(ScrollableContainer):
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
             logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
+            try:
+                from massgen.frontend.displays.timeline_transcript import (
+                    record_separator,
+                )
+
+                record_separator(label, round_number, subtitle)
+            except Exception:
+                pass
         except Exception as e:
             # Log the error but don't crash
             logger.error(f"TimelineSection.add_separator failed: {e}")
@@ -1406,6 +1468,12 @@ class TimelineSection(ScrollableContainer):
             f.write(
                 f"DEBUG add_reasoning: label={label}, current_card={self._current_reasoning_card is not None}, " f"current_label={self._current_batch_label}, content_preview={content_preview}\n",
             )
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_text
+
+            record_text(content, f"reasoning-{label.lower()}", round_number)
+        except Exception:
+            pass
 
         try:
             # Close batch if label changed

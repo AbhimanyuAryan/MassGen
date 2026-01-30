@@ -34,11 +34,12 @@ Features:
 
 import logging
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.message import Message
 from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Button, Static
@@ -160,14 +161,7 @@ class SubagentStatusLine(Static):
     }
     """
 
-    STATUS_ICONS = {
-        "completed": "✓",
-        "running": "●",
-        "pending": "○",
-        "error": "✗",
-        "timeout": "⏱",
-        "failed": "✗",
-    }
+    # STATUS_ICONS imported from shared module
 
     def __init__(self, status: str = "running", **kwargs) -> None:
         super().__init__(**kwargs)
@@ -213,6 +207,10 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
         background: $background;
     }
 
+    SubagentPanel .pinned-task-plan {
+        width: 100%;
+    }
+
     SubagentPanel #subagent-timeline {
         width: 100%;
         height: 100%;
@@ -232,11 +230,23 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
         self.agent_id = subagent.id  # For compatibility with BaseTUILayoutMixin
         self._subagent = subagent
         self._ribbon = ribbon
+        from massgen.frontend.displays.textual_widgets.task_plan_host import (
+            TaskPlanHost,
+        )
+
+        self._task_plan_host = TaskPlanHost(
+            agent_id=self.agent_id,
+            ribbon=self._ribbon,
+            id="subagent_task_plan",
+            classes="pinned-task-plan hidden",
+        )
 
         # Initialize content pipeline from mixin
         self.init_content_pipeline()
 
     def compose(self) -> ComposeResult:
+        # Pinned task plan (hidden until task plan created)
+        yield self._task_plan_host
         yield TimelineSection(id="subagent-timeline")
 
     # -------------------------------------------------------------------------
@@ -257,10 +267,48 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
     def set_ribbon(self, ribbon: AgentStatusRibbon) -> None:
         """Set the ribbon reference after mounting."""
         self._ribbon = ribbon
+        self._task_plan_host.set_ribbon(ribbon)
+
+    def update_task_plan(self, tasks: List[Dict[str, Any]], plan_id: Optional[str] = None, operation: str = "create") -> None:
+        """Update the active task plan for this subagent panel."""
+        self._task_plan_host.update_task_plan(tasks, plan_id=plan_id, operation=operation)
+
+    def _update_pinned_task_plan(
+        self,
+        tasks: List[Dict[str, Any]],
+        focused_task_id: Optional[str] = None,
+        operation: str = "update",
+        show_notification: bool = True,
+    ) -> None:
+        """Update the pinned task plan widget."""
+        try:
+            self._task_plan_host.update_pinned_task_plan(
+                tasks=tasks,
+                focused_task_id=focused_task_id,
+                operation=operation,
+                show_notification=show_notification,
+            )
+        except Exception:
+            pass
+
+    def _is_planning_mcp_tool(self, tool_name: str) -> bool:
+        """Check if a tool is a Planning MCP tool (skip normal tool cards)."""
+        from massgen.frontend.displays.task_plan_support import is_planning_tool
+
+        return is_planning_tool(tool_name)
+
+    def _check_and_display_task_plan(self, tool_data, timeline) -> None:
+        """Check if tool result is from Planning MCP and display/update TaskPlanCard."""
+        from massgen.frontend.displays.base_tui_layout import tui_log
+        from massgen.frontend.displays.task_plan_support import (
+            update_task_plan_from_tool,
+        )
+
+        update_task_plan_from_tool(self._task_plan_host, tool_data, timeline, log=tui_log)
 
 
-class SubagentScreen(Screen):
-    """Full-screen view for subagent execution.
+class SubagentView(Container):
+    """Reusable subagent view (used in screen and side panel).
 
     Provides full TUI parity with the main view:
     - Tab bar for multiple subagents
@@ -276,14 +324,20 @@ class SubagentScreen(Screen):
         ("shift+tab", "prev_subagent", "Previous Subagent"),
     ]
 
+    class CloseRequested(Message):
+        """Request the parent to close the subagent view."""
+
+        def __init__(self) -> None:
+            super().__init__()
+
     DEFAULT_CSS = """
-    SubagentScreen {
+    SubagentView {
         width: 100%;
         height: 100%;
         background: $background;
     }
 
-    SubagentScreen #subagent-content {
+    SubagentView #subagent-content {
         width: 100%;
         height: 1fr;
     }
@@ -297,6 +351,7 @@ class SubagentScreen(Screen):
         subagent: SubagentDisplayData,
         all_subagents: Optional[List[SubagentDisplayData]] = None,
         status_callback: Optional[Callable[[str], Optional[SubagentDisplayData]]] = None,
+        id: Optional[str] = None,
     ) -> None:
         """Initialize the subagent screen.
 
@@ -305,7 +360,7 @@ class SubagentScreen(Screen):
             all_subagents: All subagents for navigation (tab bar)
             status_callback: Callback to get updated status
         """
-        super().__init__()
+        super().__init__(id=id)
         self._subagent = subagent
         self._all_subagents = all_subagents or [subagent]
         self._current_index = 0
@@ -335,6 +390,7 @@ class SubagentScreen(Screen):
         self._inner_agents: List[str] = []
         self._inner_agent_models: Dict[str, str] = {}
         self._current_inner_agent: Optional[str] = None
+        self._tool_call_agent_map: Dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         # Build agent IDs and models for tab bar
@@ -423,7 +479,11 @@ class SubagentScreen(Screen):
             self._inner_tab_bar.update_agents(self._inner_agents, self._inner_agent_models)
             self._inner_tab_bar.set_active(self._current_inner_agent)
 
-        self._load_initial_events()
+        # Load events scoped to the selected inner agent (if available)
+        if self._current_inner_agent:
+            self._load_events_for_agent(self._current_inner_agent)
+        else:
+            self._load_initial_events()
 
         # Start polling if subagent is running
         if self._subagent.status in ("running", "pending"):
@@ -451,38 +511,58 @@ class SubagentScreen(Screen):
         agent_ids: List[str] = []
         agent_models: Dict[str, str] = {}
 
-        # Try to read from execution_metadata.yaml
-        # log_path is now the exact path to events.jsonl, so parent is the logs directory
         from pathlib import Path
 
+        # Try to read from execution_metadata.yaml using resolved events path
         try:
-            if self._subagent.log_path:
-                events_path = Path(self._subagent.log_path)
-                logs_dir = events_path.parent  # e.g., .../full_logs/
-                metadata_file = logs_dir / "execution_metadata.yaml"
+            metadata_file: Optional[Path] = None
+            events_file = self._resolve_events_file()
+            if events_file and events_file.exists():
+                candidate = events_file.parent / "execution_metadata.yaml"
+                if candidate.exists():
+                    metadata_file = candidate
 
-                if metadata_file.exists():
-                    with open(metadata_file, encoding="utf-8") as f:
-                        metadata = yaml.safe_load(f)
+            # Fallbacks if events path isn't available yet
+            if metadata_file is None and self._subagent.log_path:
+                log_path = Path(self._subagent.log_path)
+                if not log_path.is_absolute():
+                    log_path = (Path.cwd() / log_path).resolve()
 
-                    # Extract agents from config
-                    # Note: agents is a LIST, not a dict - each item has 'id' and 'backend' keys
-                    config = metadata.get("config", {})
-                    agents_list = config.get("agents", [])
+                if log_path.is_dir():
+                    candidate = log_path / "full_logs" / "execution_metadata.yaml"
+                    if candidate.exists():
+                        metadata_file = candidate
+                    else:
+                        candidate = log_path / "execution_metadata.yaml"
+                        if candidate.exists():
+                            metadata_file = candidate
+                else:
+                    candidate = log_path.parent / "execution_metadata.yaml"
+                    if candidate.exists():
+                        metadata_file = candidate
 
-                    if isinstance(agents_list, list) and agents_list:
-                        for agent_cfg in agents_list:
-                            if isinstance(agent_cfg, dict):
-                                agent_id = agent_cfg.get("id")
-                                if agent_id:
-                                    agent_ids.append(agent_id)
-                                    # Get model from nested backend config
-                                    backend_cfg = agent_cfg.get("backend", {})
-                                    model = backend_cfg.get("model", "")
-                                    if model:
-                                        # Shorten model name for display
-                                        short_model = model.split("/")[-1]  # Handle "openai/gpt-4o" format
-                                        agent_models[agent_id] = short_model
+            if metadata_file and metadata_file.exists():
+                with open(metadata_file, encoding="utf-8") as f:
+                    metadata = yaml.safe_load(f)
+
+                # Extract agents from config
+                # Note: agents is a LIST, not a dict - each item has 'id' and 'backend' keys
+                config = metadata.get("config", {})
+                agents_list = config.get("agents", [])
+
+                if isinstance(agents_list, list) and agents_list:
+                    for agent_cfg in agents_list:
+                        if isinstance(agent_cfg, dict):
+                            agent_id = agent_cfg.get("id")
+                            if agent_id:
+                                agent_ids.append(agent_id)
+                                # Get model from nested backend config
+                                backend_cfg = agent_cfg.get("backend", {})
+                                model = backend_cfg.get("model", "")
+                                if model:
+                                    # Shorten model name for display
+                                    short_model = model.split("/")[-1]  # Handle "openai/gpt-4o" format
+                                    agent_models[agent_id] = short_model
 
         except Exception as e:
             print(f"[SubagentScreen] Error detecting inner agents: {e}")
@@ -493,13 +573,13 @@ class SubagentScreen(Screen):
             events = self._event_reader.read_all()
             for event in events:
                 # Check agent_id field
-                if event.agent_id and event.agent_id not in seen_ids:
+                if event.agent_id and self._is_agent_source(event.agent_id) and event.agent_id not in seen_ids:
                     seen_ids.add(event.agent_id)
                 # Also check data.source for backwards compatibility
                 source = event.data.get("source")
                 if not source:
                     source = (event.data.get("chunk") or {}).get("source")
-                if source and source not in seen_ids:
+                if source and self._is_agent_source(source) and source not in seen_ids:
                     seen_ids.add(source)
             agent_ids = sorted(seen_ids)
 
@@ -572,6 +652,7 @@ class SubagentScreen(Screen):
             return
 
         events = self._event_reader.read_all()
+        self._update_tool_call_agent_map(events)
         self._process_events(events)
 
         # Advance reader to end so polling only reads new events
@@ -621,7 +702,13 @@ class SubagentScreen(Screen):
         if self._event_reader and self._event_adapter:
             new_events = self._event_reader.get_new_events()
             if new_events:
-                self._process_events(new_events)
+                self._update_tool_call_agent_map(new_events)
+                if self._current_inner_agent:
+                    filtered = self._filter_events_for_agent(new_events, self._current_inner_agent)
+                    if filtered:
+                        self._process_events(filtered)
+                else:
+                    self._process_events(new_events)
 
         # Stop polling if completed
         if self._subagent.status not in ("running", "pending"):
@@ -677,7 +764,10 @@ class SubagentScreen(Screen):
                     timeline = self._panel._get_timeline()
                     if timeline:
                         timeline.clear()
-                self._load_initial_events()
+                if self._current_inner_agent:
+                    self._load_events_for_agent(self._current_inner_agent)
+                else:
+                    self._load_initial_events()
             except Exception:
                 pass
 
@@ -718,15 +808,15 @@ class SubagentScreen(Screen):
         if self._event_adapter:
             self._event_adapter.reset()
 
-        # Clear and reload timeline with filtered events
-        try:
-            if self._panel:
-                timeline = self._panel._get_timeline()
-                if timeline:
-                    timeline.clear()
-            self._load_events_for_agent(agent_id)
-        except Exception:
-            pass
+            # Clear and reload timeline with filtered events
+            try:
+                if self._panel:
+                    timeline = self._panel._get_timeline()
+                    if timeline:
+                        timeline.clear()
+                self._load_events_for_agent(agent_id)
+            except Exception:
+                pass
 
         # Update ribbon to show selected agent
         if self._ribbon:
@@ -746,27 +836,112 @@ class SubagentScreen(Screen):
             return
 
         events = self._event_reader.read_all()
-
-        # Filter by agent if specified
+        self._update_tool_call_agent_map(events)
         if agent_id:
-            filtered = []
-            for e in events:
-                if e.agent_id == agent_id:
-                    filtered.append(e)
-                    continue
-                source = e.data.get("source")
-                if not source:
-                    source = (e.data.get("chunk") or {}).get("source")
-                if source == agent_id:
-                    filtered.append(e)
-            events = filtered
-
+            events = self._filter_events_for_agent(events, agent_id)
         self._process_events(events)
+
+    def _filter_events_for_agent(self, events: List[MassGenEvent], agent_id: str) -> List[MassGenEvent]:
+        """Filter events to those relevant for a specific inner agent.
+
+        Uses tool_call_id -> agent mappings when available to keep tool calls aligned.
+        Falls back to source/agent_id matching for non-tool events.
+        """
+        filtered: List[MassGenEvent] = []
+
+        for event in events:
+            if event.event_type != "stream_chunk":
+                if event.agent_id == agent_id:
+                    filtered.append(event)
+                continue
+
+            chunk = event.data.get("chunk", {}) or {}
+            chunk_type = chunk.get("type")
+            tool_call_id = chunk.get("tool_call_id")
+            source = chunk.get("source") or event.data.get("source")
+            status = chunk.get("status")
+
+            # Drop MCP status noise to match main TUI sequencing (but keep tool outputs)
+            if chunk_type in ("mcp_status", "ChunkType.MCP_STATUS"):
+                if status != "function_call_output":
+                    continue
+            if chunk_type == "done":
+                continue
+
+            # Handle tool_calls bundle - filter by mapped agent
+            if chunk_type == "tool_calls":
+                tool_calls = chunk.get("tool_calls", []) or []
+                filtered_calls = []
+                for tc in tool_calls:
+                    tc_id = tc.get("id")
+                    mapped_agent = self._tool_call_agent_map.get(tc_id)
+                    if mapped_agent:
+                        if mapped_agent == agent_id:
+                            filtered_calls.append(tc)
+                    else:
+                        # If we can't map, include for this agent when available
+                        if event.agent_id == agent_id or len(self._inner_agents) <= 1:
+                            filtered_calls.append(tc)
+                if not filtered_calls:
+                    continue
+                new_chunk = {**chunk, "tool_calls": filtered_calls}
+                new_event = MassGenEvent(
+                    timestamp=event.timestamp,
+                    event_type=event.event_type,
+                    agent_id=event.agent_id,
+                    round_number=event.round_number,
+                    data={**event.data, "chunk": new_chunk},
+                )
+                filtered.append(new_event)
+                continue
+
+            # Handle tool-related chunks by tool_call_id mapping
+            if tool_call_id:
+                mapped_agent = self._tool_call_agent_map.get(tool_call_id)
+                if mapped_agent and mapped_agent == agent_id:
+                    filtered.append(event)
+                elif mapped_agent is None and (event.agent_id == agent_id or len(self._inner_agents) <= 1):
+                    filtered.append(event)
+                continue
+
+            # Fallback to source/agent_id matching
+            if source == agent_id or event.agent_id == agent_id:
+                filtered.append(event)
+
+        return filtered
+
+    def _update_tool_call_agent_map(self, events: List[MassGenEvent]) -> None:
+        """Update tool_call_id -> agent_id mapping from hook_execution events."""
+        for event in events:
+            if event.event_type != "stream_chunk":
+                continue
+            chunk = event.data.get("chunk", {}) or {}
+            if chunk.get("type") != "hook_execution":
+                continue
+            tool_call_id = chunk.get("tool_call_id")
+            source = chunk.get("source")
+            if tool_call_id and source and self._is_agent_source(source):
+                self._tool_call_agent_map.setdefault(tool_call_id, source)
+
+    def _is_agent_source(self, source: Optional[str]) -> bool:
+        """Check if a source string looks like an inner agent ID (not MCP/hook/system)."""
+        if not source:
+            return False
+        lowered = source.lower()
+        if lowered.startswith("mcp_") or lowered.startswith("mcp__") or "mcp__" in lowered:
+            return False
+        if lowered in ("mcp_setup", "mcp_session"):
+            return False
+        if "task_reminder" in lowered or "high_priority_task_reminder" in lowered:
+            return False
+        if lowered.startswith("hook_") or lowered.endswith("_hook"):
+            return False
+        return True
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id in ("back_btn", "back_btn_footer"):
-            self.dismiss()
+            self._request_close()
         elif event.button.id == "copy_btn":
             self._copy_answer()
 
@@ -799,7 +974,7 @@ class SubagentScreen(Screen):
 
     def action_close(self) -> None:
         """Close the screen and return to main view."""
-        self.dismiss()
+        self._request_close()
 
     def action_next_subagent(self) -> None:
         """Navigate to next subagent."""
@@ -826,3 +1001,42 @@ class SubagentScreen(Screen):
                 self.notify("pyperclip not installed - cannot copy", severity="warning")
             except Exception as e:
                 self.notify(f"Failed to copy: {e}", severity="error")
+
+    def _request_close(self) -> None:
+        """Request the parent to close the view."""
+        self.post_message(self.CloseRequested())
+
+
+class SubagentScreen(Screen):
+    """Screen wrapper for the reusable SubagentView."""
+
+    DEFAULT_CSS = """
+    SubagentScreen {
+        width: 100%;
+        height: 100%;
+        background: $background;
+    }
+    """
+
+    def __init__(
+        self,
+        subagent: SubagentDisplayData,
+        all_subagents: Optional[List[SubagentDisplayData]] = None,
+        status_callback: Optional[Callable[[str], Optional[SubagentDisplayData]]] = None,
+    ) -> None:
+        super().__init__()
+        self._subagent = subagent
+        self._all_subagents = all_subagents
+        self._status_callback = status_callback
+
+    def compose(self) -> ComposeResult:
+        yield SubagentView(
+            subagent=self._subagent,
+            all_subagents=self._all_subagents,
+            status_callback=self._status_callback,
+            id="subagent-view",
+        )
+
+    def on_subagent_view_close_requested(self, event: SubagentView.CloseRequested) -> None:
+        event.stop()
+        self.dismiss()
