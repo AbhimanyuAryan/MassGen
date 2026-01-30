@@ -36,6 +36,7 @@ class TimelineEventAdapter:
         self._round_number = 1
         self._tool_count = 0
         self._final_answer: Optional[str] = None
+        self._last_separator_round = 0
         self._on_output_applied = on_output_applied
 
     @property
@@ -52,6 +53,7 @@ class TimelineEventAdapter:
         self._round_number = 1
         self._tool_count = 0
         self._final_answer = None
+        self._last_separator_round = 0
 
     def set_round_number(self, round_number: int) -> None:
         """Set the current round number (e.g., on restart)."""
@@ -283,7 +285,13 @@ class TimelineEventAdapter:
                 except Exception:
                     pass
         elif output.output_type == "separator":
-            self._round_number = output.round_number or self._round_number
+            round_number = output.round_number or self._round_number
+            label = output.separator_label or ""
+            if label.startswith("Round ") and round_number <= self._last_separator_round:
+                return
+            if label.startswith("Round "):
+                self._last_separator_round = round_number
+            self._round_number = round_number
             if hasattr(self._panel, "start_new_round"):
                 try:
                     self._panel.start_new_round(self._round_number, is_context_reset=False)

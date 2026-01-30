@@ -169,11 +169,20 @@ class SubagentCard(Vertical, can_focus=True):
         padding: 1 1;
         margin: 0 0 1 1;
         background: #1a1f2e;
-        border-left: thick #7c3aed;
+        border-left: tall #7c3aed;
+    }
+
+    SubagentCard.all-completed {
+        border-left: tall #7ee787;
+        background: #1a2420;
     }
 
     SubagentCard:hover {
         background: #1e2436;
+    }
+
+    SubagentCard.all-completed:hover {
+        background: #1e2c26;
     }
 
     SubagentCard #subagent-scroll {
@@ -293,6 +302,9 @@ class SubagentCard(Vertical, can_focus=True):
         if any(sa.status in ("running", "pending") for sa in self._subagents):
             self._refresh_columns()
         else:
+            # All subagents finished — apply completed styling
+            self.add_class("all-completed")
+            self._refresh_columns()
             if self._poll_timer:
                 self._poll_timer.stop()
                 self._poll_timer = None
@@ -333,8 +345,8 @@ class SubagentCard(Vertical, can_focus=True):
         if sa.status == "completed" and sa.answer_preview:
             # Truncate answer to fit in summary line
             answer = sa.answer_preview.strip()
-            if len(answer) > 50:
-                answer = answer[:47] + "..."
+            if len(answer) > 80:
+                answer = answer[:77] + "..."
             return f"✓ {answer}"
 
         plan_summary = self._get_plan_summary(sa)

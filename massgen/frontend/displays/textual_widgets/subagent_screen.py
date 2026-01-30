@@ -193,6 +193,23 @@ class SubagentStatusLine(Static):
         self.refresh()
 
 
+class _AgentTimelineProxy:
+    """Routes a TimelineEventAdapter to a specific timeline within SubagentPanel."""
+
+    def __init__(self, panel: "SubagentPanel", timeline_id: str) -> None:
+        self._panel = panel
+        self._timeline_id = timeline_id
+
+    def _get_timeline(self) -> Optional[TimelineSection]:
+        try:
+            return self._panel.query_one(f"#{self._timeline_id}", TimelineSection)
+        except Exception:
+            return None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._panel, name)
+
+
 class SubagentPanel(Container, BaseTUILayoutMixin):
     """Panel for subagent content - inherits content pipeline from BaseTUILayoutMixin.
 
@@ -211,7 +228,7 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
         width: 100%;
     }
 
-    SubagentPanel #subagent-timeline {
+    SubagentPanel TimelineSection {
         width: 100%;
         height: 100%;
         padding: 1 2;
@@ -230,6 +247,7 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
         self.agent_id = subagent.id  # For compatibility with BaseTUILayoutMixin
         self._subagent = subagent
         self._ribbon = ribbon
+        self._active_timeline_id: Optional[str] = None
         from massgen.frontend.displays.textual_widgets.task_plan_host import (
             TaskPlanHost,
         )
@@ -247,16 +265,56 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
     def compose(self) -> ComposeResult:
         # Pinned task plan (hidden until task plan created)
         yield self._task_plan_host
-        yield TimelineSection(id="subagent-timeline")
+        # Timelines are mounted dynamically via mount_agent_timelines()
+
+    # -------------------------------------------------------------------------
+    # Multi-timeline management
+    # -------------------------------------------------------------------------
+
+    def mount_agent_timelines(self, agent_ids: List[str]) -> None:
+        """Mount one timeline per inner agent. All start hidden except the first."""
+        # Remove any existing timelines first to avoid duplicate IDs
+        for tl in list(self.query(TimelineSection)):
+            tl.remove()
+        self._active_timeline_id = None
+
+        for i, aid in enumerate(agent_ids):
+            tl = TimelineSection(id=f"subagent-timeline-{aid}")
+            if i > 0:
+                tl.add_class("hidden")
+            self.mount(tl)
+        self._active_timeline_id = f"subagent-timeline-{agent_ids[0]}" if agent_ids else None
+
+    def switch_timeline(self, agent_id: str) -> None:
+        """Show one timeline, hide the rest."""
+        new_id = f"subagent-timeline-{agent_id}"
+        if new_id == self._active_timeline_id:
+            return
+        # Hide current
+        if self._active_timeline_id:
+            try:
+                old = self.query_one(f"#{self._active_timeline_id}", TimelineSection)
+                old.add_class("hidden")
+            except Exception:
+                pass
+        # Show new
+        try:
+            new = self.query_one(f"#{new_id}", TimelineSection)
+            new.remove_class("hidden")
+            self._active_timeline_id = new_id
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
     # BaseTUILayoutMixin abstract method implementations
     # -------------------------------------------------------------------------
 
     def _get_timeline(self) -> Optional[TimelineSection]:
-        """Get the TimelineSection widget (implements BaseTUILayoutMixin)."""
+        """Get the active TimelineSection widget (implements BaseTUILayoutMixin)."""
+        if not self._active_timeline_id:
+            return None
         try:
-            return self.query_one("#subagent-timeline", TimelineSection)
+            return self.query_one(f"#{self._active_timeline_id}", TimelineSection)
         except Exception:
             return None
 
@@ -374,9 +432,12 @@ class SubagentView(Container):
         self._status_callback = status_callback
         self._poll_timer: Optional[Timer] = None
         self._event_reader: Optional[EventReader] = None
-        self._event_adapter: Optional[TimelineEventAdapter] = None
         self._round_number = 1
         self._final_answer: Optional[str] = None
+
+        # Per-agent adapters (keyed by agent_id)
+        self._event_adapters: Dict[str, TimelineEventAdapter] = {}
+        self._agents_loaded: set[str] = set()
 
         # References to widgets (set after compose)
         self._header: Optional[SubagentHeader] = None
@@ -467,7 +528,7 @@ class SubagentView(Container):
         except Exception:
             pass
 
-        # Initialize event reader and load content
+        # Initialize event reader
         self._init_event_reader()
 
         # Detect inner agents and update the inner tab bar
@@ -479,11 +540,14 @@ class SubagentView(Container):
             self._inner_tab_bar.update_agents(self._inner_agents, self._inner_agent_models)
             self._inner_tab_bar.set_active(self._current_inner_agent)
 
-        # Load events scoped to the selected inner agent (if available)
+        # Mount one timeline per inner agent
+        if self._panel:
+            self._panel.mount_agent_timelines(self._inner_agents)
+
+        # Load events for the first (default) agent
         if self._current_inner_agent:
             self._load_events_for_agent(self._current_inner_agent)
-        else:
-            self._load_initial_events()
+            self._agents_loaded.add(self._current_inner_agent)
 
         # Start polling if subagent is running
         if self._subagent.status in ("running", "pending"):
@@ -607,11 +671,6 @@ class SubagentView(Container):
         if events_file.exists():
             logger.info(f"[SubagentScreen] Using events file: {events_file}")
             self._event_reader = EventReader(events_file)
-            if self._panel:
-                self._event_adapter = TimelineEventAdapter(
-                    self._panel,
-                    agent_id=self._subagent.id,
-                )
         else:
             logger.warning(
                 f"[SubagentScreen] Events file does not exist: {events_file}",
@@ -647,13 +706,15 @@ class SubagentView(Container):
         return None
 
     def _load_initial_events(self) -> None:
-        """Load all existing events and build timeline."""
-        if not self._event_reader or not self._event_adapter:
+        """Load all existing events and build timeline (fallback for no inner agents)."""
+        if not self._event_reader or not self._panel:
             return
 
         events = self._event_reader.read_all()
         self._update_tool_call_agent_map(events)
-        self._process_events(events)
+        agent_id = self._current_inner_agent or self._subagent.id
+        self._load_events_for_agent(agent_id)
+        self._agents_loaded.add(agent_id)
 
         # Advance reader to end so polling only reads new events
         try:
@@ -661,27 +722,13 @@ class SubagentView(Container):
         except Exception:
             pass
 
-    def _process_events(self, events: List[MassGenEvent]) -> None:
-        """Process events and add to timeline."""
-        if not self._event_adapter or not self._panel:
-            logger.warning(
-                f"[SubagentScreen] Cannot process events: adapter={self._event_adapter is not None}, panel={self._panel is not None}",
-            )
-            return
-
-        logger.info(f"[SubagentScreen] Processing {len(events)} events")
-        for event in events:
-            self._event_adapter.handle_event(event)
-        self._event_adapter.flush()
-        self._sync_adapter_state()
-        self._update_status_display()
-
     def _sync_adapter_state(self) -> None:
-        """Sync round/final answer state from the event adapter."""
-        if not self._event_adapter:
-            return
-        self._round_number = self._event_adapter.round_number
-        self._final_answer = self._event_adapter.final_answer
+        """Sync round/final answer state from the active agent's adapter."""
+        agent_id = self._current_inner_agent
+        if agent_id and agent_id in self._event_adapters:
+            adapter = self._event_adapters[agent_id]
+            self._round_number = adapter.round_number
+            self._final_answer = adapter.final_answer
 
     def _poll_updates(self) -> None:
         """Poll for status and event updates."""
@@ -695,20 +742,34 @@ class SubagentView(Container):
         # Attempt to initialize event reader if it wasn't ready at mount time
         if self._event_reader is None:
             self._init_event_reader()
-            if self._event_reader and self._event_adapter:
+            if self._event_reader:
                 self._load_initial_events()
 
-        # Read new events
-        if self._event_reader and self._event_adapter:
+        # Read new events and route to all loaded adapters
+        if self._event_reader:
             new_events = self._event_reader.get_new_events()
             if new_events:
                 self._update_tool_call_agent_map(new_events)
-                if self._current_inner_agent:
-                    filtered = self._filter_events_for_agent(new_events, self._current_inner_agent)
-                    if filtered:
-                        self._process_events(filtered)
-                else:
-                    self._process_events(new_events)
+                for agent_id in list(self._agents_loaded):
+                    if agent_id in self._event_adapters:
+                        filtered = self._filter_events_for_agent(new_events, agent_id)
+                        if filtered:
+                            adapter = self._event_adapters[agent_id]
+                            for event in filtered:
+                                # Orchestrator uses 0-based rounds; display uses 1-based
+                                if event.event_type == "round_start":
+                                    display_round = (event.round_number or 0) + 1
+                                    event = MassGenEvent(
+                                        timestamp=event.timestamp,
+                                        event_type=event.event_type,
+                                        agent_id=event.agent_id,
+                                        round_number=display_round,
+                                        data=event.data,
+                                    )
+                                adapter.handle_event(event)
+                            adapter.flush()
+                self._sync_adapter_state()
+                self._update_status_display()
 
         # Stop polling if completed
         if self._subagent.status not in ("running", "pending"):
@@ -719,7 +780,9 @@ class SubagentView(Container):
     def _update_status_display(self) -> None:
         """Update status displays."""
         # Update status line
-        current_round = self._event_adapter.round_number if self._event_adapter else self._round_number
+        agent_id = self._current_inner_agent
+        adapter = self._event_adapters.get(agent_id) if agent_id else None
+        current_round = adapter.round_number if adapter else self._round_number
 
         if self._status_line:
             self._status_line.update_status(
@@ -736,7 +799,7 @@ class SubagentView(Container):
             self._tab_bar.update_agent_status(self._subagent.id, self._subagent.status)
 
     def _switch_subagent(self, index: int) -> None:
-        """Switch to a different subagent."""
+        """Switch to a different subagent (top-level switch — full rebuild needed)."""
         if 0 <= index < len(self._all_subagents):
             self._current_index = index
             self._subagent = self._all_subagents[index]
@@ -744,7 +807,15 @@ class SubagentView(Container):
             # Reset state
             self._round_number = 1
             self._final_answer = None
-            self._event_adapter = None
+            self._event_adapters.clear()
+            self._agents_loaded.clear()
+            self._tool_call_agent_map.clear()
+
+            # Remove old timelines
+            if self._panel:
+                for tl in list(self._panel.query(TimelineSection)):
+                    tl.remove()
+                self._panel._active_timeline_id = None
 
             # Re-initialize event reader
             self._init_event_reader()
@@ -758,18 +829,12 @@ class SubagentView(Container):
                 self._inner_tab_bar.update_agents(self._inner_agents, self._inner_agent_models)
                 self._inner_tab_bar.set_active(self._current_inner_agent)
 
-            # Clear and reload timeline
-            try:
-                if self._panel:
-                    timeline = self._panel._get_timeline()
-                    if timeline:
-                        timeline.clear()
-                if self._current_inner_agent:
-                    self._load_events_for_agent(self._current_inner_agent)
-                else:
-                    self._load_initial_events()
-            except Exception:
-                pass
+            # Mount new timelines and load first agent
+            if self._panel:
+                self._panel.mount_agent_timelines(self._inner_agents)
+            if self._current_inner_agent:
+                self._load_events_for_agent(self._current_inner_agent)
+                self._agents_loaded.add(self._current_inner_agent)
 
             # Update header
             if self._header:
@@ -793,30 +858,24 @@ class SubagentView(Container):
     def _switch_inner_agent(self, agent_id: str) -> None:
         """Switch to a different inner agent's timeline.
 
-        This filters the timeline to show only events from the selected agent.
-
-        Args:
-            agent_id: The agent ID to switch to
+        Toggles CSS visibility — no clear/rebuild needed.
         """
         if agent_id == self._current_inner_agent:
             return
 
         self._current_inner_agent = agent_id
 
-        # Reset content processor and reload events filtered by agent
-        self._round_number = 1
-        if self._event_adapter:
-            self._event_adapter.reset()
+        # Toggle timeline visibility
+        if self._panel:
+            self._panel.switch_timeline(agent_id)
 
-            # Clear and reload timeline with filtered events
-            try:
-                if self._panel:
-                    timeline = self._panel._get_timeline()
-                    if timeline:
-                        timeline.clear()
-                self._load_events_for_agent(agent_id)
-            except Exception:
-                pass
+        # Load events if this agent's timeline hasn't been populated yet
+        if agent_id not in self._agents_loaded:
+            self._load_events_for_agent(agent_id)
+            self._agents_loaded.add(agent_id)
+
+        # Sync state from the newly active adapter
+        self._sync_adapter_state()
 
         # Update ribbon to show selected agent
         if self._ribbon:
@@ -827,19 +886,43 @@ class SubagentView(Container):
             self._inner_tab_bar.set_active(agent_id)
 
     def _load_events_for_agent(self, agent_id: Optional[str]) -> None:
-        """Load events filtered by agent ID.
+        """Load events filtered by agent ID into that agent's dedicated timeline.
 
         Args:
             agent_id: The agent ID to filter by, or None for all events
         """
-        if not self._event_reader or not self._event_adapter:
+        if not self._event_reader or not self._panel:
             return
 
+        aid = agent_id or self._subagent.id
+
+        # Create adapter for this agent if needed
+        if aid not in self._event_adapters:
+            proxy = _AgentTimelineProxy(self._panel, f"subagent-timeline-{aid}")
+            self._event_adapters[aid] = TimelineEventAdapter(proxy, agent_id=aid)
+
+        adapter = self._event_adapters[aid]
         events = self._event_reader.read_all()
         self._update_tool_call_agent_map(events)
         if agent_id:
             events = self._filter_events_for_agent(events, agent_id)
-        self._process_events(events)
+
+        logger.info(f"[SubagentScreen] Loading {len(events)} events for agent {aid}")
+        for event in events:
+            # Orchestrator uses 0-based rounds; display uses 1-based
+            if event.event_type == "round_start":
+                display_round = (event.round_number or 0) + 1
+                event = MassGenEvent(
+                    timestamp=event.timestamp,
+                    event_type=event.event_type,
+                    agent_id=event.agent_id,
+                    round_number=display_round,
+                    data=event.data,
+                )
+            adapter.handle_event(event)
+        adapter.flush()
+        self._sync_adapter_state()
+        self._update_status_display()
 
     def _filter_events_for_agent(self, events: List[MassGenEvent], agent_id: str) -> List[MassGenEvent]:
         """Filter events to those relevant for a specific inner agent.
@@ -851,7 +934,11 @@ class SubagentView(Container):
 
         for event in events:
             if event.event_type != "stream_chunk":
-                if event.agent_id == agent_id:
+                if event.event_type == "round_start":
+                    # Session-level event — include for all agents (round 0 mapped later)
+                    if event.round_number is not None:
+                        filtered.append(event)
+                elif event.agent_id == agent_id:
                     filtered.append(event)
                 continue
 

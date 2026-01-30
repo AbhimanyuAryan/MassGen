@@ -418,6 +418,7 @@ class ContentProcessor:
 
         # For text content, use line buffering
         if normalized.content_type in ("thinking", "text", "content"):
+            had_trailing_newline = str(content).endswith("\n")
             cleaned = self._thinking_handler.process(normalized)
             if not cleaned:
                 return None, self._line_buffer
@@ -436,6 +437,8 @@ class ContentProcessor:
             self._last_text_class = text_class
 
             # Process with line buffering
+            if had_trailing_newline and cleaned and not cleaned.endswith("\n"):
+                cleaned = f"{cleaned}\n"
             self._line_buffer = _process_line_buffer(
                 self._line_buffer,
                 cleaned,

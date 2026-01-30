@@ -3847,6 +3847,12 @@ Type your question and press Enter to ask the agents.
                 try:
                     timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
 
+                    # Flush any pending tool batch so the card appears
+                    # after all preceding tools in chronological order
+                    if hasattr(panel, "_batch_tracker") and panel._batch_tracker:
+                        panel._batch_tracker.mark_content_arrived()
+                        panel._batch_tracker.finalize_current_batch()
+
                     # Create and add SubagentCard to timeline
                     card = SubagentCard(
                         subagents=subagents,

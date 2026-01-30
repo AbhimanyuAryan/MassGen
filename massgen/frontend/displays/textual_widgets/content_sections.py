@@ -13,7 +13,7 @@ Composable UI sections for displaying different content types:
 
 import logging
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -589,6 +589,10 @@ class TimelineSection(ScrollableContainer):
         self._locked_card_id: Optional[str] = None
         # Track if Round 1 banner has been shown
         self._round_1_shown = False
+        # Track highest round separator shown (for dedup)
+        self._last_round_shown = 0
+        # Track pending round separators to avoid duplicates before mount completes
+        self._pending_round_separators: set[int] = set()
 
     def compose(self) -> ComposeResult:
         # Scroll mode indicator (hidden by default)
@@ -597,9 +601,51 @@ class TimelineSection(ScrollableContainer):
 
     def _ensure_round_1_shown(self) -> None:
         """Ensure Round 1 banner is shown before any content."""
-        if not self._round_1_shown:
+        has_banner = self._has_round_banner(1)
+        try:
+            from massgen.frontend.displays.shared.tui_debug import tui_log
+
+            tui_log(
+                f"[ROUND_DEBUG] ensure_round_1_shown panel={self.id} round_1_shown={self._round_1_shown} has_banner={has_banner}",
+                level="info",
+            )
+        except Exception:
+            pass
+
+        if has_banner:
             self._round_1_shown = True
-            self.add_separator("Round 1", round_number=1)
+            self._last_round_shown = max(self._last_round_shown, 1)
+            return
+        if self._round_1_shown:
+            return
+        if 1 in self._pending_round_separators:
+            return
+        self._round_1_shown = True
+        insert_before = self._first_content_child()
+        self.add_separator("Round 1", round_number=1, before=insert_before)
+
+    def _has_round_banner(self, round_number: int) -> bool:
+        """Check if a RestartBanner exists for the given round."""
+        try:
+            for widget in self.query(f".round-{round_number}"):
+                if isinstance(widget, RestartBanner):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _first_content_child(self) -> Optional[Any]:
+        """Get the first timeline child after the scroll indicator, if any."""
+        try:
+            indicator = self.query_one("#scroll_mode_indicator", Static)
+        except Exception:
+            indicator = None
+
+        for child in self.children:
+            if indicator is not None and child is indicator:
+                continue
+            return child
+        return None
 
     def _log(self, msg: str) -> None:
         """Debug logging helper."""
@@ -904,11 +950,35 @@ class TimelineSection(ScrollableContainer):
                 # Add viewport-culled class to hide (display: none)
                 if "viewport-culled" not in child.classes:
                     child.add_class("viewport-culled")
+                    if isinstance(child, RestartBanner):
+                        try:
+                            from massgen.frontend.displays.shared.tui_debug import (
+                                tui_log,
+                            )
+
+                            tui_log(
+                                f"[ROUND_DEBUG] culled banner id={getattr(child, 'id', None)} classes={' '.join(sorted(child.classes))}",
+                                level="info",
+                            )
+                        except Exception:
+                            pass
 
             # Ensure remaining items are visible
             for child in content_children[items_to_hide:]:
                 if "viewport-culled" in child.classes:
                     child.remove_class("viewport-culled")
+                    if isinstance(child, RestartBanner):
+                        try:
+                            from massgen.frontend.displays.shared.tui_debug import (
+                                tui_log,
+                            )
+
+                            tui_log(
+                                f"[ROUND_DEBUG] unculled banner id={getattr(child, 'id', None)} classes={' '.join(sorted(child.classes))}",
+                                level="info",
+                            )
+                        except Exception:
+                            pass
 
         except Exception:
             pass
@@ -1405,18 +1475,53 @@ class TimelineSection(ScrollableContainer):
         except Exception:
             pass
 
-    def add_separator(self, label: str = "", round_number: int = 1, subtitle: str = "") -> None:
+    def add_separator(
+        self,
+        label: str = "",
+        round_number: int = 1,
+        subtitle: str = "",
+        *,
+        before: Optional[Any] = None,
+        after: Optional[Any] = None,
+    ) -> None:
         """Add a visual separator to the timeline.
 
         Args:
             label: Optional label for the separator
             round_number: The round this content belongs to (for view switching)
             subtitle: Optional subtitle (e.g., "Restart • Context cleared")
+            before: Optional widget to insert before
+            after: Optional widget to insert after
         """
         from massgen.logger_config import logger
 
+        try:
+            from massgen.frontend.displays.shared.tui_debug import tui_log
+
+            tui_log(
+                f"[ROUND_DEBUG] add_separator panel={self.id} label='{label}' round={round_number} before={bool(before)} after={bool(after)}",
+                level="info",
+            )
+        except Exception:
+            pass
+
         # Close any open reasoning batch
         self._close_reasoning_batch()
+
+        # Deduplicate round separators — multiple round_start events per round
+        if label.startswith("Round "):
+            if round_number in self._pending_round_separators or round_number <= self._last_round_shown:
+                try:
+                    from massgen.frontend.displays.shared.tui_debug import tui_log
+
+                    tui_log(
+                        f"[ROUND_DEBUG] add_separator_dedup panel={self.id} label='{label}' round={round_number}",
+                        level="info",
+                    )
+                except Exception:
+                    pass
+                return
+            self._pending_round_separators.add(round_number)
 
         self._item_count += 1
         widget_id = f"tl_sep_{self._item_count}"
@@ -1448,7 +1553,26 @@ class TimelineSection(ScrollableContainer):
             widget.add_class(f"round-{round_number}")
             logger.debug(f"TimelineSection.add_separator: Adding widget for round {round_number}")
 
-            self.mount(widget)
+            if before is not None:
+                self.mount(widget, before=before)
+            elif after is not None:
+                self.mount(widget, after=after)
+            else:
+                self.mount(widget)
+            if label.startswith("Round "):
+                self._last_round_shown = max(self._last_round_shown, round_number)
+                if round_number == 1:
+                    self._round_1_shown = True
+                self._pending_round_separators.discard(round_number)
+            try:
+                from massgen.frontend.displays.shared.tui_debug import tui_log
+
+                tui_log(
+                    f"[ROUND_DEBUG] add_separator_mounted panel={self.id} id={widget_id} classes={' '.join(sorted(widget.classes))}",
+                    level="info",
+                )
+            except Exception:
+                pass
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
             logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
@@ -1462,6 +1586,8 @@ class TimelineSection(ScrollableContainer):
                 pass
         except Exception as e:
             # Log the error but don't crash
+            if label.startswith("Round "):
+                self._pending_round_separators.discard(round_number)
             logger.error(f"TimelineSection.add_separator failed: {e}")
 
     def _close_reasoning_batch(self) -> None:
@@ -1584,12 +1710,13 @@ class TimelineSection(ScrollableContainer):
         if hasattr(self, "_truncation_shown_rounds"):
             self._truncation_shown_rounds.clear()
 
-        # Reset Round 1 shown flag
+        # Reset round tracking flags
         self._round_1_shown = False
+        self._last_round_shown = 0
+        self._pending_round_separators.clear()
 
         # Add initial Round 1 separator
         if add_round_1:
-            self._round_1_shown = True  # Set flag before adding to avoid re-entry
             self.add_separator("Round 1", round_number=1)
 
     def clear_tools_tracking(self) -> None:
