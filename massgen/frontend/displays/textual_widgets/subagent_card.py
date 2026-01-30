@@ -10,6 +10,7 @@ and opens the subagent view on click.
 from __future__ import annotations
 
 import json
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +47,7 @@ class SubagentColumn(Vertical):
     DEFAULT_CSS = """
     SubagentColumn {
         width: 1fr;
-        min-width: 28;
+        min-width: 32;
         height: auto;
         padding: 0 1;
         border-right: solid #30363d;
@@ -59,6 +60,14 @@ class SubagentColumn(Vertical):
 
     SubagentColumn .agent-header {
         text-style: bold;
+    }
+
+    SubagentColumn .task-description {
+        color: #c9d1d9;
+    }
+
+    SubagentColumn .progress-bar {
+        color: #8b949e;
     }
 
     SubagentColumn .summary-line {
@@ -93,6 +102,8 @@ class SubagentColumn(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("", classes="agent-header", id="agent_header")
+        yield Static("", classes="task-description", id="task_desc")
+        yield Static("", classes="progress-bar", id="progress_bar")
         yield Static("", classes="summary-line", id="summary_line")
         yield Static("", classes="tool-current", id="tool_current")
         yield Static("", classes="tool-recent", id="tool_recent_1")
@@ -112,11 +123,15 @@ class SubagentColumn(Vertical):
 
     def _update_display(self) -> None:
         header = self._build_header()
+        task_desc = self._build_task_description()
+        progress = self._build_progress_bar()
         summary = self._summary or ""
         current_tool, recent_tools = self._split_tools(self._tools)
 
         try:
             self.query_one("#agent_header", Static).update(header)
+            self.query_one("#task_desc", Static).update(task_desc)
+            self.query_one("#progress_bar", Static).update(progress)
             self.query_one("#summary_line", Static).update(summary)
             self.query_one("#tool_current", Static).update(current_tool)
             self.query_one("#tool_recent_1", Static).update(recent_tools[0] if recent_tools else "")
@@ -125,18 +140,96 @@ class SubagentColumn(Vertical):
             pass
 
     def _build_header(self) -> Text:
+        """Build header: status icon + name + elapsed time right-aligned."""
         text = Text()
         icon, style = SubagentCard.status_icon_and_style(self._subagent.status)
-        label = self._truncate(self._subagent.id, 24)
+        label = self._truncate(self._subagent.id, 20)
         text.append(f"{icon} ", style=style)
         text.append(label, style=style)
+
+        # Right-align elapsed time
+        elapsed = int(self._subagent.elapsed_seconds)
+        if elapsed > 0:
+            if elapsed >= 60:
+                elapsed_str = f"{elapsed // 60}m{elapsed % 60:02d}s"
+            else:
+                elapsed_str = f"{elapsed}s"
+            # Pad to push elapsed to the right
+            name_len = len(label) + 2  # icon + space + label
+            padding = max(1, 28 - name_len - len(elapsed_str))
+            text.append(" " * padding)
+            text.append(elapsed_str, style="#8b949e")
+
+        return text
+
+    def _build_task_description(self) -> Text:
+        """Build task description row (truncated)."""
+        task = self._subagent.task or ""
+        if not task:
+            return Text("")
+
+        # On completion, show answer preview instead
+        if self._subagent.status == "completed" and self._subagent.answer_preview:
+            preview = self._subagent.answer_preview.strip()
+            if len(preview) > 58:
+                preview = preview[:55] + "..."
+            text = Text()
+            text.append("✓ ", style="#7ee787")
+            text.append(preview, style="#7ee787 dim")
+            return text
+
+        truncated = task if len(task) <= 60 else task[:57] + "..."
+        return Text(truncated, style="#c9d1d9")
+
+    def _build_progress_bar(self) -> Text:
+        """Build progress bar using block characters (elapsed/timeout ratio)."""
+        elapsed = self._subagent.elapsed_seconds
+        timeout = self._subagent.timeout_seconds
+        status = self._subagent.status
+
+        if status in ("completed", "error", "failed", "timeout"):
+            # Completed states: full bar in appropriate color
+            bar_width = 20
+            if status == "completed":
+                bar = "█" * bar_width
+                text = Text()
+                text.append(bar, style="#7ee787")
+                text.append(" 100%", style="#7ee787")
+                return text
+            elif status in ("error", "failed"):
+                bar = "█" * bar_width
+                text = Text()
+                text.append(bar, style="#f85149")
+                text.append(" ERR", style="#f85149")
+                return text
+            else:  # timeout
+                bar = "█" * bar_width
+                text = Text()
+                text.append(bar, style="#d29922")
+                text.append(" T/O", style="#d29922")
+                return text
+
+        if timeout <= 0:
+            return Text("")
+
+        # Running: show progress based on elapsed/timeout
+        ratio = min(elapsed / timeout, 1.0)
+        percent = int(ratio * 100)
+        bar_width = 20
+        filled = int(ratio * bar_width)
+        empty = bar_width - filled
+
+        text = Text()
+        text.append("█" * filled, style="#a371f7")
+        text.append("░" * empty, style="#30363d")
+        text.append(f" {percent}%", style="#8b949e")
         return text
 
     def _split_tools(self, tools: List[str]) -> Tuple[str, List[str]]:
         if not tools:
-            return "idle", []
-        current = tools[0]
-        recent = tools[1:3]
+            return "", []
+        current = f"▸ {tools[0]}"
+        recent = [f"  {t}" for t in tools[1:3]]
         return current, recent
 
     @staticmethod
@@ -165,7 +258,7 @@ class SubagentCard(Vertical, can_focus=True):
     SubagentCard {
         width: 100%;
         height: auto;
-        min-height: 6;
+        min-height: 9;
         padding: 1 1;
         margin: 0 0 1 1;
         background: #1a1f2e;
@@ -188,7 +281,7 @@ class SubagentCard(Vertical, can_focus=True):
     SubagentCard #subagent-scroll {
         width: 100%;
         height: auto;
-        max-height: 8;
+        max-height: 12;
         overflow-x: auto;
         overflow-y: hidden;
     }
@@ -241,6 +334,14 @@ class SubagentCard(Vertical, can_focus=True):
         self._plan_cache: Dict[str, _PlanCache] = {}
         self._columns: Dict[str, SubagentColumn] = {}
         self._selected_index = 0
+        # Track start times for elapsed computation
+        self._start_times: Dict[str, float] = {}
+        now = time.monotonic()
+        for sa in self._subagents:
+            if sa.status in ("running", "pending"):
+                self._start_times[sa.id] = now - sa.elapsed_seconds
+            else:
+                self._start_times[sa.id] = now - sa.elapsed_seconds
 
     def compose(self) -> ComposeResult:
         with ScrollableContainer(id="subagent-scroll"):
@@ -298,6 +399,12 @@ class SubagentCard(Vertical, can_focus=True):
             if updated:
                 self._subagents = new_subagents
 
+        # Update elapsed_seconds from wall clock for running subagents
+        now = time.monotonic()
+        for sa in self._subagents:
+            if sa.status in ("running", "pending") and sa.id in self._start_times:
+                sa.elapsed_seconds = now - self._start_times[sa.id]
+
         # Always refresh tool lines for running subagents
         if any(sa.status in ("running", "pending") for sa in self._subagents):
             self._refresh_columns()
@@ -341,14 +448,6 @@ class SubagentCard(Vertical, can_focus=True):
                 column.update_content(sa, summary, tools)
 
     def _get_summary_line(self, sa: SubagentDisplayData) -> str:
-        # If completed, show final answer preview
-        if sa.status == "completed" and sa.answer_preview:
-            # Truncate answer to fit in summary line
-            answer = sa.answer_preview.strip()
-            if len(answer) > 80:
-                answer = answer[:77] + "..."
-            return f"✓ {answer}"
-
         plan_summary = self._get_plan_summary(sa)
         if plan_summary:
             return plan_summary

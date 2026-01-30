@@ -161,7 +161,15 @@ class SubagentStatusLine(Static):
     }
     """
 
-    # STATUS_ICONS imported from shared module
+    STATUS_ICONS = {
+        "running": "●",
+        "completed": "✓",
+        "error": "✗",
+        "failed": "✗",
+        "timeout": "⏱",
+        "pending": "○",
+        "success": "✓",
+    }
 
     def __init__(self, status: str = "running", **kwargs) -> None:
         super().__init__(**kwargs)
@@ -278,12 +286,27 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
             tl.remove()
         self._active_timeline_id = None
 
-        for i, aid in enumerate(agent_ids):
-            tl = TimelineSection(id=f"subagent-timeline-{aid}")
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        for aid in agent_ids:
+            if aid not in seen:
+                seen.add(aid)
+                unique_ids.append(aid)
+
+        for i, aid in enumerate(unique_ids):
+            widget_id = f"subagent-timeline-{aid}"
+            # Skip if a widget with this ID already exists (remove() is async)
+            try:
+                self.query_one(f"#{widget_id}")
+                continue
+            except Exception:
+                pass
+            tl = TimelineSection(id=widget_id)
             if i > 0:
                 tl.add_class("hidden")
             self.mount(tl)
-        self._active_timeline_id = f"subagent-timeline-{agent_ids[0]}" if agent_ids else None
+        self._active_timeline_id = f"subagent-timeline-{unique_ids[0]}" if unique_ids else None
 
     def switch_timeline(self, agent_id: str) -> None:
         """Show one timeline, hide the rest."""
@@ -377,7 +400,6 @@ class SubagentView(Container):
 
     BINDINGS = [
         ("escape", "close", "Back"),
-        ("c", "copy_answer", "Copy Answer"),
         ("tab", "next_subagent", "Next Subagent"),
         ("shift+tab", "prev_subagent", "Previous Subagent"),
     ]
@@ -1088,6 +1110,87 @@ class SubagentView(Container):
                 self.notify("pyperclip not installed - cannot copy", severity="warning")
             except Exception as e:
                 self.notify(f"Failed to copy: {e}", severity="error")
+
+    def on_key(self, event) -> None:
+        """Handle single-key shortcuts and stop propagation to prevent main TUI from handling them."""
+        char = event.character or ""
+        key_lower = char.lower()
+
+        if key_lower == "w":
+            self.action_open_workspace()
+            event.stop()
+        elif key_lower == "h":
+            self.action_open_history()
+            event.stop()
+        elif char == "?":
+            self.action_show_shortcuts()
+            event.stop()
+        elif key_lower == "c":
+            self.action_copy_answer()
+            event.stop()
+
+    def action_open_workspace(self) -> None:
+        """Open workspace browser scoped to subagent's workspace."""
+        workspace_path = self._subagent.workspace_path
+        if not workspace_path:
+            self.notify("No workspace available", severity="warning", timeout=2)
+            return
+        from pathlib import Path
+
+        wp = Path(workspace_path)
+        if not wp.exists():
+            self.notify("Workspace not found", severity="warning", timeout=2)
+            return
+        try:
+            from massgen.frontend.displays.textual import FileInspectionModal
+
+            modal = FileInspectionModal(workspace_path=wp, app=self.app)
+            self.app.push_screen(modal)
+        except Exception as e:
+            self.notify(f"Cannot open workspace: {e}", severity="error", timeout=3)
+
+    def action_open_history(self) -> None:
+        """Open conversation history for subagent."""
+        # Read events and build a simple history view
+        if not self._event_reader:
+            self.notify("No event data available", severity="warning", timeout=2)
+            return
+        try:
+            from massgen.frontend.displays.textual import TextContentModal
+
+            events = self._event_reader.read_all()
+            # Build a simple text summary of the conversation
+            lines = []
+            for event in events:
+                if event.event_type == "stream_chunk":
+                    chunk = event.data.get("chunk", {}) or {}
+                    chunk_type = chunk.get("type")
+                    if chunk_type == "text":
+                        content = chunk.get("content", "")
+                        if content.strip():
+                            source = chunk.get("source", event.agent_id or "agent")
+                            lines.append(f"[{source}] {content[:200]}")
+                    elif chunk_type == "thinking":
+                        content = chunk.get("content", "")
+                        if content.strip():
+                            lines.append(f"[thinking] {content[:100]}...")
+            if not lines:
+                self.notify("No conversation history yet", severity="information", timeout=2)
+                return
+            text = "\n\n".join(lines[-50:])  # Last 50 entries
+            modal = TextContentModal(title=f"History: {self._subagent.id}", content=text)
+            self.app.push_screen(modal)
+        except Exception as e:
+            self.notify(f"Cannot open history: {e}", severity="error", timeout=3)
+
+    def action_show_shortcuts(self) -> None:
+        """Show keyboard shortcuts help."""
+        try:
+            from massgen.frontend.displays.textual import KeyboardShortcutsModal
+
+            self.app.push_screen(KeyboardShortcutsModal())
+        except Exception as e:
+            self.notify(f"Cannot show shortcuts: {e}", severity="error", timeout=3)
 
     def _request_close(self) -> None:
         """Request the parent to close the view."""

@@ -43,13 +43,11 @@ try:
 
     from .base_tui_layout import BaseTUILayoutMixin
     from .content_handlers import (
-        ThinkingContentHandler,
         ToolBatchTracker,
         ToolContentHandler,
         format_tool_display_name,
         get_tool_category,
     )
-    from .content_normalizer import ContentNormalizer
     from .shared.tool_registry import clean_tool_arguments, clean_tool_result
 
     # Import extracted modals from the new textual/ package
@@ -530,15 +528,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._buffers = {agent_id: [] for agent_id in self.agent_ids}
         self._buffer_lock = threading.Lock()
         self._recent_web_chunks: Dict[str, Deque[str]] = {agent_id: deque(maxlen=self.max_web_search_lines) for agent_id in self.agent_ids}
-
-        # Event-driven TUI pipeline (single source of truth)
-        env_flag = os.getenv("MASSGEN_TUI_EVENT_PIPELINE")
-        if "use_event_pipeline" in kwargs:
-            self.use_event_pipeline = bool(kwargs.get("use_event_pipeline"))
-        elif env_flag is not None:
-            self.use_event_pipeline = env_flag.strip().lower() not in ("0", "false", "off", "no")
-        else:
-            self.use_event_pipeline = True
 
     def _validate_agent_ids(self):
         """Validate agent IDs for security and robustness."""
@@ -2543,8 +2532,6 @@ if TEXTUAL_AVAILABLE:
             self._input_handler: Optional[Callable[[str], None]] = None
 
             # Event-driven pipeline state
-            self._event_pipeline_enabled = bool(display.use_event_pipeline)
-            self._event_pipeline_failed = False
             self._event_adapters: Dict[str, TimelineEventAdapter] = {}
 
             # Answer tracking for browser modal
@@ -3661,30 +3648,17 @@ Type your question and press Enter to ask the agents.
 
             panel = self.agent_widgets[agent_id]
 
-            # Event-driven pipeline (preferred)
-            if self._event_pipeline_enabled and not self._event_pipeline_failed:
-                adapter = self._event_adapters.get(agent_id)
-                if adapter is None:
-                    adapter = TimelineEventAdapter(panel, agent_id=agent_id)
-                    self._event_adapters[agent_id] = adapter
-                try:
-                    adapter.handle_stream_content(
-                        content,
-                        content_type,
-                        tool_call_id=tool_call_id,
-                        source=agent_id,
-                    )
-                    return
-                except Exception as e:
-                    # Fallback to legacy parser on any failure
-                    try:
-                        logger.warning(f"[TUI] Event pipeline failed for {agent_id}: {e}")
-                    except Exception:
-                        pass
-                    self._event_pipeline_failed = True
-
-            # Legacy pipeline fallback
-            panel.add_content(content, content_type, tool_call_id)
+            # Event-driven pipeline
+            adapter = self._event_adapters.get(agent_id)
+            if adapter is None:
+                adapter = TimelineEventAdapter(panel, agent_id=agent_id)
+                self._event_adapters[agent_id] = adapter
+            adapter.handle_stream_content(
+                content,
+                content_type,
+                tool_call_id=tool_call_id,
+                source=agent_id,
+            )
 
         def update_agent_status(self, agent_id: str, status: str):
             """Update agent status."""
@@ -5539,12 +5513,43 @@ Type your question and press Enter to ask the agents.
 
         def on_subagent_card_open_modal(self, event: SubagentCard.OpenModal) -> None:
             """Handle subagent card click - open separate screen."""
-            # Push to dedicated subagent screen (full screen, not side panel)
+            # Track timeline child count before entering subagent view
+            timeline_count_before = 0
+            try:
+                active_agent = self.coordination_display.agent_ids[0] if self.coordination_display.agent_ids else None
+                if active_agent and active_agent in self.agent_widgets:
+                    panel = self.agent_widgets[active_agent]
+                    tl = panel._get_timeline()
+                    if tl:
+                        timeline_count_before = len(tl.children)
+            except Exception:
+                pass
+
+            def _on_screen_dismiss(result: object = None) -> None:
+                """Show badge if new timeline items appeared while in subagent view."""
+                try:
+                    active_agent = self.coordination_display.agent_ids[0] if self.coordination_display.agent_ids else None
+                    if active_agent and active_agent in self.agent_widgets:
+                        panel = self.agent_widgets[active_agent]
+                        tl = panel._get_timeline()
+                        if tl:
+                            new_count = len(tl.children) - timeline_count_before
+                            if new_count > 0:
+                                self.notify(
+                                    f"\u2193 {new_count} new item{'s' if new_count != 1 else ''} added",
+                                    severity="information",
+                                    timeout=5,
+                                )
+                                # Scroll to bottom to show new content
+                                tl.scroll_end(animate=True)
+                except Exception:
+                    pass
+
             screen = SubagentScreen(
                 subagent=event.subagent,
                 all_subagents=event.all_subagents,
             )
-            self.push_screen(screen)
+            self.push_screen(screen, _on_screen_dismiss)
             event.stop()
 
         # Close handler removed - SubagentScreen handles its own closing
@@ -7086,12 +7091,9 @@ Type your question and press Enter to ask the agents.
             self._not_in_use_id = f"not_in_use_{self._dom_safe_id}"
             self._is_in_use = True  # Track if panel is active in single-agent mode
 
-            # New section-based content handlers (used by BaseTUILayoutMixin)
+            # Content handlers (used by start_new_round, show_restart_separator, etc.)
             self._tool_handler = ToolContentHandler()
-            self._thinking_handler = ThinkingContentHandler()
             self._batch_tracker = ToolBatchTracker()
-            self._last_text_class = "content-inline"  # For BaseTUILayoutMixin
-            self._timeline_event_counter = 0  # For BaseTUILayoutMixin
 
             # Section widget IDs - using timeline for chronological view
             self._timeline_section_id = f"timeline_section_{self._dom_safe_id}"
@@ -7637,467 +7639,6 @@ Type your question and press Enter to ask the agents.
             # Reset per-attempt UI state
             self._tool_row_count = 0
             self._reasoning_header_shown = False
-
-        def add_content(self, content: str, content_type: str, tool_call_id: Optional[str] = None):
-            """Add content to agent panel using section-based routing.
-
-            Content is normalized and routed to appropriate sections:
-            - Tool content -> ToolSection (collapsible tool cards)
-            - Thinking/text -> ThinkingSection (streaming RichLog)
-            - Status -> Updates status badge
-            - Presentation -> ThinkingSection with completion footer
-            - Restart -> Restart separator in ThinkingSection
-
-            Args:
-                content: The content to add
-                content_type: Type hint from backend
-                tool_call_id: Optional unique ID for this tool call
-            """
-            self._hide_loading()  # Hide loading when any content arrives
-
-            # Normalize content first, passing tool_call_id
-            normalized = ContentNormalizer.normalize(content, content_type, tool_call_id)
-
-            # Route based on detected content type
-            if normalized.content_type.startswith("tool_"):
-                self._add_tool_content(normalized, content, content_type)
-            elif normalized.content_type == "status":
-                self._add_status_content(normalized)
-            elif normalized.content_type == "presentation":
-                self._add_presentation_content(normalized)
-            elif content_type == "restart":
-                self._add_restart_content(content)
-            elif normalized.content_type == "injection":
-                self._add_injection_content(normalized)
-            elif normalized.content_type == "reminder":
-                self._add_reminder_content(normalized)
-            elif normalized.content_type in ("thinking", "text", "content"):
-                self._add_thinking_content(normalized, content_type)
-            else:
-                # Fallback: route to thinking section if displayable
-                if normalized.should_display:
-                    self._add_thinking_content(normalized, content_type)
-
-        def _add_tool_content(self, normalized, raw_content: str, raw_type: str):
-            """Route tool content to TimelineSection (chronologically).
-
-            Note: Restart detection is handled solely via show_restart_separator()
-            called from the orchestrator. We removed the duplicate detection here
-            that used _session_count to avoid conflicting round transitions.
-
-            MCP tools from the same server are batched into ToolBatchCard when 2+
-            consecutive tools arrive. Single tools appear as normal ToolCallCard.
-            """
-            # Flush any pending line buffer content to timeline before processing tool
-            # This ensures thinking/reasoning content that didn't end with newline is preserved
-            self._flush_line_buffer_to_timeline()
-
-            # Process through handler
-            tool_data = self._tool_handler.process(normalized)
-
-            if not tool_data:
-                return
-
-            # Phase 12: No viewing_current check needed - CSS visibility handles it
-            # Add or update tool card in TimelineSection (chronologically)
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-
-                # Check if this is a Planning MCP tool - we'll show TaskPlanCard instead
-                is_planning_tool = self._is_planning_mcp_tool(tool_data.tool_name)
-                # Check if this is a subagent tool - we'll show SubagentCard instead
-                is_subagent_tool = self._is_subagent_tool(tool_data.tool_name)
-
-                # Skip batching for special tool types (planning, subagent)
-                skip_batching = is_planning_tool or is_subagent_tool
-
-                # Debug: Log tool content (skip planning tools for cleaner trace)
-                # Only log new tools (running status) or completions, not args updates
-                if not is_planning_tool:
-                    # Check if this is an args update for existing tool
-                    existing_card = timeline.get_tool(tool_data.tool_id) if tool_data.status == "running" else None
-                    existing_batch = timeline.get_tool_batch(tool_data.tool_id) if tool_data.status == "running" and not skip_batching else None
-                    existing_card is not None or existing_batch is not None
-
-                if tool_data.status == "running":
-                    # Check if this is an args update for existing tool
-                    existing_card = timeline.get_tool(tool_data.tool_id)
-                    existing_batch = timeline.get_tool_batch(tool_data.tool_id) if not skip_batching else None
-
-                    if existing_card:
-                        # Update existing standalone card with args
-                        if tool_data.args_summary:
-                            existing_card.set_params(tool_data.args_summary, tool_data.args_full)
-                    elif existing_batch:
-                        # Update existing tool in batch with args
-                        timeline.update_tool_in_batch(tool_data.tool_id, tool_data)
-                    elif is_subagent_tool:
-                        # Subagent tool starting - show SubagentCard with pending tasks from args
-                        self._show_subagent_card_from_args(tool_data, timeline)
-                    elif is_planning_tool:
-                        # Planning tools are skipped - TaskPlanCard is shown on completion
-                        pass
-                    elif not skip_batching:
-                        # Check if this MCP tool should be batched
-                        action, server_name, batch_id, pending_id = self._batch_tracker.process_tool(tool_data)
-
-                        if action == "pending":
-                            # First MCP tool - show as normal card, track for potential batch
-                            timeline.add_tool(tool_data, round_number=self._current_round)
-                        elif action == "convert_to_batch" and server_name and batch_id and pending_id:
-                            # Second tool from same server - convert to batch
-                            timeline.convert_tool_to_batch(
-                                pending_id,
-                                tool_data,
-                                batch_id,
-                                server_name,
-                                round_number=self._current_round,
-                            )
-                        elif action == "add_to_batch" and batch_id:
-                            # Add to existing batch
-                            timeline.add_tool_to_batch(batch_id, tool_data)
-                        else:
-                            # Standalone non-MCP tool
-                            timeline.add_tool(tool_data, round_number=self._current_round)
-                    else:
-                        # Fallback for other special tools
-                        timeline.add_tool(tool_data, round_number=self._current_round)
-                else:
-                    # Tool completed/failed - update the card in timeline
-                    # Phase 12: No storage needed - widgets stay in DOM with round tags
-                    if not is_planning_tool and not is_subagent_tool:
-                        # Use batch tracker to determine if this is a batch or standalone update
-                        action, server_name, batch_id, _ = self._batch_tracker.process_tool(tool_data)
-
-                        if action == "update_batch" and timeline.get_tool_batch(tool_data.tool_id):
-                            timeline.update_tool_in_batch(tool_data.tool_id, tool_data)
-                        else:
-                            # Update standalone tool card with result/error
-                            timeline.update_tool(tool_data.tool_id, tool_data)
-
-                    # Check if this is a Planning MCP tool and display TaskPlanCard
-                    tui_log(f"_add_tool_content: tool_status={tool_data.status}, tool_name={tool_data.tool_name}")
-                    if tool_data.status == "success":
-                        self._check_and_display_task_plan(tool_data, timeline)
-                        # Check if this is a subagent tool - update existing card with results
-                        if is_subagent_tool:
-                            self._update_subagent_card_with_results(tool_data, timeline)
-
-                        # Check if this is a terminal tool (new_answer, vote) and mark for delayed transition
-                        tool_name_lower = tool_data.tool_name.lower()
-                        if "new_answer" in tool_name_lower or "vote" in tool_name_lower:
-                            self.mark_terminal_tool_complete()
-                            tui_log(f"Terminal tool completed: {tool_data.tool_name}")
-
-                    # Refresh header if this is a background operation (to show bg badge)
-                    if tool_data.status == "background":
-                        self._refresh_header()
-
-                # Update running tools count in status bar
-                self._update_running_tools_count()
-            except Exception as e:
-                # Fallback to legacy RichLog
-                tui_log(f"Tool content error: {e}")
-                self._handle_tool_content(raw_content)
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _add_status_content(self, normalized):
-            """Route status content to TimelineSection with subtle display."""
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            # Detect session completion for restart tracking
-            if "completed" in normalized.cleaned_content.lower():
-                self._session_completed = True
-                # NOTE: Completion footer disabled - clutters UI
-                # self._show_completion_footer()
-
-            # Add status to timeline as a subtle line
-            # Phase 12: Pass round_number for CSS visibility
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                timeline.add_text(f"● {normalized.cleaned_content}", style="dim cyan", text_class="status", round_number=self._current_round)
-            except Exception:
-                # Fallback
-                status_bar = self._make_full_width_bar(f"  📊  {normalized.cleaned_content}", "bold yellow on #2d333b")
-                self.content_log.write(status_bar)
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _update_running_tools_count(self) -> None:
-            """Update running tools counter in status bar."""
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                count = timeline.get_running_tools_count()
-                if self._status_bar:
-                    self._status_bar.update_running_tools(count)
-            except Exception:
-                pass  # Silently fail if timeline not found
-
-        def _add_presentation_content(self, normalized):
-            """Route presentation content to TimelineSection."""
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            # Mark presentation shown for restart detection
-            if "Providing answer" in normalized.original:
-                self._presentation_shown = True
-                # NOTE: Completion footer disabled - clutters UI
-                # self._show_completion_footer()
-
-            # Add to timeline with response styling
-            # Phase 12: Pass round_number for CSS visibility
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                timeline.add_text(normalized.cleaned_content, style="bold #4ec9b0", text_class="response", round_number=self._current_round)
-            except Exception:
-                # Fallback
-                self.content_log.write(Text(f"🎤 {normalized.cleaned_content}", style="magenta"))
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _add_restart_content(self, content: str):
-            """Handle round transition - start a new round with view-based navigation.
-
-            With Phase 12 view-based navigation, rounds are separated by the dropdown
-            selector rather than inline banners. This method:
-            1. Parses the round number
-            2. Starts the new round (which clears the timeline)
-            3. Does NOT add inline separators (use dropdown to switch views)
-            """
-            # Parse attempt number
-            attempt = 1
-            is_context_reset = "context" in content.lower() or "reset" in content.lower()
-
-            if "attempt:" in content:
-                try:
-                    parts = content.split("attempt:")
-                    if len(parts) > 1:
-                        attempt_part = parts[1].split()[0]
-                        attempt = int(attempt_part)
-                except (ValueError, IndexError):
-                    pass
-
-            # Start the new round (clears timeline, updates ribbon)
-            # No inline separator - view dropdown handles round navigation
-            self.start_new_round(attempt, is_context_reset)
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _flush_line_buffer_to_timeline(self, text_class: str = None) -> None:
-            """Flush any remaining line buffer content to the timeline.
-
-            Called when content type changes (e.g., thinking -> tool) to ensure
-            all content is written, even if it didn't end with a newline.
-
-            Args:
-                text_class: CSS class for the content. If None, uses the last
-                    text_class that was used (tracked via _last_text_class).
-            """
-            if self._line_buffer.strip():
-                # Use stored text_class if not provided - this preserves the correct
-                # type when flushing buffered content on content type transitions
-                if text_class is None:
-                    text_class = getattr(self, "_last_text_class", "content-inline")
-                try:
-                    timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                    timeline.add_text(
-                        self._line_buffer,
-                        style="dim italic",
-                        text_class=text_class,
-                        round_number=self._current_round,
-                    )
-                except Exception:
-                    pass
-                self._line_buffer = ""
-                self.current_line_label.update(Text(""))
-
-        def _add_thinking_content(self, normalized, raw_type: str):
-            """Route thinking/text content to TimelineSection.
-
-            Phase 15.5: Only display thinking/reasoning content, skip plain text.
-            Tool cards (answer, vote, etc.) already show meaningful output,
-            so raw text is redundant and clutters the UI.
-            """
-            # Process through handler for extra filtering
-            cleaned = self._thinking_handler.process(normalized)
-            if not cleaned:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            # Check if this is coordination content
-            is_coordination = getattr(normalized, "is_coordination", False)
-
-            # Phase 15.5: Display thinking and content, skip other types
-            if not is_coordination and raw_type not in ("thinking", "content", "text"):
-                return  # Skip non-displayable content
-
-            # Add to timeline
-            # Phase 12: No storage needed - widgets stay in DOM with round tags
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-
-                # Handle line buffering for streaming
-                # Capture current_round in closure for CSS visibility tagging
-                current_round = self._current_round
-
-                # Use different text_class for thinking vs content
-                # This affects how TimelineSection labels the CollapsibleTextCard
-                # NOTE: Use normalized.content_type instead of raw_type to ensure
-                # consistent labeling even if the backend sent a different content_type
-                text_class = "thinking-inline" if normalized.content_type == "thinking" else "content-inline"
-
-                # Flush line buffer if content type changed to prevent type mixing
-                # This ensures incomplete lines from previous type don't get labeled with new type
-                if not hasattr(self, "_last_text_class"):
-                    self._last_text_class = text_class
-                if self._last_text_class != text_class and self._line_buffer.strip():
-                    # Flush with the PREVIOUS text_class before switching
-                    prev_text_class = self._last_text_class
-                    timeline.add_text(self._line_buffer, style="dim italic", text_class=prev_text_class, round_number=current_round)
-                    self._line_buffer = ""
-                self._last_text_class = text_class
-
-                def write_line(line: str):
-                    # Phase 12: Pass round_number for CSS visibility
-                    timeline.add_text(line, style="dim italic", text_class=text_class, round_number=current_round)
-
-                # Use original content for line buffer to preserve inter-token
-                # whitespace (e.g. " CSS") that strip_prefixes/clean_content
-                # would remove. The handler check above already validated the
-                # content is displayable.
-                buffer_content = normalized.original if normalized.original else cleaned
-                self._line_buffer = _process_line_buffer(
-                    self._line_buffer,
-                    buffer_content,
-                    write_line,
-                )
-                self.current_line_label.update(Text(self._line_buffer))
-            except Exception:
-                # Fallback to legacy RichLog
-                # Use normalized.content_type for consistency
-                if normalized.content_type == "thinking":
-                    self._line_buffer = _process_line_buffer(
-                        self._line_buffer,
-                        cleaned,
-                        lambda line: self.content_log.write(Text(f"     {line}", style="dim")),
-                    )
-                    self.current_line_label.update(Text(self._line_buffer, style="dim"))
-                else:
-                    self._line_buffer = _process_line_buffer(
-                        self._line_buffer,
-                        cleaned,
-                        lambda line: self.content_log.write(Text(line)),
-                    )
-                    self.current_line_label.update(Text(self._line_buffer))
-
-        def _add_injection_content(self, normalized):
-            """Add injection content (cross-agent context sharing) to timeline.
-
-            Displays as a styled purple bar in the timeline.
-            """
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            content = normalized.cleaned_content
-            # Truncate preview if very long
-            preview = content[:100] + "..." if len(content) > 100 else content
-            preview = preview.replace("\n", " ")
-
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                # Add as styled text with injection class
-                # Phase 12: Pass round_number for CSS visibility
-                timeline.add_text(
-                    f"📥 Context Update: {preview}",
-                    style="bold",
-                    text_class="injection",
-                    round_number=self._current_round,
-                )
-            except Exception:
-                # Fallback to legacy RichLog
-                self.content_log.write(Text(f"📥 Context Update: {preview}", style="bold magenta"))
-
-        def _add_reminder_content(self, normalized):
-            """Add reminder content (high priority task reminders) to TaskPlanCard.
-
-            Attaches the reminder to the most recent TaskPlanCard if one exists,
-            otherwise displays as a standalone styled bar in the timeline.
-            """
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            content = normalized.cleaned_content
-
-            # Try to attach reminder to the most recent TaskPlanCard
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-
-                # Prefer pinned TaskPlanCard hosted above timeline
-                task_plan_card = self._task_plan_host.get_task_plan_card()
-
-                # If no pinned card found, try to find any TaskPlanCard in timeline
-                if not task_plan_card:
-                    try:
-                        from massgen.frontend.displays.textual_widgets import (
-                            TaskPlanCard,
-                        )
-
-                        cards = list(timeline.query(TaskPlanCard))
-                        if cards:
-                            task_plan_card = cards[-1]  # Most recent card
-                    except Exception:
-                        pass
-
-                if task_plan_card:
-                    # Attach reminder to the TaskPlanCard
-                    task_plan_card.set_reminder(content)
-                    return
-
-                # Fallback: display as standalone text in timeline
-                preview = content[:100] + "..." if len(content) > 100 else content
-                preview = preview.replace("\n", " ")
-                # Phase 12: Pass round_number for CSS visibility
-                timeline.add_text(
-                    f"💡 Reminder: {preview}",
-                    style="bold",
-                    text_class="reminder",
-                    round_number=self._current_round,
-                )
-            except Exception:
-                # Fallback to legacy RichLog
-                preview = content[:100] + "..." if len(content) > 100 else content
-                preview = preview.replace("\n", " ")
-                self.content_log.write(Text(f"💡 Reminder: {preview}", style="bold yellow"))
 
         def _is_planning_mcp_tool(self, tool_name: str) -> bool:
             """Check if a tool is a Planning MCP tool (should show TaskPlanCard instead of tool card)."""
