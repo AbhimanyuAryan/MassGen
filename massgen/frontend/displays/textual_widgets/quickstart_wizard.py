@@ -11,8 +11,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from textual.app import ComposeResult
-from textual.containers import Container
-from textual.widgets import Input, Label, OptionList, Select, TextArea
+from textual.containers import Container, VerticalScroll
+from textual.widgets import (
+    Input,
+    Label,
+    OptionList,
+    Select,
+    TabbedContent,
+    TabPane,
+    TextArea,
+)
 from textual.widgets.option_list import Option
 
 from .wizard_base import StepComponent, WizardModal, WizardState, WizardStep
@@ -133,7 +141,7 @@ class SetupModeStep(StepComponent):
         classes: Optional[str] = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
-        self._selected_mode: str = "same"
+        self._selected_mode: str = "different"
         self._option_list: Optional[OptionList] = None
 
     def compose(self) -> ComposeResult:
@@ -152,9 +160,9 @@ class SetupModeStep(StepComponent):
         )
         yield self._option_list
 
-        # Set default selection (same - first item)
+        # Set default selection (different - second item)
         if self._option_list:
-            self._option_list.highlighted = 0
+            self._option_list.highlighted = 1
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Native event handler for option selection."""
@@ -296,6 +304,193 @@ class ProviderModelStep(StepComponent):
         return None
 
 
+class TabbedProviderModelStep(StepComponent):
+    """Single tabbed step for configuring provider/model per agent."""
+
+    def __init__(
+        self,
+        wizard_state: WizardState,
+        agent_count: int = 3,
+        *,
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+    ) -> None:
+        super().__init__(wizard_state, id=id, classes=classes)
+        self._agent_count = agent_count
+        self._providers: List[Tuple[str, str]] = []
+        self._models_by_provider: Dict[str, List[str]] = {}
+        self._tab_selections: Dict[int, Dict[str, Optional[str]]] = {}
+        self._provider_selects: Dict[int, Select] = {}
+        self._model_selects: Dict[int, Select] = {}
+
+    def _load_providers(self) -> None:
+        """Load available providers from ConfigBuilder."""
+        try:
+            from massgen.config_builder import ConfigBuilder
+
+            builder = ConfigBuilder()
+            api_keys = builder.detect_api_keys()
+
+            for provider_id, provider_info in builder.PROVIDERS.items():
+                if not api_keys.get(provider_id, False):
+                    continue
+                name = provider_info.get("name", provider_id)
+                models = provider_info.get("models", [])
+                self._providers.append((provider_id, name))
+                self._models_by_provider[provider_id] = models
+
+        except Exception as e:
+            _quickstart_log(f"TabbedProviderModelStep._load_providers error: {e}")
+
+    def compose(self) -> ComposeResult:
+        self._load_providers()
+
+        default_provider = self._providers[0][0] if self._providers else None
+        default_model = self._models_by_provider.get(default_provider, [""])[0] if default_provider else None
+
+        yield Label("Configure provider and model for each agent:", classes="text-input-label")
+
+        with TabbedContent():
+            for i in range(self._agent_count):
+                agent_num = i + 1
+                # Initialize selections
+                self._tab_selections[agent_num] = {
+                    "provider": default_provider,
+                    "model": default_model,
+                }
+
+                with TabPane(f"Agent {agent_num}", id=f"tab_agent_{agent_num}"):
+                    with VerticalScroll():
+                        yield Label("Provider:", classes="text-input-label")
+                        provider_options = [(name, pid) for pid, name in self._providers]
+                        p_select = Select(
+                            provider_options,
+                            value=default_provider,
+                            id=f"provider_{agent_num}",
+                        )
+                        self._provider_selects[agent_num] = p_select
+                        yield p_select
+
+                        yield Label("Model:", classes="text-input-label")
+                        models = self._models_by_provider.get(default_provider, [])
+                        model_options = [(m, m) for m in models] if models else [("", "No models")]
+                        m_select = Select(
+                            model_options,
+                            value=default_model,
+                            id=f"model_{agent_num}",
+                        )
+                        self._model_selects[agent_num] = m_select
+                        yield m_select
+
+    async def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle provider/model changes per tab."""
+        sel_id = event.select.id or ""
+        if not sel_id or event.value == Select.BLANK:
+            return
+
+        # Parse agent number from id like "provider_2" or "model_3"
+        parts = sel_id.rsplit("_", 1)
+        if len(parts) != 2 or not parts[1].isdigit():
+            return
+        kind, agent_num = parts[0], int(parts[1])
+
+        if kind == "provider":
+            provider = str(event.value)
+            self._tab_selections[agent_num]["provider"] = provider
+            # Update model select for this agent
+            m_select = self._model_selects.get(agent_num)
+            if m_select:
+                models = self._models_by_provider.get(provider, [])
+                model_options = [(m, m) for m in models] if models else [("", "No models")]
+                m_select.set_options(model_options)
+                if models:
+                    m_select.value = models[0]
+                    self._tab_selections[agent_num]["model"] = models[0]
+        elif kind == "model":
+            self._tab_selections[agent_num]["model"] = str(event.value)
+
+    def get_value(self) -> Dict[str, Any]:
+        # Store per-agent configs in wizard state
+        for agent_num, sel in self._tab_selections.items():
+            self.wizard_state.set(
+                f"agent_{agent_num}_config",
+                {
+                    "provider": sel.get("provider", ""),
+                    "model": sel.get("model", ""),
+                },
+            )
+        return {"agent_configs": dict(self._tab_selections)}
+
+    def set_value(self, value: Any) -> None:
+        if isinstance(value, dict) and "agent_configs" in value:
+            for agent_num, sel in value["agent_configs"].items():
+                agent_num = int(agent_num)
+                self._tab_selections[agent_num] = sel
+                p_select = self._provider_selects.get(agent_num)
+                m_select = self._model_selects.get(agent_num)
+                if p_select and sel.get("provider"):
+                    p_select.value = sel["provider"]
+                if m_select and sel.get("model"):
+                    m_select.value = sel["model"]
+
+    def _get_active_tab_agent_num(self) -> int:
+        """Return the agent number of the currently active tab."""
+        try:
+            tc = self.query_one(TabbedContent)
+            active_id = tc.active  # e.g. "tab_agent_2"
+            if active_id and active_id.startswith("tab_agent_"):
+                return int(active_id.split("_")[-1])
+        except Exception:
+            pass
+        return 1
+
+    def _find_next_incomplete_agent(self, after: int) -> Optional[int]:
+        """Find next agent (after given num) that hasn't been explicitly configured.
+
+        Returns None if all agents are filled.
+        We consider an agent 'needs attention' if it still has the initial defaults
+        and hasn't been visited yet, or simply the next agent tab after current.
+        """
+        # Simple approach: advance to next tab sequentially
+        for num in range(after + 1, self._agent_count + 1):
+            return num
+        return None
+
+    def try_retreat_tab(self) -> bool:
+        """Try to move to the previous agent tab. Returns True if moved, False if on first."""
+        current = self._get_active_tab_agent_num()
+        if current > 1:
+            try:
+                tc = self.query_one(TabbedContent)
+                tc.active = f"tab_agent_{current - 1}"
+                return True
+            except Exception:
+                pass
+        return False
+
+    def try_advance_tab(self) -> bool:
+        """Try to move to the next agent tab. Returns True if moved, False if all done."""
+        current = self._get_active_tab_agent_num()
+        next_num = self._find_next_incomplete_agent(current)
+        if next_num is not None:
+            try:
+                tc = self.query_one(TabbedContent)
+                tc.active = f"tab_agent_{next_num}"
+                return True
+            except Exception:
+                pass
+        return False
+
+    def validate(self) -> Optional[str]:
+        for agent_num in range(1, self._agent_count + 1):
+            sel = self._tab_selections.get(agent_num, {})
+            if not sel.get("provider"):
+                return f"Please select a provider for Agent {agent_num}"
+            if not sel.get("model"):
+                return f"Please select a model for Agent {agent_num}"
+        return None
+
+
 class ExecutionModeStep(StepComponent):
     """Step for selecting Docker or local execution mode using native OptionList."""
 
@@ -393,6 +588,85 @@ class ContextPathStep(StepComponent):
     def set_value(self, value: Any) -> None:
         if self._input and isinstance(value, str):
             self._input.value = value
+
+
+class ConfigLocationStep(StepComponent):
+    """Step for choosing where to save the generated config."""
+
+    def __init__(
+        self,
+        wizard_state: WizardState,
+        *,
+        id: Optional[str] = None,
+        classes: Optional[str] = None,
+    ) -> None:
+        super().__init__(wizard_state, id=id, classes=classes)
+        self._selected: str = "project"
+        self._option_list: Optional[OptionList] = None
+        self._warning_label: Optional[Label] = None
+        self._project_path = Path.cwd() / ".massgen" / "config.yaml"
+        self._global_path = Path.home() / ".config" / "massgen" / "config.yaml"
+
+    def _path_for(self, location: str) -> Path:
+        return self._global_path if location == "global" else self._project_path
+
+    def _build_options(self) -> list:
+        options = []
+        for value, label, desc, path in [
+            ("project", "This Project (Recommended)", ".massgen/config.yaml in current directory", self._project_path),
+            ("global", "Global", "~/.config/massgen/config.yaml — available from any directory", self._global_path),
+        ]:
+            exists_tag = "  [yellow]⚠ exists[/yellow]" if path.exists() else ""
+            option_text = f"[bold]{label}{exists_tag}[/bold]\n[dim]{desc}[/dim]"
+            options.append(Option(option_text, id=value))
+        return options
+
+    def _update_warning(self) -> None:
+        if self._warning_label:
+            path = self._path_for(self._selected)
+            if path.exists():
+                self._warning_label.update(
+                    f"[yellow]A config already exists at {path}. It will be overwritten.[/yellow]",
+                )
+                self._warning_label.display = True
+            else:
+                self._warning_label.display = False
+
+    def compose(self) -> ComposeResult:
+        yield Label("Where should the config be saved?", classes="text-input-label")
+
+        self._option_list = OptionList(
+            *self._build_options(),
+            id="config_location_list",
+            classes="step-option-list",
+        )
+        yield self._option_list
+
+        if self._option_list:
+            self._option_list.highlighted = 0
+
+        self._warning_label = Label("", classes="password-hint")
+        self._warning_label.display = False
+        yield self._warning_label
+
+        self._update_warning()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option and event.option.id:
+            self._selected = str(event.option.id)
+            self._update_warning()
+
+    def get_value(self) -> str:
+        return self._selected
+
+    def set_value(self, value: Any) -> None:
+        if isinstance(value, str):
+            self._selected = value
+            options = [("project", 0), ("global", 1)]
+            idx = next((i for v, i in options if v == value), None)
+            if idx is not None and self._option_list:
+                self._option_list.highlighted = idx
+            self._update_warning()
 
 
 class ConfigPreviewStep(StepComponent):
@@ -507,7 +781,9 @@ class QuickstartCompleteStep(StepComponent):
             yield Label("OK", classes="complete-icon")
             yield Label("Configuration Ready!", classes="complete-title")
 
-            config_path = self.wizard_state.get("config_path", "quickstart_config.yaml")
+            location = self.wizard_state.get("config_location", "project")
+            default = "~/.config/massgen/config.yaml" if location == "global" else ".massgen/config.yaml"
+            config_path = self.wizard_state.get("config_path", default)
             yield Label(f"Saved to: {config_path}", classes="complete-message")
 
             launch_option = self.wizard_state.get("launch_option", "terminal")
@@ -591,6 +867,12 @@ class QuickstartWizard(WizardModal):
                 component_class=ContextPathStep,
             ),
             WizardStep(
+                id="config_location",
+                title="Save Location",
+                description="Where to save the config",
+                component_class=ConfigLocationStep,
+            ),
+            WizardStep(
                 id="preview",
                 title="Preview",
                 description="Review your configuration",
@@ -635,36 +917,32 @@ class QuickstartWizard(WizardModal):
                     None,
                 )
                 if insert_idx is not None:
-                    # Insert after the (skipped) provider_model step
-                    insert_idx += 1
-                    for i in range(agent_count):
-                        agent_num = i + 1
-                        agent_label = f"Agent {agent_num}"
+                    # Insert a single tabbed step after the (skipped) provider_model step
+                    count = agent_count
 
-                        def make_agent_step(label, num):
-                            class PerAgentProviderModelStep(ProviderModelStep):
-                                def __init__(self, wizard_state, **kwargs):
-                                    super().__init__(wizard_state, agent_label=label, **kwargs)
+                    def make_tabbed_step(n):
+                        class _TabbedStep(TabbedProviderModelStep):
+                            def __init__(self, wizard_state, **kwargs):
+                                super().__init__(wizard_state, agent_count=n, **kwargs)
 
-                                def get_value(self):
-                                    val = super().get_value()
-                                    # Also store in wizard state for on_wizard_complete
-                                    self.wizard_state.set(f"agent_{num}_config", val)
-                                    return val
+                        return _TabbedStep
 
-                            return PerAgentProviderModelStep
-
-                        self._steps.insert(
-                            insert_idx + i,
-                            WizardStep(
-                                id=f"agent_{agent_num}_model",
-                                title=f"Agent {agent_num} Model",
-                                description=f"Choose provider and model for Agent {agent_num}",
-                                component_class=make_agent_step(agent_label, agent_num),
-                            ),
-                        )
+                    self._steps.insert(
+                        insert_idx + 1,
+                        WizardStep(
+                            id="tabbed_agent_models",
+                            title="Agent Models",
+                            description="Configure provider and model for each agent",
+                            component_class=make_tabbed_step(count),
+                        ),
+                    )
 
             self._dynamic_steps_added = True
+
+        # If on tabbed step, advance to next tab before leaving the step
+        if isinstance(self._current_component, TabbedProviderModelStep):
+            if self._current_component.try_advance_tab():
+                return
 
         # Find next step
         next_idx = self._find_next_step(self.state.current_step_idx + 1)
@@ -672,6 +950,13 @@ class QuickstartWizard(WizardModal):
             await self._complete_wizard()
         else:
             await self._show_step(next_idx)
+
+    async def action_previous_step(self) -> None:
+        """Override to navigate between tabs before leaving the tabbed step."""
+        if self._current_component and isinstance(self._current_component, TabbedProviderModelStep):
+            if self._current_component.try_retreat_tab():
+                return
+        await super().action_previous_step()
 
     async def on_wizard_complete(self) -> Any:
         """Save the configuration and return launch options."""
@@ -735,8 +1020,14 @@ class QuickstartWizard(WizardModal):
                 use_docker=use_docker,
             )
 
-            # Save config file
-            config_path = Path("quickstart_config.yaml")
+            # Save config to chosen location
+            config_location = self.state.get("config_location", "project")
+            if config_location == "global":
+                config_dir = Path.home() / ".config" / "massgen"
+            else:
+                config_dir = Path(".massgen")
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_path = config_dir / "config.yaml"
             with open(config_path, "w") as f:
                 yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 

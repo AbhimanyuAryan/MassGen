@@ -111,7 +111,7 @@ class StepComponent(Container):
     DEFAULT_CSS = """
     StepComponent {
         width: 100%;
-        height: 1fr;
+        height: auto;
         padding: 1 2;
     }
     """
@@ -209,8 +209,7 @@ class WizardModal(ModalScreen):
         width: 90%;
         max-width: 100;
         height: auto;
-        max-height: 80%;
-        min-height: 20;
+        max-height: 90%;
         padding: 1 2;
         layout: vertical;
         overflow: hidden;
@@ -231,7 +230,6 @@ class WizardModal(ModalScreen):
 
     #wizard_content {
         height: auto;
-        max-height: 18;
         width: 100%;
         overflow-y: auto;
         margin: 0;
@@ -300,7 +298,7 @@ class WizardModal(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Create the wizard layout."""
-        with Container(id="wizard_container"):
+        with Vertical(id="wizard_container"):
             # Header section
             with Vertical(id="wizard_header"):
                 # Progress bar and step counter on same line
@@ -311,7 +309,7 @@ class WizardModal(ModalScreen):
                 yield Label("", id="wizard_description")
 
             # Content area for step component
-            yield Container(id="wizard_content")
+            yield Vertical(id="wizard_content")
 
             # Error message (hidden by default)
             error_label = Label("", id="wizard_error")
@@ -507,7 +505,7 @@ class WizardModal(ModalScreen):
             pass
 
         # Clear and mount the step component
-        content_container = self.query_one("#wizard_content", Container)
+        content_container = self.query_one("#wizard_content", Vertical)
         await content_container.remove_children()
 
         # Create the step component
