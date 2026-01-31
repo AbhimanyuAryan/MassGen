@@ -120,6 +120,13 @@ class EventType:
     # Timeline transcript lines (debugging/parity checks)
     TIMELINE_ENTRY = "timeline_entry"
 
+    # Orchestration events
+    WORKSPACE_ACTION = "workspace_action"
+    PHASE_CHANGE = "phase_change"
+    RESTART_BANNER = "restart_banner"
+    AGENT_RESTART = "agent_restart"
+    PRESENTATION_START = "presentation_start"
+
     # Error events
     ERROR = "error"
 
@@ -423,6 +430,74 @@ class EventEmitter:
         self.emit_raw(
             EventType.ERROR,
             error=error,
+            agent_id=agent_id,
+        )
+
+    def emit_workspace_action(
+        self,
+        action_type: str,
+        params: Any = None,
+        agent_id: Optional[str] = None,
+    ) -> None:
+        """Emit a workspace action event (new_answer, vote, etc.)."""
+        self.emit_raw(
+            EventType.WORKSPACE_ACTION,
+            action_type=action_type,
+            params=params,
+            agent_id=agent_id,
+        )
+
+    def emit_phase_change(
+        self,
+        phase: str,
+        agent_id: Optional[str] = None,
+    ) -> None:
+        """Emit a phase change event."""
+        self.emit_raw(
+            EventType.PHASE_CHANGE,
+            phase=phase,
+            agent_id=agent_id,
+        )
+
+    def emit_restart_banner(
+        self,
+        reason: str,
+        instructions: str,
+        attempt: int,
+        max_attempts: int,
+    ) -> None:
+        """Emit a restart banner event."""
+        self.emit_raw(
+            EventType.RESTART_BANNER,
+            reason=reason,
+            instructions=instructions,
+            attempt=attempt,
+            max_attempts=max_attempts,
+        )
+
+    def emit_agent_restart(
+        self,
+        round_number: int,
+        agent_id: Optional[str] = None,
+    ) -> None:
+        """Emit an agent restart event."""
+        self.emit_raw(
+            EventType.AGENT_RESTART,
+            restart_round=round_number,
+            agent_id=agent_id,
+        )
+
+    def emit_presentation_start(
+        self,
+        agent_id: Optional[str] = None,
+        vote_counts: Any = None,
+        answer_labels: Any = None,
+    ) -> None:
+        """Emit a presentation start event."""
+        self.emit_raw(
+            EventType.PRESENTATION_START,
+            vote_counts=vote_counts,
+            answer_labels=answer_labels,
             agent_id=agent_id,
         )
 

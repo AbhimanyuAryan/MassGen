@@ -210,6 +210,12 @@ class CoordinationUI:
 
             if self.display and hasattr(self.display, "show_restart_banner"):
                 self.display.show_restart_banner(reason, instructions, attempt, max_attempts)
+            # Emit structured event
+            from massgen.logger_config import get_event_emitter
+
+            _emitter = get_event_emitter()
+            if _emitter:
+                _emitter.emit_restart_banner(reason, instructions, attempt, max_attempts)
             return True
 
         elif chunk_type == "restart_required":
@@ -218,18 +224,24 @@ class CoordinationUI:
 
         elif chunk_type == "agent_restart":
             # Agent is starting a new round due to new context from other agents
+            data = self._parse_chunk_data(chunk, content)
             if self.display and hasattr(self.display, "show_agent_restart"):
-                data = self._parse_chunk_data(chunk, content)
                 if data:
                     agent_id = data.get("agent_id")
                     round_num = data.get("round", 1)
                     if agent_id:
                         self.display.show_agent_restart(agent_id, round_num)
+            # Emit structured event
+            from massgen.logger_config import get_event_emitter
+
+            _emitter = get_event_emitter()
+            if _emitter and data:
+                _emitter.emit_agent_restart(data.get("round", 1), agent_id=data.get("agent_id"))
             return True
 
         elif chunk_type == "final_presentation_start":
+            data = self._parse_chunk_data(chunk, content)
             if self.display and hasattr(self.display, "show_final_presentation_start"):
-                data = self._parse_chunk_data(chunk, content)
                 if data:
                     agent_id = data.get("agent_id")
                     vote_counts = data.get("vote_counts")
@@ -240,6 +252,16 @@ class CoordinationUI:
                             vote_counts=vote_counts,
                             answer_labels=answer_labels,
                         )
+            # Emit structured event
+            from massgen.logger_config import get_event_emitter
+
+            _emitter = get_event_emitter()
+            if _emitter and data:
+                _emitter.emit_presentation_start(
+                    agent_id=data.get("agent_id"),
+                    vote_counts=data.get("vote_counts"),
+                    answer_labels=data.get("answer_labels"),
+                )
             # Reset reasoning prefix state
             self._reset_summary_active_flags()
             return True
@@ -312,12 +334,25 @@ class CoordinationUI:
                         if hasattr(self.display, "notify_phase"):
                             tui_log(f"  Calling display.notify_phase('{current_phase}')")
                             self.display.notify_phase(current_phase)
+                        # Emit structured event for phase changes
+                        from massgen.logger_config import get_event_emitter
+
+                        _emitter = get_event_emitter()
+                        if _emitter:
+                            _emitter.emit_phase_change(current_phase)
 
                 # Handle agent status updates
                 if chunk_type == "agent_status":
                     status = getattr(chunk, "status", None)
                     if self.display and source and status:
                         self.display.update_agent_status(source, status)
+                    # Emit structured event
+                    if source and status:
+                        from massgen.logger_config import get_event_emitter
+
+                        _emitter = get_event_emitter()
+                        if _emitter:
+                            _emitter.emit_status(f"Agent status: {status}", agent_id=source)
                     continue
 
                 # Phase 13.1: Handle token usage updates for status ribbon
@@ -1926,6 +1961,12 @@ class CoordinationUI:
                         if params:
                             tool_msg += f" {params}"
                         self.logger.log_agent_content(agent_id, tool_msg, "tool")
+                    # Emit structured event for the pipeline
+                    from massgen.logger_config import get_event_emitter
+
+                    _emitter = get_event_emitter()
+                    if _emitter:
+                        _emitter.emit_workspace_action(action_type, params, agent_id=agent_id)
                     return
 
                 # For other workspace actions, emit text_before and create tool card
@@ -1939,6 +1980,12 @@ class CoordinationUI:
                 self.display.update_agent_content(agent_id, tool_msg, "tool")
                 if self.logger:
                     self.logger.log_agent_content(agent_id, tool_msg, "tool")
+                # Emit structured event for the pipeline
+                from massgen.logger_config import get_event_emitter
+
+                _emitter = get_event_emitter()
+                if _emitter:
+                    _emitter.emit_workspace_action(action_type, params, agent_id=agent_id)
 
                 # Emit any text after the JSON as content (rare but possible)
                 if text_after and not ContentNormalizer.is_workspace_state_content(text_after):
@@ -1968,7 +2015,25 @@ class CoordinationUI:
 
         # Determine content type and process
         # Check for tool-related content markers
-        is_tool_content = "🔧" in content or "Arguments for Calling" in content or "Results for Calling" in content
+        is_tool_content = (
+            "🔧" in content or "Arguments for Calling" in content or "Results for Calling" in content or ("✅" in content and "completed" in content) or ("❌" in content and "failed" in content)
+        )
+
+        # Emit structured events for the unified event pipeline
+        # Skip tool content — it's already handled via the stream chunk path
+        # (which carries tool_call_id needed for proper tool card tracking)
+        from massgen.logger_config import get_event_emitter
+
+        _emitter = get_event_emitter()
+        if _emitter and not is_tool_content:
+            if chunk_type in ("reasoning", "reasoning_done", "reasoning_summary", "reasoning_summary_done", "thinking"):
+                _emitter.emit_thinking(content, agent_id=agent_id)
+            elif chunk_type in ("content", "text"):
+                _emitter.emit_text(content, agent_id=agent_id)
+            elif chunk_type in ("status", "system_status", "backend_status"):
+                _emitter.emit_status(content, agent_id=agent_id)
+            elif chunk_type in ("presentation", "final_answer"):
+                _emitter.emit_text(content, agent_id=agent_id)
         if is_tool_content or "🔄 Vote invalid" in content:
             # Tool usage or status messages
             content_type = "tool" if is_tool_content else "status"

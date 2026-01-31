@@ -3034,6 +3034,17 @@ Your answer:"""
             current_answers,
         )
 
+        # Emit voting complete status for TUI event pipeline
+        from massgen.logger_config import get_event_emitter as _get_event_emitter
+
+        _vote_emitter = _get_event_emitter()
+        if _vote_emitter and self._selected_agent:
+            _vote_emitter.emit_status(
+                f"Voting complete - selected agent: {self._selected_agent}",
+                level="info",
+                agent_id=self._selected_agent,
+            )
+
         # Track winning agent for memory sharing in future turns
         self._current_turn += 1
         if self._selected_agent:
@@ -7234,6 +7245,17 @@ Your answer:"""
         # Get vote results for presentation
         vote_results = self._get_vote_results()
 
+        # Emit status event for TUI event pipeline
+        from massgen.logger_config import get_event_emitter
+
+        _emitter = get_event_emitter()
+        if _emitter:
+            _emitter.emit_status(
+                "Presenting final coordinated answer",
+                level="info",
+                agent_id=self._selected_agent,
+            )
+
         log_stream_chunk("orchestrator", "content", "## 🎯 Final Coordinated Answer\n")
         yield StreamChunk(
             type="coordination" if self.trace_classification == "strict" else "content",
@@ -8158,6 +8180,16 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             if clean_answer_content.strip():
                 # Store the clean final answer (used by post-evaluation and conversation history)
                 self._final_presentation_content = clean_answer_content.strip()
+
+                # Emit final_answer event for TUI event pipeline
+                from massgen.logger_config import get_event_emitter as _get_fa_emitter
+
+                _fa_emitter = _get_fa_emitter()
+                if _fa_emitter:
+                    _fa_emitter.emit_final_answer(
+                        self._final_presentation_content,
+                        agent_id=selected_agent_id,
+                    )
             elif not was_cancelled:
                 # Only yield fallback content if NOT cancelled - yielding after cancellation
                 # causes display issues since the UI has already raised CancellationRequested

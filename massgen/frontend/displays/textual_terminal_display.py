@@ -529,6 +529,11 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._buffer_lock = threading.Lock()
         self._recent_web_chunks: Dict[str, Deque[str]] = {agent_id: deque(maxlen=self.max_web_search_lines) for agent_id in self.agent_ids}
 
+        # Unified event pipeline: when True, events flow directly from EventEmitter
+        # to per-agent TimelineEventAdapters, bypassing the old buffer/flush path.
+        self._use_event_pipeline = kwargs.get("use_event_pipeline", True)
+        self._event_listener_registered = False
+
     def _validate_agent_ids(self):
         """Validate agent IDs for security and robustness."""
         if not self.agent_ids:
@@ -2783,6 +2788,7 @@ if TEXTUAL_AVAILABLE:
             """Set up periodic buffer flushing when app starts."""
             self._thread_id = threading.get_ident()
             self.coordination_display._app_ready.set()
+            self._register_event_listener()
             self.set_interval(self.buffer_flush_interval, self._flush_buffers)
             if self.coordination_display.restart_reason and self.header_widget:
                 self.header_widget.show_restart_context(
@@ -3112,6 +3118,72 @@ if TEXTUAL_AVAILABLE:
             """Handle dropdown dismissal."""
             if hasattr(self, "question_input"):
                 self.question_input.autocomplete_active = False
+
+        def _register_event_listener(self) -> None:
+            """Register this TUI as a listener on the global EventEmitter.
+
+            Events flow directly from the emitter to per-agent TimelineEventAdapters,
+            bypassing the old buffer/flush path when _use_event_pipeline is True.
+            """
+            if not self.coordination_display._use_event_pipeline:
+                return
+            if self.coordination_display._event_listener_registered:
+                return
+
+            from massgen.logger_config import get_event_emitter
+
+            emitter = get_event_emitter()
+            if emitter is None:
+                return
+
+            emitter.add_listener(self._handle_event_from_emitter)
+            self.coordination_display._event_listener_registered = True
+
+        def _handle_event_from_emitter(self, event) -> None:
+            """Handle an event from the global EventEmitter.
+
+            This is called from backend/orchestrator threads. We use
+            call_from_thread() to marshal into the Textual main thread.
+
+            When _use_event_pipeline is False (default), we don't route events
+            to adapters since the old buffer/flush path handles display.
+            The listener still runs so subclasses or future code can hook in.
+            """
+            if not self.coordination_display._use_event_pipeline:
+                return
+
+            from massgen.events import EventType
+
+            # Only handle structured events (not stream_chunk - those go via old path)
+            if event.event_type == EventType.STREAM_CHUNK:
+                return
+
+            agent_id = event.agent_id
+            if not agent_id or agent_id not in self.agent_widgets:
+                return
+
+            try:
+                self.call_from_thread(self._route_event_to_adapter, event)
+            except Exception:
+                pass  # Don't crash for display issues
+
+        def _route_event_to_adapter(self, event) -> None:
+            """Route a structured event to the correct agent's TimelineEventAdapter.
+
+            Runs on the Textual main thread (via call_from_thread).
+            """
+            agent_id = event.agent_id
+            if not agent_id or agent_id not in self.agent_widgets:
+                return
+
+            panel = self.agent_widgets[agent_id]
+
+            adapter = self._event_adapters.get(agent_id)
+            if adapter is None:
+                adapter = TimelineEventAdapter(panel, agent_id=agent_id)
+                self._event_adapters[agent_id] = adapter
+
+            adapter.handle_event(event)
 
         def _is_execution_in_progress(self) -> bool:
             """Check if agents are currently executing.

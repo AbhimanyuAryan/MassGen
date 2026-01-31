@@ -30,6 +30,7 @@ from .content_handlers import (
     get_tool_category,
 )
 from .content_normalizer import ContentNormalizer, NormalizedContent
+from .task_plan_support import is_planning_tool
 
 # Output types for ContentProcessor
 OutputType = Literal[
@@ -520,6 +521,16 @@ class ContentProcessor:
             return self._handle_event_final_answer(event, round_number)
         elif event.event_type == EventType.STREAM_CHUNK:
             return self._handle_event_stream_chunk(event, round_number)
+        elif event.event_type == EventType.WORKSPACE_ACTION:
+            return self._handle_event_workspace_action(event, round_number)
+        elif event.event_type == EventType.RESTART_BANNER:
+            return self._handle_event_restart_banner(event, round_number)
+        elif event.event_type == EventType.PRESENTATION_START:
+            return self._handle_event_presentation_start(event, round_number)
+        elif event.event_type == EventType.AGENT_RESTART:
+            return self._handle_event_agent_restart(event, round_number)
+        elif event.event_type == EventType.PHASE_CHANGE:
+            return self._handle_event_phase_change(event, round_number)
         return None
 
     def _handle_event_tool_start(
@@ -533,8 +544,9 @@ class ContentProcessor:
         args = event.data.get("args", {})
         server_name = event.data.get("server_name")
 
-        # Filter out internal coordination tools (task_plan, etc.)
-        if ContentNormalizer.is_filtered_tool(tool_name):
+        # Filter out internal coordination tools (task_plan, etc.),
+        # but keep planning tools so task plans can update.
+        if ContentNormalizer.is_filtered_tool(tool_name) and not is_planning_tool(tool_name):
             return None
 
         # Get category info for proper styling
@@ -591,8 +603,9 @@ class ContentProcessor:
         elapsed = event.data.get("elapsed_seconds", 0)
         is_error = event.data.get("is_error", False)
 
-        # Filter out internal coordination tools (task_plan, etc.)
-        if tool_name and ContentNormalizer.is_filtered_tool(tool_name):
+        # Filter out internal coordination tools (task_plan, etc.),
+        # but keep planning tools so task plans can update.
+        if tool_name and ContentNormalizer.is_filtered_tool(tool_name) and not is_planning_tool(tool_name):
             # Clean up tool state if present
             self._event_tool_states.pop(tool_id, None)
             return None
@@ -812,15 +825,6 @@ class ContentProcessor:
 
                 # Filter out internal coordination tools (task_plan, etc.),
                 # but keep planning tools so task plans can update.
-                try:
-                    from massgen.frontend.displays.task_plan_support import (
-                        is_planning_tool,
-                    )
-                except Exception:
-
-                    def is_planning_tool(_name: str) -> bool:  # type: ignore[assignment]
-                        return False
-
                 if ContentNormalizer.is_filtered_tool(tool_name) and not is_planning_tool(tool_name):
                     continue
 
@@ -989,6 +993,89 @@ class ContentProcessor:
             )
 
         return None
+
+    def _handle_event_workspace_action(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle workspace_action event from events.jsonl."""
+        action_type = event.data.get("action_type", "unknown")
+        params = event.data.get("params")
+        label = f"workspace/{action_type}"
+        if params:
+            label += f" {params}"
+
+        self._batch_tracker.mark_content_arrived()
+        return ContentOutput(
+            output_type="status",
+            round_number=round_number,
+            text_content=f"🔧 {label}",
+            text_style="dim cyan",
+            text_class="status",
+        )
+
+    def _handle_event_restart_banner(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle restart_banner event from events.jsonl."""
+        attempt = event.data.get("attempt", 1)
+        max_attempts = event.data.get("max_attempts", 3)
+        reason = event.data.get("reason", "")
+
+        return ContentOutput(
+            output_type="separator",
+            round_number=attempt,
+            separator_label=f"Restart Attempt {attempt}/{max_attempts}",
+            separator_subtitle=reason,
+        )
+
+    def _handle_event_presentation_start(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle presentation_start event from events.jsonl."""
+        self._batch_tracker.mark_content_arrived()
+        return ContentOutput(
+            output_type="separator",
+            round_number=round_number,
+            separator_label="Final Presentation",
+            separator_subtitle="",
+        )
+
+    def _handle_event_agent_restart(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle agent_restart event from events.jsonl."""
+        agent_round = event.data.get("restart_round", round_number)
+
+        return ContentOutput(
+            output_type="separator",
+            round_number=agent_round,
+            separator_label=f"Round {agent_round}",
+            separator_subtitle="Agent restart",
+        )
+
+    def _handle_event_phase_change(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle phase_change event from events.jsonl."""
+        phase = event.data.get("phase", "unknown")
+
+        return ContentOutput(
+            output_type="status",
+            round_number=round_number,
+            text_content=f"Phase: {phase}",
+            text_style="dim cyan",
+            text_class="status",
+        )
 
     def flush_pending_batch(self, round_number: int = 1) -> Optional[ContentOutput]:
         """Flush any pending tool batch and return it.
