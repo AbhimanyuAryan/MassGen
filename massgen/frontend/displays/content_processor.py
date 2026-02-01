@@ -187,6 +187,16 @@ class ContentProcessor:
             return self._handle_event_post_evaluation(event, round_number)
         elif event.event_type == EventType.SYSTEM_STATUS:
             return self._handle_event_system_status(event, round_number)
+        elif event.event_type == EventType.ANSWER_SUBMITTED:
+            return self._handle_event_answer_submitted(event, round_number)
+        elif event.event_type == EventType.VOTE:
+            return self._handle_event_vote(event, round_number)
+        elif event.event_type == EventType.WINNER_SELECTED:
+            return self._handle_event_winner_selected(event, round_number)
+        elif event.event_type == EventType.CONTEXT_RECEIVED:
+            return self._handle_event_context_received(event, round_number)
+        elif event.event_type == EventType.INJECTION_RECEIVED:
+            return self._handle_event_injection_received(event, round_number)
         return None
 
     def _handle_event_tool_start(
@@ -210,7 +220,14 @@ class ContentProcessor:
         display_name = format_tool_display_name(tool_name)
 
         # Create args summary
-        args_str = str(args) if not isinstance(args, str) else args
+        if isinstance(args, str):
+            args_str = args
+        elif isinstance(args, (dict, list)):
+            import json
+
+            args_str = json.dumps(args)
+        else:
+            args_str = str(args)
         args_summary = args_str[:77] + "..." if len(args_str) > 80 else args_str
 
         # Create ToolDisplayData
@@ -603,6 +620,145 @@ class ContentProcessor:
             text_content=message,
             text_style="dim cyan",
             text_class="status",
+        )
+
+    def _handle_event_answer_submitted(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle answer_submitted coordination event.
+
+        Creates a workspace/new_answer tool card matching the main TUI's
+        notify_new_answer() rendering for subagent TUI parity.
+        """
+        agent_id = event.agent_id or "unknown"
+        label = event.data.get("answer_label", "")
+        content = event.data.get("content", "")
+        answer_number = event.data.get("answer_number", 1)
+        preview = content[:100].replace("\n", " ")
+        if len(content) > 100:
+            preview += "..."
+
+        tool_id = f"new_answer_{agent_id}_{answer_number}"
+        now = datetime.fromisoformat(event.timestamp) if event.timestamp else datetime.now()
+
+        tool_data = ToolDisplayData(
+            tool_id=tool_id,
+            tool_name="workspace/new_answer",
+            display_name="Workspace/New Answer",
+            tool_type="workspace",
+            category="workspace",
+            icon="\U0001f4dd",
+            color="#4fc1ff",
+            status="success",
+            start_time=now,
+            end_time=now,
+            args_summary=f'content="{preview}"',
+            args_full=f'content="{content}"',
+            result_summary=f"Answer {label} submitted",
+            result_full=content,
+            elapsed_seconds=0.0,
+        )
+
+        self._batch_tracker.mark_content_arrived()
+        return ContentOutput(
+            output_type="tool",
+            round_number=round_number,
+            tool_data=tool_data,
+            batch_action="standalone",
+        )
+
+    def _handle_event_vote(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle vote coordination event.
+
+        Creates a workspace/vote tool card matching the main TUI's
+        notify_vote() rendering for subagent TUI parity.
+        """
+        voter = event.agent_id or "unknown"
+        target = event.data.get("target_id", "unknown")
+        reason = event.data.get("reason", "")
+
+        tool_id = f"vote_{voter}_{id(event)}"
+        now = datetime.fromisoformat(event.timestamp) if event.timestamp else datetime.now()
+
+        result_text = f"Voted for {target}"
+        if reason:
+            result_text += f"\nReason: {reason}"
+
+        tool_data = ToolDisplayData(
+            tool_id=tool_id,
+            tool_name="workspace/vote",
+            display_name="Workspace/Vote",
+            tool_type="workspace",
+            category="workspace",
+            icon="\U0001f5f3\ufe0f",
+            color="#a371f7",
+            status="success",
+            start_time=now,
+            end_time=now,
+            args_summary=f'voted_for="{target}"',
+            args_full=f'voted_for="{target}", reason="{reason}"',
+            result_summary=f"Voted for {target}",
+            result_full=result_text,
+            elapsed_seconds=0.0,
+        )
+
+        self._batch_tracker.mark_content_arrived()
+        return ContentOutput(
+            output_type="tool",
+            round_number=round_number,
+            tool_data=tool_data,
+            batch_action="standalone",
+        )
+
+    def _handle_event_winner_selected(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle winner_selected coordination event."""
+        winner = event.agent_id or "unknown"
+
+        self._batch_tracker.mark_content_arrived()
+        return ContentOutput(
+            output_type="status",
+            round_number=round_number,
+            text_content=f"Winner selected: {winner}",
+            text_style="bold green",
+            text_class="status",
+        )
+
+    def _handle_event_context_received(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle context_received coordination event."""
+        # Context sharing is an internal orchestration detail — don't render
+        return None
+
+    def _handle_event_injection_received(
+        self,
+        event: MassGenEvent,
+        round_number: int,
+    ) -> Optional[ContentOutput]:
+        """Handle injection_received event."""
+        source_agents = event.data.get("source_agents", [])
+        injection_type = event.data.get("injection_type", "mid_stream")
+        label = f"Received {injection_type} injection from: {', '.join(source_agents)}"
+
+        self._batch_tracker.mark_content_arrived()
+        return ContentOutput(
+            output_type="injection",
+            round_number=round_number,
+            text_content=label,
+            text_style="italic cyan",
+            text_class="injection",
         )
 
     def flush_pending_batch(self, round_number: int = 1) -> Optional[ContentOutput]:

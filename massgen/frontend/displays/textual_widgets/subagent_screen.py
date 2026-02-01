@@ -50,7 +50,7 @@ from massgen.subagent.models import SubagentDisplayData, SubagentResult
 from ..base_tui_layout import BaseTUILayoutMixin
 from ..tui_event_pipeline import TimelineEventAdapter
 from .agent_status_ribbon import AgentStatusRibbon
-from .content_sections import TimelineSection
+from .content_sections import FinalPresentationCard, TimelineSection
 from .tab_bar import AgentTabBar, AgentTabChanged
 
 logger = logging.getLogger(__name__)
@@ -62,17 +62,24 @@ class SubagentHeader(Horizontal):
     DEFAULT_CSS = """
     SubagentHeader {
         dock: top;
-        height: 3;
+        height: 1;
         background: $surface;
-        border-bottom: solid $primary-darken-2;
-        padding: 0 1;
-        align: center middle;
+        padding: 0 2;
     }
 
     SubagentHeader .back-button {
         width: auto;
         min-width: 8;
+        height: 1;
+        border: none;
+        background: transparent;
+        color: $text-muted;
         margin-right: 1;
+    }
+
+    SubagentHeader .back-button:hover {
+        color: $primary;
+        text-style: bold;
     }
 
     SubagentHeader .subagent-title {
@@ -97,9 +104,8 @@ class SubagentHeader(Horizontal):
         self._subagent = subagent
 
     def compose(self) -> ComposeResult:
-        yield Button("<- Back", variant="default", classes="back-button", id="back_btn")
+        yield Button("← Back", classes="back-button", id="back_btn")
         yield Static(f"Subagent: {self._subagent.id}", classes="subagent-title", id="header_title")
-        # Model info would come from config - placeholder for now
         yield Static("", classes="model-info", id="model_info")
 
     def update_subagent(self, subagent: SubagentDisplayData) -> None:
@@ -111,29 +117,52 @@ class SubagentHeader(Horizontal):
             pass
 
 
+class _FooterAction(Static, can_focus=True):
+    """A single-line clickable text action for the footer."""
+
+    DEFAULT_CSS = """
+    _FooterAction {
+        width: auto;
+        height: 1;
+        color: $text-muted;
+        padding: 0 2;
+    }
+
+    _FooterAction:hover {
+        color: $primary;
+        text-style: bold;
+    }
+    """
+
+    class Clicked(Message):
+        def __init__(self, action_id: str) -> None:
+            super().__init__()
+            self.action_id = action_id
+
+    def __init__(self, label: str, action_id: str, **kwargs) -> None:
+        super().__init__(label, **kwargs)
+        self._action_id = action_id
+
+    def on_click(self) -> None:
+        self.post_message(self.Clicked(self._action_id))
+
+
 class SubagentFooter(Horizontal):
-    """Footer bar with action buttons."""
+    """Footer bar with action links."""
 
     DEFAULT_CSS = """
     SubagentFooter {
         dock: bottom;
-        height: 3;
+        height: 1;
         background: $surface;
-        border-top: solid $primary-darken-2;
-        padding: 0 1;
+        padding: 0 2;
         align: center middle;
-    }
-
-    SubagentFooter .footer-button {
-        width: auto;
-        min-width: 16;
-        margin: 0 1;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Button("Copy Answer", variant="default", classes="footer-button", id="copy_btn")
-        yield Button("Back to Main", variant="primary", classes="footer-button", id="back_btn_footer")
+        yield _FooterAction("📋 Copy Answer", action_id="copy", id="copy_btn")
+        yield _FooterAction("← Back to Main", action_id="back", id="back_btn_footer")
 
 
 class SubagentStatusLine(Static):
@@ -239,7 +268,7 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
     SubagentPanel TimelineSection {
         width: 100%;
         height: 100%;
-        padding: 1 2;
+        padding: 0 2 1 2;
         overflow-y: auto;
     }
     """
@@ -256,35 +285,52 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
         self._subagent = subagent
         self._ribbon = ribbon
         self._active_timeline_id: Optional[str] = None
+
+        # Per-inner-agent task plan hosts (created in mount_agent_timelines)
         from massgen.frontend.displays.textual_widgets.task_plan_host import (
             TaskPlanHost,
         )
 
-        self._task_plan_host = TaskPlanHost(
-            agent_id=self.agent_id,
-            ribbon=self._ribbon,
-            id="subagent_task_plan",
-            classes="pinned-task-plan hidden",
-        )
+        self._TaskPlanHost = TaskPlanHost  # Store class ref for later instantiation
+        self._task_plan_hosts: Dict[str, "TaskPlanHost"] = {}
+        self._active_task_plan_agent: Optional[str] = None
 
         # Initialize content pipeline from mixin
         self.init_content_pipeline()
 
+    @property
+    def _task_plan_host(self):
+        """Return the active agent's TaskPlanHost (compatibility with BaseTUILayoutMixin)."""
+        if self._active_task_plan_agent and self._active_task_plan_agent in self._task_plan_hosts:
+            return self._task_plan_hosts[self._active_task_plan_agent]
+        # Fallback to first available
+        if self._task_plan_hosts:
+            return next(iter(self._task_plan_hosts.values()))
+        return None
+
     def compose(self) -> ComposeResult:
-        # Pinned task plan (hidden until task plan created)
-        yield self._task_plan_host
-        # Timelines are mounted dynamically via mount_agent_timelines()
+        # Task plan hosts and timelines are mounted dynamically via mount_agent_timelines()
+        return
+        yield  # Make this a generator
 
     # -------------------------------------------------------------------------
     # Multi-timeline management
     # -------------------------------------------------------------------------
 
     def mount_agent_timelines(self, agent_ids: List[str]) -> None:
-        """Mount one timeline per inner agent. All start hidden except the first."""
-        # Remove any existing timelines first to avoid duplicate IDs
+        """Mount one timeline and one TaskPlanHost per inner agent. All start hidden except the first."""
+        # Remove any existing timelines and task plan hosts first
         for tl in list(self.query(TimelineSection)):
             tl.remove()
+        from massgen.frontend.displays.textual_widgets.task_plan_host import (
+            TaskPlanHost,
+        )
+
+        for tph in list(self.query(TaskPlanHost)):
+            tph.remove()
         self._active_timeline_id = None
+        self._task_plan_hosts.clear()
+        self._active_task_plan_agent = None
 
         # Deduplicate while preserving order
         seen: set[str] = set()
@@ -295,8 +341,20 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
                 unique_ids.append(aid)
 
         for i, aid in enumerate(unique_ids):
+            # Mount TaskPlanHost per agent
+            tph_id = f"subagent-task-plan-{aid}"
+            hidden_cls = "pinned-task-plan hidden"
+            tph = self._TaskPlanHost(
+                agent_id=aid,
+                ribbon=self._ribbon,
+                id=tph_id,
+                classes=hidden_cls,
+            )
+            self._task_plan_hosts[aid] = tph
+            self.mount(tph)
+
+            # Mount timeline per agent
             widget_id = f"subagent-timeline-{aid}"
-            # Skip if a widget with this ID already exists (remove() is async)
             try:
                 self.query_one(f"#{widget_id}")
                 continue
@@ -306,27 +364,40 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
             if i > 0:
                 tl.add_class("hidden")
             self.mount(tl)
-        self._active_timeline_id = f"subagent-timeline-{unique_ids[0]}" if unique_ids else None
+
+        if unique_ids:
+            self._active_timeline_id = f"subagent-timeline-{unique_ids[0]}"
+            self._active_task_plan_agent = unique_ids[0]
 
     def switch_timeline(self, agent_id: str) -> None:
-        """Show one timeline, hide the rest."""
+        """Show one timeline and task plan host, hide the rest."""
         new_id = f"subagent-timeline-{agent_id}"
         if new_id == self._active_timeline_id:
             return
-        # Hide current
+        # Hide current timeline
         if self._active_timeline_id:
             try:
                 old = self.query_one(f"#{self._active_timeline_id}", TimelineSection)
                 old.add_class("hidden")
             except Exception:
                 pass
-        # Show new
+        # Hide current task plan host
+        if self._active_task_plan_agent and self._active_task_plan_agent in self._task_plan_hosts:
+            self._task_plan_hosts[self._active_task_plan_agent].add_class("hidden")
+        # Show new timeline
         try:
             new = self.query_one(f"#{new_id}", TimelineSection)
             new.remove_class("hidden")
             self._active_timeline_id = new_id
         except Exception:
             pass
+        # Show new task plan host (only if it has content — check if it was ever unhidden)
+        self._active_task_plan_agent = agent_id
+        if agent_id in self._task_plan_hosts:
+            tph = self._task_plan_hosts[agent_id]
+            # Only show if it has task plan content (don't unhide empty ones)
+            if tph.get_active_plan_id() is not None:
+                tph.remove_class("hidden")
 
     # -------------------------------------------------------------------------
     # BaseTUILayoutMixin abstract method implementations
@@ -348,11 +419,14 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
     def set_ribbon(self, ribbon: AgentStatusRibbon) -> None:
         """Set the ribbon reference after mounting."""
         self._ribbon = ribbon
-        self._task_plan_host.set_ribbon(ribbon)
+        for tph in self._task_plan_hosts.values():
+            tph.set_ribbon(ribbon)
 
     def update_task_plan(self, tasks: List[Dict[str, Any]], plan_id: Optional[str] = None, operation: str = "create") -> None:
         """Update the active task plan for this subagent panel."""
-        self._task_plan_host.update_task_plan(tasks, plan_id=plan_id, operation=operation)
+        host = self._task_plan_host
+        if host:
+            host.update_task_plan(tasks, plan_id=plan_id, operation=operation)
 
     def _update_pinned_task_plan(
         self,
@@ -363,12 +437,14 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
     ) -> None:
         """Update the pinned task plan widget."""
         try:
-            self._task_plan_host.update_pinned_task_plan(
-                tasks=tasks,
-                focused_task_id=focused_task_id,
-                operation=operation,
-                show_notification=show_notification,
-            )
+            host = self._task_plan_host
+            if host:
+                host.update_pinned_task_plan(
+                    tasks=tasks,
+                    focused_task_id=focused_task_id,
+                    operation=operation,
+                    show_notification=show_notification,
+                )
         except Exception:
             pass
 
@@ -385,7 +461,9 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
             update_task_plan_from_tool,
         )
 
-        update_task_plan_from_tool(self._task_plan_host, tool_data, timeline, log=tui_log)
+        host = self._task_plan_host
+        if host:
+            update_task_plan_from_tool(host, tool_data, timeline, log=tui_log)
 
 
 class SubagentView(Container):
@@ -460,6 +538,7 @@ class SubagentView(Container):
         # Per-agent adapters (keyed by agent_id)
         self._event_adapters: Dict[str, TimelineEventAdapter] = {}
         self._agents_loaded: set[str] = set()
+        self._final_answer_locked: set[str] = set()  # Agents with final answer lock applied
 
         # References to widgets (set after compose)
         self._header: Optional[SubagentHeader] = None
@@ -744,6 +823,20 @@ class SubagentView(Container):
         except Exception:
             pass
 
+    @staticmethod
+    def _display_round(event: MassGenEvent) -> MassGenEvent:
+        """Convert 0-based orchestrator round to 1-based display round for round_start events."""
+        if event.event_type != "round_start":
+            return event
+        display_round = (event.round_number or 0) + 1
+        return MassGenEvent(
+            timestamp=event.timestamp,
+            event_type=event.event_type,
+            agent_id=event.agent_id,
+            round_number=display_round,
+            data=event.data,
+        )
+
     def _sync_adapter_state(self) -> None:
         """Sync round/final answer state from the active agent's adapter."""
         agent_id = self._current_inner_agent
@@ -778,20 +871,14 @@ class SubagentView(Container):
                         if filtered:
                             adapter = self._event_adapters[agent_id]
                             for event in filtered:
-                                # Orchestrator uses 0-based rounds; display uses 1-based
-                                if event.event_type == "round_start":
-                                    display_round = (event.round_number or 0) + 1
-                                    event = MassGenEvent(
-                                        timestamp=event.timestamp,
-                                        event_type=event.event_type,
-                                        agent_id=event.agent_id,
-                                        round_number=display_round,
-                                        data=event.data,
-                                    )
-                                adapter.handle_event(event)
+                                adapter.handle_event(self._display_round(event))
                             adapter.flush()
                 self._sync_adapter_state()
                 self._update_status_display()
+
+                # Check if any agent got a final answer
+                for agent_id in list(self._agents_loaded):
+                    self._maybe_lock_final_answer(agent_id)
 
         # Stop polling if completed
         if self._subagent.status not in ("running", "pending"):
@@ -831,6 +918,7 @@ class SubagentView(Container):
             self._final_answer = None
             self._event_adapters.clear()
             self._agents_loaded.clear()
+            self._final_answer_locked.clear()
             self._tool_call_agent_map.clear()
 
             # Remove old timelines
@@ -931,106 +1019,106 @@ class SubagentView(Container):
 
         logger.info(f"[SubagentScreen] Loading {len(events)} events for agent {aid}")
         for event in events:
-            # Orchestrator uses 0-based rounds; display uses 1-based
-            if event.event_type == "round_start":
-                display_round = (event.round_number or 0) + 1
-                event = MassGenEvent(
-                    timestamp=event.timestamp,
-                    event_type=event.event_type,
-                    agent_id=event.agent_id,
-                    round_number=display_round,
-                    data=event.data,
-                )
-            adapter.handle_event(event)
+            adapter.handle_event(self._display_round(event))
         adapter.flush()
         self._sync_adapter_state()
         self._update_status_display()
 
-    def _filter_events_for_agent(self, events: List[MassGenEvent], agent_id: str) -> List[MassGenEvent]:
-        """Filter events to those relevant for a specific inner agent.
+        # Check if final answer is ready and lock timeline
+        self._maybe_lock_final_answer(aid)
 
-        Uses tool_call_id -> agent mappings when available to keep tool calls aligned.
-        Falls back to source/agent_id matching for non-tool events.
+    def _maybe_lock_final_answer(self, agent_id: str) -> None:
+        """Create a FinalPresentationCard and lock the timeline if final_answer is ready.
+
+        Mirrors the main TUI's behavior: after the final answer event is processed,
+        a card is added to the timeline and the timeline locks to show only that card.
+        """
+        if agent_id in self._final_answer_locked:
+            return
+        adapter = self._event_adapters.get(agent_id)
+        if not adapter or not adapter.final_answer:
+            return
+        if not self._panel:
+            return
+
+        timeline_id = f"subagent-timeline-{agent_id}"
+        try:
+            timeline = self._panel.query_one(f"#{timeline_id}", TimelineSection)
+        except Exception:
+            return
+
+        card_id = f"final_presentation_card_{agent_id}"
+
+        # Remove any existing card to avoid duplicates
+        try:
+            existing = timeline.query_one(f"#{card_id}", FinalPresentationCard)
+            existing.remove()
+        except Exception:
+            pass
+
+        # Create the final answer card
+        card = FinalPresentationCard(
+            agent_id=agent_id,
+            id=card_id,
+        )
+
+        # Add to timeline, set content, and mark complete
+        timeline.add_widget(card)
+        card.append_chunk(adapter.final_answer)
+        card.complete()
+
+        # Lock timeline to show only the final answer card
+        timeline.lock_to_final_answer(card_id)
+        card.set_locked_mode(True)
+
+        self._final_answer_locked.add(agent_id)
+        logger.info(f"[SubagentScreen] Final answer lock applied for agent {agent_id}")
+
+    def _filter_events_for_agent(self, events: List[MassGenEvent], agent_id: str) -> List[MassGenEvent]:
+        """Filter structured events to those relevant for a specific inner agent.
+
+        Routing rules:
+        - round_start: pass through for all agents (session-level)
+        - tool_start/tool_complete: route via tool_id → agent mapping, fall back to agent_id
+        - All other structured events: match on event.agent_id
+        - Legacy stream_chunk events: skip (handled by ContentProcessor as no-ops)
         """
         filtered: List[MassGenEvent] = []
 
         for event in events:
-            if event.event_type != "stream_chunk":
-                if event.event_type == "round_start":
-                    # Session-level event — include for all agents (round 0 mapped later)
-                    if event.round_number is not None:
-                        filtered.append(event)
-                elif event.agent_id == agent_id:
+            if event.event_type == "round_start":
+                if event.round_number is not None:
                     filtered.append(event)
-                continue
-
-            chunk = event.data.get("chunk", {}) or {}
-            chunk_type = chunk.get("type")
-            tool_call_id = chunk.get("tool_call_id")
-            source = chunk.get("source") or event.data.get("source")
-            status = chunk.get("status")
-
-            # Drop MCP status noise to match main TUI sequencing (but keep tool outputs)
-            if chunk_type in ("mcp_status", "ChunkType.MCP_STATUS"):
-                if status != "function_call_output":
-                    continue
-            if chunk_type == "done":
-                continue
-
-            # Handle tool_calls bundle - filter by mapped agent
-            if chunk_type == "tool_calls":
-                tool_calls = chunk.get("tool_calls", []) or []
-                filtered_calls = []
-                for tc in tool_calls:
-                    tc_id = tc.get("id")
-                    mapped_agent = self._tool_call_agent_map.get(tc_id)
-                    if mapped_agent:
-                        if mapped_agent == agent_id:
-                            filtered_calls.append(tc)
-                    else:
-                        # If we can't map, include for this agent when available
-                        if event.agent_id == agent_id or len(self._inner_agents) <= 1:
-                            filtered_calls.append(tc)
-                if not filtered_calls:
-                    continue
-                new_chunk = {**chunk, "tool_calls": filtered_calls}
-                new_event = MassGenEvent(
-                    timestamp=event.timestamp,
-                    event_type=event.event_type,
-                    agent_id=event.agent_id,
-                    round_number=event.round_number,
-                    data={**event.data, "chunk": new_chunk},
-                )
-                filtered.append(new_event)
-                continue
-
-            # Handle tool-related chunks by tool_call_id mapping
-            if tool_call_id:
-                mapped_agent = self._tool_call_agent_map.get(tool_call_id)
-                if mapped_agent and mapped_agent == agent_id:
+            elif event.event_type in ("tool_start", "tool_complete"):
+                tool_id = event.data.get("tool_id", "")
+                mapped = self._tool_call_agent_map.get(tool_id)
+                if mapped == agent_id:
                     filtered.append(event)
-                elif mapped_agent is None and (event.agent_id == agent_id or len(self._inner_agents) <= 1):
+                elif mapped is None and (event.agent_id == agent_id or len(self._inner_agents) <= 1):
                     filtered.append(event)
+            elif event.event_type == "stream_chunk":
                 continue
-
-            # Fallback to source/agent_id matching
-            if source == agent_id or event.agent_id == agent_id:
+            elif event.agent_id == agent_id:
                 filtered.append(event)
 
         return filtered
 
     def _update_tool_call_agent_map(self, events: List[MassGenEvent]) -> None:
-        """Update tool_call_id -> agent_id mapping from hook_execution events."""
+        """Update tool_id -> agent_id mapping from structured tool_start events."""
         for event in events:
-            if event.event_type != "stream_chunk":
-                continue
-            chunk = event.data.get("chunk", {}) or {}
-            if chunk.get("type") != "hook_execution":
-                continue
-            tool_call_id = chunk.get("tool_call_id")
-            source = chunk.get("source")
-            if tool_call_id and source and self._is_agent_source(source):
-                self._tool_call_agent_map.setdefault(tool_call_id, source)
+            if event.event_type == "tool_start":
+                tool_id = event.data.get("tool_id", "")
+                agent_id = event.agent_id
+                if tool_id and agent_id and self._is_agent_source(agent_id):
+                    self._tool_call_agent_map.setdefault(tool_id, agent_id)
+            elif event.event_type == "stream_chunk":
+                # Legacy fallback: extract from hook_execution chunks
+                chunk = event.data.get("chunk", {}) or {}
+                if chunk.get("type") == "hook_execution":
+                    tool_call_id = chunk.get("tool_call_id")
+                    source = chunk.get("source")
+                    if tool_call_id and source and self._is_agent_source(source):
+                        self._tool_call_agent_map.setdefault(tool_call_id, source)
 
     def _is_agent_source(self, source: Optional[str]) -> bool:
         """Check if a source string looks like an inner agent ID (not MCP/hook/system)."""
@@ -1048,10 +1136,15 @@ class SubagentView(Container):
         return True
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        if event.button.id in ("back_btn", "back_btn_footer"):
+        """Handle header back button press."""
+        if event.button.id == "back_btn":
             self._request_close()
-        elif event.button.id == "copy_btn":
+
+    def on__footer_action_clicked(self, event: _FooterAction.Clicked) -> None:
+        """Handle footer action clicks."""
+        if event.action_id == "back":
+            self._request_close()
+        elif event.action_id == "copy":
             self._copy_answer()
 
     def on_agent_tab_changed(self, event: AgentTabChanged) -> None:
@@ -1128,6 +1221,33 @@ class SubagentView(Container):
         elif key_lower == "c":
             self.action_copy_answer()
             event.stop()
+        elif key_lower == "s":
+            self._show_subagent_status()
+            event.stop()
+        elif key_lower == "o":
+            self._show_full_output()
+            event.stop()
+        elif key_lower == "v":
+            self.notify("Vote results not available in subagent view", severity="information", timeout=2)
+            event.stop()
+        elif key_lower == "t":
+            self.notify("Timeline browser not available in subagent view", severity="information", timeout=2)
+            event.stop()
+        elif key_lower == "a":
+            self._show_answer_view()
+            event.stop()
+        elif key_lower == "m":
+            self.notify("MCP status not available in subagent view", severity="information", timeout=2)
+            event.stop()
+        elif key_lower == "q":
+            self._request_close()
+            event.stop()
+        elif char.isdigit() and char != "0":
+            # Number keys to switch subagents
+            idx = int(char) - 1
+            if 0 <= idx < len(self._all_subagents):
+                self._switch_subagent(idx)
+            event.stop()
 
     def action_open_workspace(self) -> None:
         """Open workspace browser scoped to subagent's workspace."""
@@ -1184,13 +1304,106 @@ class SubagentView(Container):
             self.notify(f"Cannot open history: {e}", severity="error", timeout=3)
 
     def action_show_shortcuts(self) -> None:
-        """Show keyboard shortcuts help."""
+        """Show keyboard shortcuts help for subagent view."""
         try:
-            from massgen.frontend.displays.textual import KeyboardShortcutsModal
+            from massgen.frontend.displays.textual import TextContentModal
 
-            self.app.push_screen(KeyboardShortcutsModal())
+            shortcuts = (
+                "Subagent View Shortcuts\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Navigation\n"
+                "  Tab        Next subagent\n"
+                "  Shift+Tab  Previous subagent\n"
+                "  1-9        Switch to subagent by number\n"
+                "  Escape/q   Back to main view\n\n"
+                "Info\n"
+                "  w          Workspace browser\n"
+                "  h          Conversation history\n"
+                "  s          Subagent status\n"
+                "  o          Full output (raw events)\n"
+                "  a          Answer preview\n"
+                "  c          Copy answer\n"
+                "  ?          This help\n"
+            )
+            modal = TextContentModal(title="Keyboard Shortcuts", content=shortcuts)
+            self.app.push_screen(modal)
         except Exception as e:
             self.notify(f"Cannot show shortcuts: {e}", severity="error", timeout=3)
+
+    def _show_subagent_status(self) -> None:
+        """Show subagent status summary."""
+        try:
+            from massgen.frontend.displays.textual import TextContentModal
+
+            sa = self._subagent
+            lines = [
+                f"Subagent: {sa.id}",
+                f"Status:   {sa.status}",
+                f"Elapsed:  {int(sa.elapsed_seconds)}s",
+                f"Timeout:  {int(sa.timeout_seconds)}s",
+            ]
+            if sa.task:
+                lines.append(f"Task:     {sa.task}")
+            if sa.workspace_path:
+                lines.append(f"Workspace: {sa.workspace_path}")
+            if sa.log_path:
+                lines.append(f"Log path: {sa.log_path}")
+            if sa.error:
+                lines.append(f"Error:    {sa.error}")
+            if self._inner_agents:
+                lines.append(f"\nInner agents: {', '.join(sorted(self._inner_agents))}")
+
+            modal = TextContentModal(title=f"Status: {sa.id}", content="\n".join(lines))
+            self.app.push_screen(modal)
+        except Exception as e:
+            self.notify(f"Cannot show status: {e}", severity="error", timeout=3)
+
+    def _show_full_output(self) -> None:
+        """Show full raw output from subagent events."""
+        if not self._event_reader:
+            self.notify("No event data available", severity="warning", timeout=2)
+            return
+        try:
+            from massgen.frontend.displays.textual import TextContentModal
+
+            events = self._event_reader.read_all()
+            lines = []
+            for ev in events:
+                if ev.event_type != "stream_chunk":
+                    continue
+                chunk = ev.data.get("chunk", {}) or {}
+                chunk_type = chunk.get("type")
+                content = chunk.get("content", "")
+                if chunk_type == "text" and content.strip():
+                    lines.append(content)
+                elif chunk_type == "thinking" and content.strip():
+                    lines.append(f"[thinking] {content}")
+
+            if not lines:
+                self.notify("No output yet", severity="information", timeout=2)
+                return
+
+            modal = TextContentModal(
+                title=f"Full Output: {self._subagent.id}",
+                content="\n".join(lines[-100:]),
+            )
+            self.app.push_screen(modal)
+        except Exception as e:
+            self.notify(f"Cannot show output: {e}", severity="error", timeout=3)
+
+    def _show_answer_view(self) -> None:
+        """Show the subagent's answer."""
+        content = self._final_answer or self._subagent.answer_preview
+        if not content:
+            self.notify("No answer yet", severity="information", timeout=2)
+            return
+        try:
+            from massgen.frontend.displays.textual import TextContentModal
+
+            modal = TextContentModal(title=f"Answer: {self._subagent.id}", content=content)
+            self.app.push_screen(modal)
+        except Exception as e:
+            self.notify(f"Cannot show answer: {e}", severity="error", timeout=3)
 
     def _request_close(self) -> None:
         """Request the parent to close the view."""

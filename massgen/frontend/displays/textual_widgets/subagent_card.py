@@ -49,8 +49,8 @@ class SubagentColumn(Vertical):
         width: 1fr;
         min-width: 32;
         height: auto;
-        padding: 0 1;
-        border-right: solid #30363d;
+        padding: 0 1 1 1;
+        border-right: solid #21262d;
     }
 
     SubagentColumn:last-of-type {
@@ -60,6 +60,7 @@ class SubagentColumn(Vertical):
 
     SubagentColumn .agent-header {
         text-style: bold;
+        color: #e6edf3;
     }
 
     SubagentColumn .task-description {
@@ -188,31 +189,26 @@ class SubagentColumn(Vertical):
         status = self._subagent.status
 
         if status in ("completed", "error", "failed", "timeout"):
-            # Completed states: full bar in appropriate color
             bar_width = 20
             if status == "completed":
-                bar = "█" * bar_width
                 text = Text()
-                text.append(bar, style="#7ee787")
+                text.append("━" * bar_width, style="#7ee787")
                 text.append(" 100%", style="#7ee787")
                 return text
             elif status in ("error", "failed"):
-                bar = "█" * bar_width
                 text = Text()
-                text.append(bar, style="#f85149")
+                text.append("━" * bar_width, style="#f85149")
                 text.append(" ERR", style="#f85149")
                 return text
             else:  # timeout
-                bar = "█" * bar_width
                 text = Text()
-                text.append(bar, style="#d29922")
+                text.append("━" * bar_width, style="#d29922")
                 text.append(" T/O", style="#d29922")
                 return text
 
         if timeout <= 0:
             return Text("")
 
-        # Running: show progress based on elapsed/timeout
         ratio = min(elapsed / timeout, 1.0)
         percent = int(ratio * 100)
         bar_width = 20
@@ -220,15 +216,15 @@ class SubagentColumn(Vertical):
         empty = bar_width - filled
 
         text = Text()
-        text.append("█" * filled, style="#a371f7")
-        text.append("░" * empty, style="#30363d")
+        text.append("━" * filled, style="#a371f7")
+        text.append("─" * empty, style="#30363d")
         text.append(f" {percent}%", style="#8b949e")
         return text
 
     def _split_tools(self, tools: List[str]) -> Tuple[str, List[str]]:
         if not tools:
             return "", []
-        current = f"▸ {tools[0]}"
+        current = f"› {tools[0]}"
         recent = [f"  {t}" for t in tools[1:3]]
         return current, recent
 
@@ -259,23 +255,30 @@ class SubagentCard(Vertical, can_focus=True):
         width: 100%;
         height: auto;
         min-height: 9;
-        padding: 1 1;
+        padding: 1 1 1 2;
         margin: 0 0 1 1;
-        background: #1a1f2e;
+        background: #161b22;
         border-left: tall #7c3aed;
+        border-top: solid #21262d;
     }
 
     SubagentCard.all-completed {
         border-left: tall #7ee787;
-        background: #1a2420;
+        background: #131a16;
+        border-top: solid #1c2e22;
     }
 
     SubagentCard:hover {
-        background: #1e2436;
+        background: #1c2333;
     }
 
     SubagentCard.all-completed:hover {
-        background: #1e2c26;
+        background: #182019;
+    }
+
+    SubagentCard #subagent-card-title {
+        height: 1;
+        margin-bottom: 1;
     }
 
     SubagentCard #subagent-scroll {
@@ -344,6 +347,7 @@ class SubagentCard(Vertical, can_focus=True):
                 self._start_times[sa.id] = now - sa.elapsed_seconds
 
     def compose(self) -> ComposeResult:
+        yield Static(Text("⬡ Subagents", style="dim #8b949e"), id="subagent-card-title")
         with ScrollableContainer(id="subagent-scroll"):
             with Horizontal(id="subagent-columns"):
                 for sa in self._subagents:

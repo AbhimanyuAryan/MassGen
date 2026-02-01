@@ -129,6 +129,15 @@ class EventType:
     POST_EVALUATION = "post_evaluation"
     SYSTEM_STATUS = "system_status"
 
+    # Coordination events (emitted by orchestrator for subagent TUI parity)
+    ANSWER_SUBMITTED = "answer_submitted"
+    VOTE = "vote"
+    WINNER_SELECTED = "winner_selected"
+    CONTEXT_RECEIVED = "context_received"
+
+    # Injection events
+    INJECTION_RECEIVED = "injection_received"
+
     # Error events
     ERROR = "error"
 
@@ -159,7 +168,8 @@ class EventEmitter:
         self._lock = threading.Lock()
         self._listeners: List[EventListener] = []
         self._current_agent_id: Optional[str] = None
-        self._current_round_number: int = 0
+        self._current_round_numbers: Dict[str, int] = {}
+        self._default_round_number: int = 0
 
         # Initialize file if log_dir provided
         if self._log_dir:
@@ -198,7 +208,7 @@ class EventEmitter:
         if agent_id is not None:
             self._current_agent_id = agent_id
         if round_number is not None:
-            self._current_round_number = round_number
+            self._default_round_number = round_number
 
     def add_listener(self, listener: EventListener) -> None:
         """Add a listener to be notified of all events.
@@ -250,10 +260,18 @@ class EventEmitter:
             event_type: Type of event
             **kwargs: Event-specific data
         """
+        resolved_agent_id = kwargs.pop("agent_id", self._current_agent_id)
+        explicit_round = kwargs.pop("round_number", None)
+        if explicit_round is not None:
+            resolved_round = explicit_round
+        elif resolved_agent_id and resolved_agent_id in self._current_round_numbers:
+            resolved_round = self._current_round_numbers[resolved_agent_id]
+        else:
+            resolved_round = self._default_round_number
         event = MassGenEvent.create(
             event_type=event_type,
-            agent_id=kwargs.pop("agent_id", self._current_agent_id),
-            round_number=kwargs.pop("round_number", self._current_round_number),
+            agent_id=resolved_agent_id,
+            round_number=resolved_round,
             **kwargs,
         )
         self.emit(event)
@@ -380,7 +398,10 @@ class EventEmitter:
             round_number: The round number starting
             agent_id: Agent starting this round
         """
-        self._current_round_number = round_number
+        if agent_id:
+            self._current_round_numbers[agent_id] = round_number
+        else:
+            self._default_round_number = round_number
         self.emit_raw(
             EventType.ROUND_START,
             round_number=round_number,
@@ -473,6 +494,26 @@ class EventEmitter:
             agent_id=agent_id,
         )
 
+    def emit_injection_received(
+        self,
+        agent_id: str,
+        source_agents: List[str],
+        injection_type: str = "mid_stream",
+    ) -> None:
+        """Emit an injection_received event.
+
+        Args:
+            agent_id: Agent that received the injection
+            source_agents: Agent IDs whose answers were injected
+            injection_type: "mid_stream" or "full_restart"
+        """
+        self.emit_raw(
+            EventType.INJECTION_RECEIVED,
+            agent_id=agent_id,
+            source_agents=source_agents,
+            injection_type=injection_type,
+        )
+
     def emit_workspace_action(
         self,
         action_type: str,
@@ -485,6 +526,66 @@ class EventEmitter:
             action_type=action_type,
             params=params,
             agent_id=agent_id,
+        )
+
+    def emit_answer_submitted(
+        self,
+        agent_id: str,
+        content: Any,
+        answer_number: int,
+        answer_label: str,
+        workspace_path: Optional[str] = None,
+    ) -> None:
+        """Emit an answer_submitted coordination event."""
+        self.emit_raw(
+            EventType.ANSWER_SUBMITTED,
+            agent_id=agent_id,
+            content=str(content)[:500] if content else "",
+            answer_number=answer_number,
+            answer_label=answer_label,
+            workspace_path=workspace_path,
+        )
+
+    def emit_vote(
+        self,
+        voter_id: str,
+        target_id: str,
+        reason: Optional[str] = None,
+        vote_label: Optional[str] = None,
+        voted_for_label: Optional[str] = None,
+    ) -> None:
+        """Emit a vote coordination event."""
+        self.emit_raw(
+            EventType.VOTE,
+            agent_id=voter_id,
+            target_id=target_id,
+            reason=reason,
+            vote_label=vote_label,
+            voted_for_label=voted_for_label,
+        )
+
+    def emit_winner_selected(
+        self,
+        winner_id: str,
+        vote_results: Any = None,
+    ) -> None:
+        """Emit a winner_selected coordination event."""
+        self.emit_raw(
+            EventType.WINNER_SELECTED,
+            agent_id=winner_id,
+            vote_results=str(vote_results) if vote_results else None,
+        )
+
+    def emit_context_received(
+        self,
+        agent_id: str,
+        context_labels: Optional[Any] = None,
+    ) -> None:
+        """Emit a context_received coordination event."""
+        self.emit_raw(
+            EventType.CONTEXT_RECEIVED,
+            agent_id=agent_id,
+            context_labels=context_labels,
         )
 
     def emit_phase_change(

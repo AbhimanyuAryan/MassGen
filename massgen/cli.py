@@ -7917,6 +7917,15 @@ async def main(args):
                         for future in as_completed(futures):
                             pass  # Just wait for completion
 
+        # Cleanup MCP servers → terminates subagent processes
+        if "agents" in locals() and agents:
+            for agent_id, agent in agents.items():
+                if hasattr(agent, "backend") and hasattr(agent.backend, "cleanup_mcp"):
+                    try:
+                        await agent.backend.cleanup_mcp()
+                    except Exception:
+                        pass
+
         rich_console.print("[green]👋 Goodbye![/green]")
         sys.exit(EXIT_INTERRUPTED)
     except TimeoutError as e:

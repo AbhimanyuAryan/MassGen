@@ -3388,6 +3388,22 @@ Your answer:"""
                                         answer_label=answer_label,
                                         workspace_path=workspace_path,
                                     )
+                                # Emit to events.jsonl for subagent TUI parity
+                                # Compute answer metadata outside display check so it works in --automation mode
+                                _ans_list = self.coordination_tracker.answers_by_agent.get(agent_id, [])
+                                _answer_number = len(_ans_list)
+                                _agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                                _answer_label = f"agent{_agent_num}.{_answer_number}"
+                                from massgen.events import get_event_emitter
+
+                                _emitter = get_event_emitter()
+                                if _emitter:
+                                    _emitter.emit_answer_submitted(
+                                        agent_id=agent_id,
+                                        content=result_data,
+                                        answer_number=_answer_number,
+                                        answer_label=_answer_label,
+                                    )
                                 # Record answer with context for timeline visualization
                                 if display and hasattr(
                                     display,
@@ -3592,6 +3608,16 @@ Your answer:"""
                                             voted_for=result_data.get("agent_id", ""),
                                             reason=result_data.get("reason", ""),
                                         )
+                                # Emit to events.jsonl for subagent TUI parity
+                                from massgen.events import get_event_emitter
+
+                                _emitter = get_event_emitter()
+                                if _emitter:
+                                    _emitter.emit_vote(
+                                        voter_id=agent_id,
+                                        target_id=result_data.get("agent_id", ""),
+                                        reason=result_data.get("reason", ""),
+                                    )
                                 # Update status file for real-time monitoring
                                 # Run in executor to avoid blocking event loop
                                 log_session_dir = get_log_session_dir()
@@ -4630,6 +4656,17 @@ Your answer:"""
                 f"Mid-stream: {len(new_answers)} answer(s)",
             )
 
+            # Emit injection_received event for TUI
+            from massgen.events import get_event_emitter
+
+            _inj_emitter = get_event_emitter()
+            if _inj_emitter:
+                _inj_emitter.emit_injection_received(
+                    agent_id=agent_id,
+                    source_agents=list(new_answers.keys()),
+                    injection_type="mid_stream",
+                )
+
             # Update agent's context labels
             self.coordination_tracker.update_agent_context_with_new_answers(
                 agent_id,
@@ -4892,6 +4929,17 @@ Your answer:"""
 
             # Update known_answer_ids so vote validation knows this agent has seen these
             self.agent_states[agent_id].known_answer_ids.update(new_answers.keys())
+
+            # Emit injection_received event for TUI
+            from massgen.events import get_event_emitter
+
+            _inj_emitter = get_event_emitter()
+            if _inj_emitter:
+                _inj_emitter.emit_injection_received(
+                    agent_id=agent_id,
+                    source_agents=list(new_answers.keys()),
+                    injection_type="mid_stream",
+                )
 
             # Track the injection
             logger.info(
@@ -5968,6 +6016,12 @@ Your answer:"""
                 context_labels = self.coordination_tracker.get_agent_context_labels(agent_id)
                 if context_labels and hasattr(self, "display") and self.display and hasattr(self.display, "notify_context_received"):
                     self.display.notify_context_received(agent_id, context_labels)
+                # Emit to events.jsonl for subagent TUI parity
+                from massgen.events import get_event_emitter
+
+                _emitter = get_event_emitter()
+                if _emitter:
+                    _emitter.emit_context_received(agent_id=agent_id, context_labels=context_labels)
 
             # Store the context in agent state for later use when saving snapshots
             self.agent_states[agent_id].last_context = conversation
@@ -7345,6 +7399,16 @@ Your answer:"""
                                 winner_id=self._selected_agent,
                                 vote_results=vote_results,
                             )
+
+                    # Emit to events.jsonl for subagent TUI parity
+                    from massgen.events import get_event_emitter
+
+                    _emitter = get_event_emitter()
+                    if _emitter:
+                        _emitter.emit_winner_selected(
+                            winner_id=self._selected_agent,
+                            vote_results=vote_results,
+                        )
 
                     log_stream_chunk(
                         "orchestrator",

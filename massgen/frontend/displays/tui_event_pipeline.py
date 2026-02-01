@@ -263,7 +263,17 @@ class TimelineEventAdapter:
                     timeline.add_tool(tool_data, round_number=round_number)
         else:
             if not is_planning_tool and not is_subagent_tool:
-                if output.batch_action == "update_batch":
+                # Check if this tool already exists in the timeline
+                try:
+                    existing = timeline.get_tool(tool_data.tool_id)
+                except Exception:
+                    existing = None
+
+                if existing is None:
+                    # Tool arrived already completed (e.g., coordination events
+                    # like workspace/vote and workspace/new_answer). Add it directly.
+                    timeline.add_tool(tool_data, round_number=round_number)
+                elif output.batch_action == "update_batch":
                     try:
                         timeline.update_tool_in_batch(tool_data.tool_id, tool_data)
                     except Exception:

@@ -2997,6 +2997,17 @@ if TEXTUAL_AVAILABLE:
             if event.event_type == "stream_chunk":
                 return
 
+            # Skip coordination events — these are rendered by display callbacks
+            # (notify_vote, send_new_answer, highlight_winner_quick, etc.)
+            # and would double-render if also processed through the event pipeline.
+            if event.event_type in (
+                "answer_submitted",
+                "vote",
+                "winner_selected",
+                "context_received",
+            ):
+                return
+
             agent_id = event.agent_id
             if not agent_id or agent_id not in self.agent_widgets:
                 return
@@ -3821,6 +3832,13 @@ Type your question and press Enter to ask the agents.
                     if hasattr(panel, "_batch_tracker") and panel._batch_tracker:
                         panel._batch_tracker.mark_content_arrived()
                         panel._batch_tracker.finalize_current_batch()
+
+                    # Remove stale SubagentCards from failed spawn attempts
+                    try:
+                        for old_card in list(timeline.query(SubagentCard)):
+                            old_card.remove()
+                    except Exception:
+                        pass
 
                     # Create and add SubagentCard to timeline
                     card = SubagentCard(
@@ -7536,6 +7554,14 @@ Type your question and press Enter to ask the agents.
                 return
 
             if not isinstance(result_data, dict):
+                return
+
+            # Remove card on failed spawn (e.g., too many tasks)
+            if not result_data.get("success", True):
+                try:
+                    card.remove()
+                except Exception:
+                    pass
                 return
 
             # Extract spawned subagents list

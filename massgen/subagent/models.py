@@ -100,7 +100,6 @@ class SubagentConfig:
             "context_files": self.context_files.copy(),
             "use_docker": self.use_docker,
             "system_prompt": self.system_prompt,
-            "context": self.context,
             "created_at": self.created_at.isoformat(),
             "metadata": self.metadata.copy(),
         }
@@ -118,7 +117,6 @@ class SubagentConfig:
             context_files=data.get("context_files", []),
             use_docker=data.get("use_docker", True),
             system_prompt=data.get("system_prompt"),
-            context=data.get("context"),
             created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(),
             metadata=data.get("metadata", {}),
         )

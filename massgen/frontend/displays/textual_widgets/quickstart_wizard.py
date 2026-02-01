@@ -6,6 +6,7 @@ Provides an interactive wizard for creating a MassGen configuration.
 This replaces the questionary-based CLI quickstart with a Textual TUI experience.
 """
 
+import string
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,6 +26,11 @@ from textual.widgets.option_list import Option
 
 from .wizard_base import StepComponent, WizardModal, WizardState, WizardStep
 from .wizard_steps import LaunchOptionsStep, WelcomeStep
+
+
+def _agent_letter(index: int) -> str:
+    """Convert 0-based index to letter (0='a', 1='b', etc.)."""
+    return string.ascii_lowercase[index]
 
 
 def _quickstart_log(msg: str) -> None:
@@ -398,11 +404,12 @@ class TabbedProviderModelStep(StepComponent):
         self._models_by_provider: Dict[str, List[str]] = {}
         self._provider_has_key: Dict[str, bool] = {}
         self._provider_env_var: Dict[str, str] = {}
-        self._tab_selections: Dict[int, Dict[str, Optional[str]]] = {}
-        self._provider_selects: Dict[int, Select] = {}
-        self._model_selects: Dict[int, Select] = {}
-        self._key_inputs: Dict[int, Input] = {}
-        self._key_labels: Dict[int, Label] = {}
+        # Keyed by agent letter ('a', 'b', 'c', ...)
+        self._tab_selections: Dict[str, Dict[str, Optional[str]]] = {}
+        self._provider_selects: Dict[str, Select] = {}
+        self._model_selects: Dict[str, Select] = {}
+        self._key_inputs: Dict[str, Input] = {}
+        self._key_labels: Dict[str, Label] = {}
 
     def _load_providers(self) -> None:
         """Load all providers from ConfigBuilder, tracking which have keys."""
@@ -435,9 +442,9 @@ class TabbedProviderModelStep(StepComponent):
                 options.append((f"{name} (no API key)", pid))
         return options
 
-    def _update_key_input(self, agent_num: int, provider_id: str) -> None:
-        key_label = self._key_labels.get(agent_num)
-        key_input = self._key_inputs.get(agent_num)
+    def _update_key_input(self, agent_key: str, provider_id: str) -> None:
+        key_label = self._key_labels.get(agent_key)
+        key_input = self._key_inputs.get(agent_key)
         if not key_label or not key_input:
             return
         if not self._provider_has_key.get(provider_id):
@@ -465,36 +472,36 @@ class TabbedProviderModelStep(StepComponent):
 
         with TabbedContent():
             for i in range(self._agent_count):
-                agent_num = i + 1
-                self._tab_selections[agent_num] = {
+                letter = _agent_letter(i)
+                self._tab_selections[letter] = {
                     "provider": default_provider,
                     "model": default_model,
                 }
 
-                with TabPane(f"Agent {agent_num}", id=f"tab_agent_{agent_num}"):
+                with TabPane(f"Agent {letter.upper()}", id=f"tab_agent_{letter}"):
                     with VerticalScroll():
                         yield Label("Provider:", classes="text-input-label")
                         p_select = Select(
                             provider_options,
                             value=default_provider,
-                            id=f"provider_{agent_num}",
+                            id=f"provider_{letter}",
                         )
-                        self._provider_selects[agent_num] = p_select
+                        self._provider_selects[letter] = p_select
                         yield p_select
 
                         # Inline API key input (hidden by default)
                         k_label = Label("", classes="text-input-label")
                         k_label.display = False
-                        self._key_labels[agent_num] = k_label
+                        self._key_labels[letter] = k_label
                         yield k_label
                         k_input = Input(
                             placeholder="",
                             password=True,
                             classes="text-input",
-                            id=f"apikey_{agent_num}",
+                            id=f"apikey_{letter}",
                         )
                         k_input.display = False
-                        self._key_inputs[agent_num] = k_input
+                        self._key_inputs[letter] = k_input
                         yield k_input
 
                         yield Label("Model:", classes="text-input-label")
@@ -503,9 +510,9 @@ class TabbedProviderModelStep(StepComponent):
                         m_select = Select(
                             model_options,
                             value=default_model,
-                            id=f"model_{agent_num}",
+                            id=f"model_{letter}",
                         )
-                        self._model_selects[agent_num] = m_select
+                        self._model_selects[letter] = m_select
                         yield m_select
 
     async def on_select_changed(self, event: Select.Changed) -> None:
@@ -514,33 +521,33 @@ class TabbedProviderModelStep(StepComponent):
         if not sel_id or event.value == Select.BLANK:
             return
 
-        # Parse agent number from id like "provider_2" or "model_3"
+        # Parse agent key from id like "provider_a" or "model_b"
         parts = sel_id.rsplit("_", 1)
-        if len(parts) != 2 or not parts[1].isdigit():
+        if len(parts) != 2 or len(parts[1]) != 1 or parts[1] not in string.ascii_lowercase:
             return
-        kind, agent_num = parts[0], int(parts[1])
+        kind, agent_key = parts[0], parts[1]
 
         if kind == "provider":
             provider = str(event.value)
-            self._tab_selections[agent_num]["provider"] = provider
-            self._update_key_input(agent_num, provider)
+            self._tab_selections[agent_key]["provider"] = provider
+            self._update_key_input(agent_key, provider)
             # Update model select for this agent
-            m_select = self._model_selects.get(agent_num)
+            m_select = self._model_selects.get(agent_key)
             if m_select:
                 models = self._models_by_provider.get(provider, [])
                 model_options = [(m, m) for m in models] if models else [("", "No models")]
                 m_select.set_options(model_options)
                 if models:
                     m_select.value = models[0]
-                    self._tab_selections[agent_num]["model"] = models[0]
+                    self._tab_selections[agent_key]["model"] = models[0]
         elif kind == "model":
-            self._tab_selections[agent_num]["model"] = str(event.value)
+            self._tab_selections[agent_key]["model"] = str(event.value)
 
     def get_value(self) -> Dict[str, Any]:
         # Store per-agent configs in wizard state
-        for agent_num, sel in self._tab_selections.items():
+        for agent_key, sel in self._tab_selections.items():
             self.wizard_state.set(
-                f"agent_{agent_num}_config",
+                f"agent_{agent_key}_config",
                 {
                     "provider": sel.get("provider", ""),
                     "model": sel.get("model", ""),
@@ -550,46 +557,34 @@ class TabbedProviderModelStep(StepComponent):
 
     def set_value(self, value: Any) -> None:
         if isinstance(value, dict) and "agent_configs" in value:
-            for agent_num, sel in value["agent_configs"].items():
-                agent_num = int(agent_num)
-                self._tab_selections[agent_num] = sel
-                p_select = self._provider_selects.get(agent_num)
-                m_select = self._model_selects.get(agent_num)
+            for agent_key, sel in value["agent_configs"].items():
+                self._tab_selections[agent_key] = sel
+                p_select = self._provider_selects.get(agent_key)
+                m_select = self._model_selects.get(agent_key)
                 if p_select and sel.get("provider"):
                     p_select.value = sel["provider"]
                 if m_select and sel.get("model"):
                     m_select.value = sel["model"]
 
-    def _get_active_tab_agent_num(self) -> int:
-        """Return the agent number of the currently active tab."""
+    def _get_active_tab_index(self) -> int:
+        """Return the 0-based index of the currently active tab."""
         try:
             tc = self.query_one(TabbedContent)
-            active_id = tc.active  # e.g. "tab_agent_2"
+            active_id = tc.active  # e.g. "tab_agent_b"
             if active_id and active_id.startswith("tab_agent_"):
-                return int(active_id.split("_")[-1])
+                letter = active_id.split("_")[-1]
+                return string.ascii_lowercase.index(letter)
         except Exception:
             pass
-        return 1
-
-    def _find_next_incomplete_agent(self, after: int) -> Optional[int]:
-        """Find next agent (after given num) that hasn't been explicitly configured.
-
-        Returns None if all agents are filled.
-        We consider an agent 'needs attention' if it still has the initial defaults
-        and hasn't been visited yet, or simply the next agent tab after current.
-        """
-        # Simple approach: advance to next tab sequentially
-        for num in range(after + 1, self._agent_count + 1):
-            return num
-        return None
+        return 0
 
     def try_retreat_tab(self) -> bool:
         """Try to move to the previous agent tab. Returns True if moved, False if on first."""
-        current = self._get_active_tab_agent_num()
-        if current > 1:
+        current = self._get_active_tab_index()
+        if current > 0:
             try:
                 tc = self.query_one(TabbedContent)
-                tc.active = f"tab_agent_{current - 1}"
+                tc.active = f"tab_agent_{_agent_letter(current - 1)}"
                 return True
             except Exception:
                 pass
@@ -597,25 +592,26 @@ class TabbedProviderModelStep(StepComponent):
 
     def try_advance_tab(self) -> bool:
         """Try to move to the next agent tab. Returns True if moved, False if all done."""
-        current = self._get_active_tab_agent_num()
-        next_num = self._find_next_incomplete_agent(current)
-        if next_num is not None:
+        current = self._get_active_tab_index()
+        if current + 1 < self._agent_count:
             try:
                 tc = self.query_one(TabbedContent)
-                tc.active = f"tab_agent_{next_num}"
+                tc.active = f"tab_agent_{_agent_letter(current + 1)}"
                 return True
             except Exception:
                 pass
         return False
 
     def validate(self) -> Optional[str]:
-        for agent_num in range(1, self._agent_count + 1):
-            sel = self._tab_selections.get(agent_num, {})
+        for i in range(self._agent_count):
+            letter = _agent_letter(i)
+            label = letter.upper()
+            sel = self._tab_selections.get(letter, {})
             pid = sel.get("provider")
             if not pid:
-                return f"Please select a provider for Agent {agent_num}"
+                return f"Please select a provider for Agent {label}"
             if not self._provider_has_key.get(pid):
-                key_input = self._key_inputs.get(agent_num)
+                key_input = self._key_inputs.get(letter)
                 if key_input and key_input.value.strip():
                     env_var = self._provider_env_var.get(pid, "")
                     if env_var:
@@ -623,9 +619,9 @@ class TabbedProviderModelStep(StepComponent):
                         self._provider_has_key[pid] = True
                 else:
                     env_var = self._provider_env_var.get(pid, "")
-                    return f"Please enter your API key for Agent {agent_num} ({env_var})"
+                    return f"Please enter your API key for Agent {label} ({env_var})"
             if not sel.get("model"):
-                return f"Please select a model for Agent {agent_num}"
+                return f"Please select a model for Agent {label}"
         return None
 
 
@@ -845,7 +841,7 @@ class ConfigPreviewStep(StepComponent):
                 for i in range(agent_count):
                     agents_config.append(
                         {
-                            "id": f"agent_{i + 1}",
+                            "id": f"agent_{_agent_letter(i)}",
                             "type": provider,
                             "model": model,
                         },
@@ -853,10 +849,11 @@ class ConfigPreviewStep(StepComponent):
             else:
                 # Different provider/model per agent
                 for i in range(agent_count):
-                    agent_config = self.wizard_state.get(f"agent_{i + 1}_config", {})
+                    letter = _agent_letter(i)
+                    agent_config = self.wizard_state.get(f"agent_{letter}_config", {})
                     agents_config.append(
                         {
-                            "id": f"agent_{i + 1}",
+                            "id": f"agent_{letter}",
                             "type": agent_config.get("provider", "openai"),
                             "model": agent_config.get("model", "gpt-4o-mini"),
                         },
@@ -1123,14 +1120,15 @@ class QuickstartWizard(WizardModal):
                 for i in range(agent_count):
                     agents_config.append(
                         {
-                            "id": f"agent_{i + 1}",
+                            "id": f"agent_{_agent_letter(i)}",
                             "type": provider,
                             "model": model,
                         },
                     )
             else:
                 for i in range(agent_count):
-                    agent_config = self.state.get(f"agent_{i + 1}_config", {})
+                    letter = _agent_letter(i)
+                    agent_config = self.state.get(f"agent_{letter}_config", {})
                     if not agent_config:
                         # Fallback to shared config
                         provider_model = self.state.get("provider_model", {})
@@ -1140,7 +1138,7 @@ class QuickstartWizard(WizardModal):
                         }
                     agents_config.append(
                         {
-                            "id": f"agent_{i + 1}",
+                            "id": f"agent_{letter}",
                             "type": agent_config.get("provider", "openai"),
                             "model": agent_config.get("model", "gpt-4o-mini"),
                         },
