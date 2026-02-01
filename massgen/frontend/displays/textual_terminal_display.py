@@ -42,12 +42,7 @@ try:
     from textual.widgets import Button, Footer, Input, Label, RichLog, Static, TextArea
 
     from .base_tui_layout import BaseTUILayoutMixin
-    from .content_handlers import (
-        ToolBatchTracker,
-        format_tool_display_name,
-        get_tool_category,
-    )
-    from .shared.tool_registry import clean_tool_arguments, clean_tool_result
+    from .content_handlers import ToolBatchTracker
 
     # Import extracted modals from the new textual/ package
     from .textual import (  # Browser modals; Status modals; Coordination modals; Content modals; Input modals; Shortcuts modal; Workspace modals; Agent output modal
@@ -149,157 +144,6 @@ def tui_log(msg: str, level: str = "debug") -> None:
         log.info(msg)
     else:
         log.debug(msg)
-
-
-# Tool message patterns for parsing
-TOOL_PATTERNS = {
-    # MCP tool patterns (Response API format)
-    "mcp_start": re.compile(r"🔧 \[MCP\] Calling tool '([^']+)'"),
-    "mcp_complete": re.compile(r"✅ \[MCP\] Tool '([^']+)' completed"),
-    "mcp_failed": re.compile(r"❌ \[MCP\] Tool '([^']+)' failed: (.+)"),
-    # MCP tool patterns (older format)
-    "mcp_tool_start": re.compile(r"🔧 \[MCP Tool\] Calling ([^\.]+)\.\.\."),
-    "mcp_tool_complete": re.compile(r"✅ \[MCP Tool\] ([^ ]+) completed"),
-    # Custom tool patterns
-    "custom_start": re.compile(r"🔧 \[Custom Tool\] Calling ([^\.]+)\.\.\."),
-    "custom_complete": re.compile(r"✅ \[Custom Tool\] ([^ ]+) completed"),
-    "custom_failed": re.compile(r"❌ \[Custom Tool Error\] (.+)"),
-    # Arguments pattern
-    "arguments": re.compile(r"^Arguments:(.+)", re.DOTALL),
-    # Progress/status patterns
-    "progress": re.compile(r"⏳.*progress|⏳.*in progress", re.IGNORECASE),
-    "connected": re.compile(r"✅ \[MCP\] Connected to (\d+) servers?"),
-    "unavailable": re.compile(r"⚠️ \[MCP\].*Setup failed"),
-    # Injection patterns (cross-agent context sharing)
-    "injection": re.compile(r"📥 \[INJECTION\] (.+)", re.DOTALL),
-    # Reminder patterns (high priority task reminders)
-    "reminder": re.compile(r"💡 \[REMINDER\] (.+)", re.DOTALL),
-    # Session completed pattern
-    "session_complete": re.compile(r"✅ \[MCP\] Session completed"),
-}
-
-# Tool category utilities imported from shared module
-
-
-# Tool argument and result cleaning functions imported from shared module
-
-
-def _parse_tool_message(content: str) -> dict:
-    """Parse tool message to extract structured info.
-
-    Args:
-        content: Tool message text from backend
-
-    Returns:
-        Dict with keys:
-        - event: "start", "complete", "failed", "arguments", "progress", "status", "unknown"
-        - tool_name: Name of the tool (if applicable)
-        - tool_type: "mcp" or "custom"
-        - category: Tool category info (icon, color, category name)
-        - display_name: Formatted display name
-        - error: Error message (if failed)
-        - arguments: Arguments string (if arguments event)
-        - raw: Original content (always present)
-    """
-    result = {"event": "unknown", "raw": content}
-
-    def enrich_with_category(parsed: dict) -> dict:
-        """Add category info to parsed result."""
-        if "tool_name" in parsed:
-            parsed["category"] = get_tool_category(parsed["tool_name"])
-            parsed["display_name"] = format_tool_display_name(parsed["tool_name"])
-        return parsed
-
-    # Check MCP start patterns
-    match = TOOL_PATTERNS["mcp_start"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "start", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    match = TOOL_PATTERNS["mcp_tool_start"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "start", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    # Check Custom tool start
-    match = TOOL_PATTERNS["custom_start"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "start", "tool_name": match.group(1), "tool_type": "custom", "raw": content},
-        )
-
-    # Check MCP complete patterns
-    match = TOOL_PATTERNS["mcp_complete"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "complete", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    match = TOOL_PATTERNS["mcp_tool_complete"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "complete", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    # Check Custom complete
-    match = TOOL_PATTERNS["custom_complete"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "complete", "tool_name": match.group(1), "tool_type": "custom", "raw": content},
-        )
-
-    # Check MCP failed pattern
-    match = TOOL_PATTERNS["mcp_failed"].search(content)
-    if match:
-        return enrich_with_category(
-            {
-                "event": "failed",
-                "tool_name": match.group(1),
-                "tool_type": "mcp",
-                "error": match.group(2),
-                "raw": content,
-            },
-        )
-
-    # Check Custom failed pattern
-    match = TOOL_PATTERNS["custom_failed"].search(content)
-    if match:
-        return {"event": "failed", "tool_type": "custom", "error": match.group(1), "raw": content}
-
-    # Check arguments pattern
-    match = TOOL_PATTERNS["arguments"].search(content)
-    if match or content.strip().startswith("Arguments:"):
-        return {"event": "arguments", "arguments": content, "raw": content}
-
-    # Check progress pattern
-    if TOOL_PATTERNS["progress"].search(content):
-        return {"event": "progress", "raw": content}
-
-    # Check status patterns (connected, unavailable)
-    match = TOOL_PATTERNS["connected"].search(content)
-    if match:
-        return {"event": "status", "status_type": "connected", "server_count": match.group(1), "raw": content}
-
-    if TOOL_PATTERNS["unavailable"].search(content):
-        return {"event": "status", "status_type": "unavailable", "raw": content}
-
-    # Check injection pattern (cross-agent context sharing)
-    match = TOOL_PATTERNS["injection"].search(content)
-    if match:
-        return {"event": "injection", "content": match.group(1), "raw": content}
-
-    # Check reminder pattern (high priority task reminders)
-    match = TOOL_PATTERNS["reminder"].search(content)
-    if match:
-        return {"event": "reminder", "content": match.group(1), "raw": content}
-
-    # Check session complete pattern
-    if TOOL_PATTERNS["session_complete"].search(content):
-        return {"event": "session_complete", "raw": content}
-
-    return result
 
 
 def _process_line_buffer(
@@ -7193,9 +7037,6 @@ Type your question and press Enter to ask the agents.
             self._status_badge_id = f"status_badge_{self._dom_safe_id}"
             self._completion_footer_id = f"completion_footer_{self._dom_safe_id}"
 
-            # Legacy tool tracking (kept for restart detection)
-            self._pending_tool: Optional[dict] = None
-            self._tool_row_count = 0
             self._reasoning_header_shown = False
 
             # Session/restart tracking
@@ -7497,217 +7338,6 @@ Type your question and press Enter to ask the agents.
             except Exception as e:
                 tui_log(f"_update_pinned_task_plan error: {e}")
 
-        def _make_full_width_bar(self, content: str, style: str) -> Text:
-            """Create a full-width bar with background color spanning the entire display.
-
-            Args:
-                content: The text content
-                style: Rich style string (including 'on #color' for background)
-
-            Returns:
-                Text object padded to full width with single line spacing
-            """
-            # Get terminal width dynamically - add extra padding to ensure full coverage
-            try:
-                width = self.app.size.width
-                if width < 80:
-                    width = 200
-                else:
-                    # Add extra width to account for any padding/margins and ensure full coverage
-                    width = width + 50
-            except Exception:
-                width = 300  # Large fallback to ensure full coverage
-
-            # Pad content to fill entire width and beyond
-            padded = content.ljust(width)
-            text = Text()
-            # Always add a single blank line before for consistent spacing
-            text.append("\n")
-            text.append(padded, style=style)
-            return text
-
-        def _format_tool_line(self, parsed: dict, event: str) -> Text:
-            """Format a tool event as a full-width bar with alternating colors.
-
-            Design: Full-width bars with clear visual separation
-            - Each tool line spans the full width
-            - Alternating background colors for row separation
-            - Special colors for success/error states
-
-            Args:
-                parsed: Parsed tool message dict
-                event: Event type (start, complete, failed, etc.)
-
-            Returns:
-                Styled Rich Text object
-            """
-            category = parsed.get("category", {"icon": "🔧", "color": "cyan", "category": "tool"})
-            display_name = parsed.get("display_name", parsed.get("tool_name", "unknown"))
-            icon = category["icon"]
-
-            # Alternating row backgrounds for clear separation
-            self._tool_row_count += 1
-            is_odd_row = self._tool_row_count % 2 == 1
-            bg_row_odd = "on #2d333b"  # Slightly lighter
-            bg_row_even = "on #22272e"  # Slightly darker
-
-            # Special backgrounds for status
-            bg_success = "on #1c4532"  # Dark green
-            bg_error = "on #4a1c1c"  # Dark red
-            bg_warning = "on #4a4520"  # Dark yellow
-            bg_injection = "on #2d2d4a"  # Dark purple/blue for injections
-            bg_reminder = "on #4a3d2d"  # Dark orange for reminders
-
-            # Get alternating background
-            bg_alt = bg_row_odd if is_odd_row else bg_row_even
-
-            if event == "start":
-                # Track start time for this tool
-                self._pending_tool = {
-                    "name": parsed.get("tool_name"),
-                    "start_time": datetime.now(),
-                    "display_name": display_name,
-                    "category": category,
-                }
-                # Reset reasoning header on new tool
-                self._reasoning_header_shown = False
-                # Format: full-width bar with icon + name (bold)
-                content = f"  {icon}  {display_name}"
-                return self._make_full_width_bar(content, f"bold white {bg_alt}")
-
-            elif event == "complete":
-                # Calculate elapsed time
-                elapsed_str = ""
-                if self._pending_tool and self._pending_tool.get("name") == parsed.get("tool_name"):
-                    elapsed = (datetime.now() - self._pending_tool["start_time"]).total_seconds()
-                    if elapsed < 60:
-                        elapsed_str = f" ({elapsed:.1f}s)"
-                    else:
-                        mins = int(elapsed // 60)
-                        secs = int(elapsed % 60)
-                        elapsed_str = f" ({mins}m{secs}s)"
-                    self._pending_tool = None
-
-                # Format: success bar - always green background (bold)
-                content = f"  ✓  {display_name} completed{elapsed_str}"
-                return self._make_full_width_bar(content, f"bold white {bg_success}")
-
-            elif event == "failed":
-                error = parsed.get("error", "Unknown error")
-                if len(error) > 50:
-                    error = error[:50] + "..."
-                elapsed_str = ""
-                if self._pending_tool:
-                    elapsed = (datetime.now() - self._pending_tool["start_time"]).total_seconds()
-                    elapsed_str = f" ({elapsed:.1f}s)"
-                    self._pending_tool = None
-
-                # Format: error bar - always red background (bold)
-                content = f"  ✗  {display_name} failed: {error}{elapsed_str}"
-                return self._make_full_width_bar(content, f"bold white {bg_error}")
-
-            elif event == "injection":
-                # Cross-agent context sharing - prominent purple bar
-                injection_content = parsed.get("content", "")
-                preview = injection_content[:80] + "..." if len(injection_content) > 80 else injection_content
-                content = f"  📥  Context Update: {preview}"
-                return self._make_full_width_bar(content, f"bold white {bg_injection}")
-
-            elif event == "reminder":
-                # High priority task reminder - orange bar
-                reminder_content = parsed.get("content", "")
-                preview = reminder_content[:80] + "..." if len(reminder_content) > 80 else reminder_content
-                content = f"  💡  Reminder: {preview}"
-                return self._make_full_width_bar(content, f"bold white {bg_reminder}")
-
-            elif event == "session_complete":
-                # Session completed - green bar
-                content = "  ✓  Session completed"
-                return self._make_full_width_bar(content, f"bold white {bg_success}")
-
-            elif event == "arguments":
-                args = parsed.get("arguments", parsed.get("raw", ""))
-                args_clean = clean_tool_arguments(args)
-                content = f"      └ {args_clean}"
-                return self._make_full_width_bar(content, f"{bg_alt}")
-
-            elif event == "status":
-                status_type = parsed.get("status_type", "")
-                raw = parsed.get("raw", "")
-                if status_type == "connected":
-                    clean = raw.replace("[MCP]", "").replace("✅", "").strip()
-                    content = f"  ✓  {clean}"
-                    return self._make_full_width_bar(content, f"bold white {bg_success}")
-                elif status_type == "unavailable":
-                    clean = raw.replace("[MCP]", "").replace("⚠️", "").strip()
-                    content = f"  ⚠  {clean}"
-                    return self._make_full_width_bar(content, f"bold yellow {bg_warning}")
-                else:
-                    content = f"  •  {raw}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-            elif event == "progress":
-                raw = parsed.get("raw", "")
-                clean = raw.replace("⏳", "").strip()
-                content = f"      ⏳ {clean}"
-                return self._make_full_width_bar(content, f"italic {bg_alt}")
-
-            else:
-                # Unknown tool content
-                raw = parsed.get("raw", "")
-
-                # Check if it looks like results output
-                if "MCP: Results" in raw or "Results for" in raw:
-                    result_part = raw
-                    if ": {" in raw:
-                        result_part = raw[raw.index(": {") + 2 :]
-                    elif "Results" in raw and "{" in raw:
-                        result_part = raw[raw.index("{") :]
-                    clean_result = clean_tool_result(result_part)
-                    content = f"      └ {clean_result}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-                # Check if it's an arguments line
-                if "Arguments:" in raw or "MCP: Arguments" in raw:
-                    args_part = raw
-                    if "Arguments:" in raw:
-                        args_part = raw[raw.index("Arguments:") :]
-                    clean_args = clean_tool_arguments(args_part)
-                    content = f"      └ {clean_args}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-                # Check if it looks like raw dict/JSON output
-                if "{" in raw and "}" in raw:
-                    clean = clean_tool_result(raw)
-                    content = f"      └ {clean}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-                # Clean common prefixes and truncate
-                clean = raw.replace("🔧", "").replace("[MCP]", "").replace("[Custom Tool]", "").strip()
-                if len(clean) > 80:
-                    clean = clean[:80] + "..."
-                content = f"  •  {clean}"
-                return self._make_full_width_bar(content, f"{bg_alt}")
-
-        def _format_restart_banner(self) -> Text:
-            """Create a highly visible full-width restart banner."""
-            content = " ⚡⚡⚡  RESTART  ⚡⚡⚡ "
-            # Bright orange/red background, centered
-            banner = "═" * 50 + content + "═" * 50
-            return self._make_full_width_bar(banner, "bold white on #c53030")
-
-        def _handle_tool_content(self, content: str):
-            """Handle tool-related content by formatting as styled bars in RichLog.
-
-            Uses full-width styled bars with status colors for clear visual hierarchy.
-            """
-            self._hide_loading()  # Hide loading when tool content arrives
-            parsed = _parse_tool_message(content)
-            event = parsed.get("event", "unknown")
-
-            formatted = self._format_tool_line(parsed, event)
-            self.content_log.write(formatted)
-
         def show_restart_separator(self, attempt: int = 1, reason: str = ""):
             """Handle restart - start new round with view-based navigation.
 
@@ -7727,7 +7357,6 @@ Type your question and press Enter to ask the agents.
             self.start_new_round(attempt, is_context_reset)
 
             # Reset per-attempt UI state
-            self._tool_row_count = 0
             self._reasoning_header_shown = False
 
         def _is_planning_mcp_tool(self, tool_name: str) -> bool:
@@ -7844,10 +7473,13 @@ Type your question and press Enter to ask the agents.
                 return
 
             # Create and add SubagentCard to timeline
+            import re as _re
+
+            _safe_id = _re.sub(r"[^a-zA-Z0-9_-]", "_", tool_data.tool_id)
             card = SubagentCard(
                 subagents=subagents,
                 tool_call_id=tool_data.tool_id,
-                id=f"subagent_{tool_data.tool_id}",
+                id=f"subagent_{_safe_id}",
             )
             timeline.add_widget(card)
             tui_log(f"_show_subagent_card_from_args: added SubagentCard with {len(subagents)} pending subagents")
@@ -8066,10 +7698,13 @@ Type your question and press Enter to ask the agents.
                 return
 
             # Create and add SubagentCard to timeline
+            import re as _re
+
+            _safe_id = _re.sub(r"[^a-zA-Z0-9_-]", "_", tool_data.tool_id)
             card = SubagentCard(
                 subagents=subagents,
                 tool_call_id=tool_data.tool_id,
-                id=f"subagent_{tool_data.tool_id}",
+                id=f"subagent_{_safe_id}",
             )
             timeline.add_widget(card)
             tui_log(f"_check_and_display_subagent_card: added SubagentCard with {len(subagents)} subagents")

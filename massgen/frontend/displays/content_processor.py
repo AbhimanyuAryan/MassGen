@@ -345,12 +345,16 @@ class ContentProcessor:
         if not content and not is_done:
             return None
 
+        # Mark that content arrived BEFORE filtering whitespace.
+        # This ensures the tool batch tracker knows content appeared between
+        # tools, even if the content is just whitespace (e.g., Kimi's
+        # interleaved \n tokens).
+        if content:
+            self._batch_tracker.mark_content_arrived()
+
         # Only filter empty/whitespace-only content (but allow done markers)
         if not is_done and not content.strip():
             return None
-
-        # Mark that content arrived (breaks tool batching)
-        self._batch_tracker.mark_content_arrived()
 
         return ContentOutput(
             output_type="thinking_done" if is_done else "thinking",

@@ -12,6 +12,7 @@ Composable UI sections for displaying different content types:
 """
 
 import logging
+import re
 import time
 from typing import Any, Dict, Optional
 
@@ -27,6 +28,16 @@ from .tool_batch_card import ToolBatchCard, ToolBatchItem
 from .tool_card import ToolCallCard
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_widget_id(raw_id: str) -> str:
+    """Sanitize a string for use as a Textual widget ID.
+
+    Textual widget IDs must match ``[a-zA-Z_][a-zA-Z0-9_-]*``.  Some backends
+    (e.g. OpenRouter/Kimi) produce tool IDs containing ``.`` and ``:`` which
+    are invalid and cause silent mount failures.
+    """
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", raw_id)
 
 
 class ToolSection(Vertical):
@@ -163,7 +174,7 @@ class ToolSection(Vertical):
             tool_name=tool_data.tool_name,
             tool_type=tool_data.tool_type,
             call_id=tool_data.tool_id,
-            id=f"card_{tool_data.tool_id}",
+            id=f"card_{_sanitize_widget_id(tool_data.tool_id)}",
         )
 
         # Set args preview if available (both truncated and full)
@@ -1004,7 +1015,7 @@ class TimelineSection(ScrollableContainer):
             tool_name=tool_data.tool_name,
             tool_type=tool_data.tool_type,
             call_id=tool_data.tool_id,
-            id=f"tl_card_{tool_data.tool_id}",
+            id=f"tl_card_{_sanitize_widget_id(tool_data.tool_id)}",
         )
 
         if tool_data.args_summary:
