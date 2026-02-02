@@ -171,10 +171,8 @@ This project started with the "threads of thought" and "iterative refinement" id
 pip install --upgrade massgen
 
 # Experience subagent TUI streaming with async execution
-uv run massgen --display textual --config massgen/configs/features/async_subagent_example.yaml \
-  "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
+uv run massgen --config @examples/configs/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research bob dylan"
 
-# View subagents in action
 # Click on preview cards to expand to full timeline views
 ```
 
@@ -1236,7 +1234,6 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 #### Enhanced Final Presentation
 - **Workspace Visualization**: Final answer display now includes workspace paths and artifact locations
 - **Winner Highlighting**: Winning agent clearly indicated with visual markers in final presentation
-- **Easy Access**: `curr_workspace` symlinks enable quick navigation to final agent's workspace
 - **Improved Formatting**: Better separation between reasoning content and final answers
 
 #### TUI Architecture Refactor

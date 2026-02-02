@@ -239,8 +239,7 @@ Most configurations use environment variables for API keys:so
 **Try It:**
 ```bash
 # Experience subagent TUI streaming with async execution
-uv run massgen --display textual --config massgen/configs/features/async_subagent_example.yaml \
-  "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
+uv run massgen --config @examples/configs/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research bob dylan"
 
 # Click on preview cards in the TUI to expand subagent timelines
 # Watch real-time event streaming from background subagents

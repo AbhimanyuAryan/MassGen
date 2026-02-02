@@ -1,4 +1,4 @@
-# MassGen v0.1.46 Release Announcement
+ # MassGen v0.1.46 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -40,7 +40,6 @@ We're excited to release MassGen v0.1.46, featuring real-time subagent TUI strea
 **Enhanced Final Presentation**
 - Final answer display now includes workspace visualization
 - Winning agent clearly highlighted with visual indicator
-- Easy workspace access via `curr_workspace` symlinks
 - Improved formatting with better reasoning/answer separation
 
 **TUI Architecture Refactor**
@@ -59,7 +58,7 @@ We're excited to release MassGen v0.1.46, featuring real-time subagent TUI strea
 - Comprehensive subagent architecture documentation
 - Updated video tutorial links opening in new tabs
 
-Try subagent streaming: `massgen --config massgen/configs/features/async_subagent_example.yaml "Your complex task"`
+Try subagent streaming: `uv run massgen --config @examples/configs/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research bob dylan"`
 
 Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.46
 

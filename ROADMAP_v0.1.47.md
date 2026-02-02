@@ -2,10 +2,11 @@
 
 ## Overview
 
-Version 0.1.47 focuses on OpenAI native compression and enhanced log analysis capabilities.
+Version 0.1.47 focuses on OpenAI native compression, enhanced log analysis capabilities, and TUI performance improvements.
 
 - **OpenAI Responses /compact Endpoint** (Required): Use OpenAI's native `/compact` endpoint instead of custom summarization
 - **Log Analysis Model Selector** (Required): Allow users to choose which model to use for log analysis
+- **TUI Event Throttling** (Required): Improve TUI performance with event throttling mechanism
 
 ## Key Technical Priorities
 
@@ -14,6 +15,9 @@ Version 0.1.47 focuses on OpenAI native compression and enhanced log analysis ca
 
 2. **Log Analysis Model Selection**: Configurable model choice for `massgen logs analyze` self-analysis mode
    **Use Case**: Flexibility in choosing analysis model based on cost/quality tradeoffs
+
+3. **TUI Event Throttling**: Reduce unnecessary re-renders and improve TUI responsiveness
+   **Use Case**: Better TUI performance during high-frequency event streams
 
 ## Key Milestones
 
@@ -97,6 +101,46 @@ Version 0.1.47 focuses on OpenAI native compression and enhanced log analysis ca
 
 ---
 
+### Milestone 3: TUI Event Throttling (REQUIRED)
+
+**Goal**: Improve TUI performance with event throttling mechanism to reduce unnecessary re-renders
+
+**Owner**: @ncrispino (nickcrispino on Discord)
+
+**Issue**: [#776](https://github.com/massgen/MassGen/issues/776)
+
+#### 3.1 Performance Analysis
+- [ ] Profile current TUI event handling performance
+- [ ] Identify high-frequency event sources causing performance issues
+- [ ] Measure CPU usage and frame rates during typical sessions
+- [ ] Establish performance benchmarks for improvement
+
+#### 3.2 Throttling Implementation
+- [ ] Design event throttling mechanism for high-frequency events
+- [ ] Implement debouncing for rapid successive events
+- [ ] Add configurable throttle intervals for different event types
+- [ ] Ensure critical events are never dropped
+
+#### 3.3 TUI Integration
+- [ ] Apply throttling to timeline updates and scroll events
+- [ ] Optimize re-render logic to batch updates
+- [ ] Test with various event frequencies and session types
+- [ ] Verify no visual degradation or missed updates
+
+#### 3.4 Testing & Validation
+- [ ] Test with long-running sessions and high event rates
+- [ ] Verify CPU usage reduction with profiling
+- [ ] Test with different terminal sizes and configurations
+- [ ] Benchmark improvements in responsiveness
+
+**Success Criteria**:
+- Measurable CPU usage reduction during high-frequency events
+- Improved TUI responsiveness and frame rates
+- No dropped critical events or visual artifacts
+- Configurable throttling intervals for different use cases
+
+---
+
 ## Timeline
 
 **Target Release**: February 4, 2026
@@ -105,14 +149,17 @@ Version 0.1.47 focuses on OpenAI native compression and enhanced log analysis ca
 - Research & Design (Milestone 1.1)
 - Backend Integration (Milestone 1.2)
 - CLI Interface Design (Milestone 2.1)
+- Performance Analysis (Milestone 3.1)
 
 ### Phase 2 (Feb 3-4)
 - Compression System Updates (Milestone 1.3)
 - Backend Configuration (Milestone 2.2)
 - Integration with Log Analysis (Milestone 2.3)
+- Throttling Implementation (Milestone 3.2)
 
 ### Phase 3 (Feb 4)
-- Testing & Validation (Milestone 1.4, 2.4)
+- Testing & Validation (Milestone 1.4, 2.4, 3.4)
+- TUI Integration (Milestone 3.3)
 - Documentation updates
 - Bug fixes and polish
 
@@ -123,6 +170,7 @@ Version 0.1.47 focuses on OpenAI native compression and enhanced log analysis ca
 - **Token Efficiency**: Measurable reduction in token usage with `/compact` endpoint
 - **Analysis Quality**: Improved or maintained log analysis quality with model selection
 - **User Experience**: Clear, intuitive model selection interface
+- **TUI Performance**: Measurable CPU usage reduction and improved responsiveness with event throttling
 - **Compatibility**: Seamless integration with existing compression and analysis workflows
 
 ---
@@ -131,9 +179,10 @@ Version 0.1.47 focuses on OpenAI native compression and enhanced log analysis ca
 
 - **Issue #739**: [OpenAI Responses /compact Endpoint](https://github.com/massgen/MassGen/issues/739)
 - **Issue #766**: [Add Model Selector for Log Analysis](https://github.com/massgen/MassGen/issues/766)
+- **Issue #776**: [TUI Event Throttling](https://github.com/massgen/MassGen/issues/776)
 - **Owner**: @ncrispino (nickcrispino on Discord)
 - **Related PRs**: TBD
-- **Documentation**: Updates to `docs/source/reference/cli.rst` for model selector
+- **Documentation**: Updates to `docs/source/reference/cli.rst` for model selector, TUI performance tuning guide
 
 ---
 
