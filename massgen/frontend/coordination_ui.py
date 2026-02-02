@@ -2046,7 +2046,7 @@ class CoordinationUI:
         # For regular content (no JSON patterns), flush more aggressively for streaming UX
         if not has_workspace_pattern:
             ends_with_sentence = buffer.rstrip().endswith((".", "!", "?", ":", "\n"))
-            should_flush = buffer_len >= 80 or (ends_with_sentence and buffer_len >= 20)
+            should_flush = buffer_len >= 80 or (ends_with_sentence and buffer_len >= 2)
 
             if not should_flush:
                 return

@@ -469,13 +469,14 @@ class ContentProcessor:
         event: MassGenEvent,
     ) -> Optional[ContentOutput]:
         """Handle round_start event."""
-        # round_number is a top-level field on MassGenEvent, not in data
-        round_num = event.round_number
+        # round_number is a top-level field on MassGenEvent (0-indexed),
+        # convert to 1-indexed display round number
+        display_round = event.round_number + 1
 
         return ContentOutput(
             output_type="separator",
-            round_number=round_num,
-            separator_label=f"Round {round_num}",
+            round_number=display_round,
+            separator_label=f"Round {display_round}",
         )
 
     def _handle_event_final_answer(

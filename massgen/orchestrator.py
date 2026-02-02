@@ -1659,8 +1659,9 @@ class Orchestrator(ChatAgent):
             )
             return
 
-        # Add user message to history
-        self.add_to_history("user", user_message)
+        # Add user message to history (skip on restart to avoid duplication)
+        if self.current_attempt == 0:
+            self.add_to_history("user", user_message)
 
         # Determine what to do based on current state and conversation context
         if self.workflow_phase == "idle":
@@ -1700,10 +1701,19 @@ class Orchestrator(ChatAgent):
             self._clear_context_path_write_tracking()
 
             # Clear agent workspaces for new turn (if this is a multi-turn conversation with history)
-            if conversation_context and conversation_context.get(
-                "conversation_history",
+            # Skip on restart attempts - workspace should be preserved from previous attempt
+            if (
+                self.current_attempt == 0
+                and conversation_context
+                and conversation_context.get(
+                    "conversation_history",
+                )
             ):
                 self._clear_agent_workspaces()
+
+            # On restart, inject accumulated conversation history so agents have context
+            if self.current_attempt > 0 and self.conversation_history:
+                conversation_context["conversation_history"] = list(self.conversation_history)
 
             # Check if planning mode is enabled in config
             planning_mode_config_exists = (
@@ -3998,6 +4008,13 @@ Your answer:"""
                     logger.info(
                         f"[Orchestrator._save_agent_snapshot] Cleared workspace for {agent_id} after saving snapshot",
                     )
+                else:
+                    # Final snapshot: restore workspace from snapshot_storage so
+                    # post-evaluator can see the files
+                    agent.backend.filesystem_manager.restore_from_snapshot_storage()
+                    logger.info(
+                        f"[Orchestrator._save_agent_snapshot] Restored workspace from snapshot_storage for {agent_id} (final snapshot)",
+                    )
         else:
             logger.info(
                 f"[Orchestrator._save_agent_snapshot] Agent {agent_id} does not have filesystem_manager",
@@ -5898,10 +5915,18 @@ Your answer:"""
 
             # Inject restart context if this is a restart attempt (like multi-turn context)
             if self.restart_reason and self.restart_instructions:
+                # Check if workspace has files from previous attempt
+                workspace_populated = False
+                agent_obj = self.agents.get(agent_id)
+                if agent_obj and agent_obj.backend.filesystem_manager:
+                    ws = agent_obj.backend.filesystem_manager.get_current_workspace()
+                    if ws and ws.exists() and any(ws.iterdir()):
+                        workspace_populated = True
                 restart_context = self.message_templates.format_restart_context(
                     self.restart_reason,
                     self.restart_instructions,
                     previous_answer=self.previous_attempt_answer,
+                    workspace_populated=workspace_populated,
                 )
                 # Prepend restart context to user message
                 conversation["user_message"] = restart_context + "\n\n" + conversation["user_message"]
@@ -7447,6 +7472,15 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         _emitter = get_event_emitter()
         if _emitter:
             _emitter.emit_answer_locked(agent_id=self._selected_agent)
+
+        # Clear workspace after submit since orchestration is complete
+        if self._selected_agent:
+            agent = self.agents.get(self._selected_agent)
+            if agent and agent.backend.filesystem_manager:
+                agent.backend.filesystem_manager.clear_workspace()
+                logger.info(
+                    f"[Orchestrator._present_final_answer] Cleared workspace for {self._selected_agent} after submit",
+                )
 
         # Add final answer to conversation history
         if self._final_presentation_content:

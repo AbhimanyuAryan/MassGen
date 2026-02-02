@@ -924,6 +924,12 @@ class SubagentView(Container):
                 self._sync_adapter_state()
                 self._update_status_display()
 
+                # Check for winner_selected events and update inner tab crown
+                for event in new_events:
+                    if event.event_type == "winner_selected" and event.agent_id:
+                        if self._inner_tab_bar and event.agent_id in self._inner_agents:
+                            self._inner_tab_bar.set_winner(event.agent_id)
+
                 # Check if any agent got a final answer
                 for agent_id in list(self._agents_loaded):
                     self._maybe_lock_final_answer(agent_id)
@@ -939,6 +945,10 @@ class SubagentView(Container):
             if self._status_line:
                 for aid in self._inner_agents:
                     self._status_line.set_agent_active(aid, False)
+
+            # Mark outer tab as done
+            if self._tab_bar:
+                self._tab_bar.update_agent_status(self._subagent.id, "done")
 
             if self._poll_timer:
                 self._poll_timer.stop()
@@ -1034,9 +1044,12 @@ class SubagentView(Container):
             if self._header:
                 self._header.update_subagent(self._subagent)
 
-            # Update tab bar
+            # Update tab bar and sync completed subagent statuses
             if self._tab_bar:
                 self._tab_bar.set_active(self._subagent.id)
+                for sa in self._all_subagents:
+                    if sa.status not in ("running", "pending"):
+                        self._tab_bar.update_agent_status(sa.id, "done")
 
             # Update ribbon agent
             if self._ribbon:

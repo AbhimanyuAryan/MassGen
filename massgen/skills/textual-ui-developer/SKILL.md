@@ -212,6 +212,50 @@ When the TUI is running:
 **Cause**: Complex tool-using tasks or busy loops.
 **Solution**: Use `pkill -9 -f "massgen"` to force kill, then restart.
 
+## Event Replay & Timeline Debugging
+
+When debugging TUI display issues (missing banners, duplicate content, wrong ordering), use the dump script to see exactly what the TUI renders from an events.jsonl log:
+
+```bash
+# Dump timeline transcript (auto-detects agents, applies same filtering as live TUI)
+uv run python scripts/dump_timeline_from_events.py /path/to/events.jsonl
+
+# Filter to a specific agent
+uv run python scripts/dump_timeline_from_events.py /path/to/events.jsonl agent_a
+```
+
+The dump script uses `TimelineEventRecorder`, which wraps the real `TimelineEventAdapter` with mock widgets. This means all TUI filtering is applied:
+- Agent ID filtering (only events for known agents)
+- Round banner deduplication
+- "Evaluation complete" status suppression
+- Tool batching logic
+
+### Visual replay
+
+For visual inspection, use the `--tui` flag to replay with real Textual widgets:
+
+```bash
+uv run python scripts/dump_timeline_from_events.py --tui /path/to/events.jsonl [agent_id]
+```
+
+### Live transcript capture
+
+Set this env var before a run to capture the transcript in real-time:
+
+```bash
+MASSGEN_TUI_TIMELINE_TRANSCRIPT=/path/to/output.txt uv run massgen ...
+```
+
+### Key files
+
+| File | Description |
+|------|-------------|
+| `scripts/dump_timeline_from_events.py` | Dump timeline from events.jsonl |
+| `scripts/dump_timeline_from_events.py --tui` | Visual TUI replay mode |
+| `massgen/frontend/displays/timeline_event_recorder.py` | Mock-based recorder (wraps TimelineEventAdapter) |
+| `massgen/frontend/displays/tui_event_pipeline.py` | Real TUI event adapter (source of truth for filtering) |
+| `massgen/frontend/displays/content_processor.py` | Shared event→content parsing |
+
 ## Textual Resources
 
 - **Textual Docs**: https://textual.textualize.io/

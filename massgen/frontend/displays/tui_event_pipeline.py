@@ -379,6 +379,9 @@ class TimelineEventAdapter:
                     round_number=new_round,
                     subtitle=subtitle,
                 )
+                # Update round tracking so subsequent content (tool calls,
+                # text, thinking) is tagged with the final-presentation round
+                self._round_number = new_round
             except Exception:
                 pass
 

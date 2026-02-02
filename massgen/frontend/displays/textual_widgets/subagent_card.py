@@ -549,14 +549,7 @@ class SubagentCard(Vertical, can_focus=True):
         elif status_label == "timeout":
             status_label = "timeout"
 
-        elapsed = int(sa.elapsed_seconds)
-        if elapsed <= 0:
-            return status_label
-        if elapsed >= 60:
-            elapsed_str = f"{elapsed // 60}m"
-        else:
-            elapsed_str = f"{elapsed}s"
-        return f"{status_label} | {elapsed_str}"
+        return status_label
 
     def _get_plan_summary(self, sa: SubagentDisplayData) -> Optional[str]:
         if not sa.workspace_path:
