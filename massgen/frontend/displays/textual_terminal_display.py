@@ -5,7 +5,6 @@ Textual Terminal Display for MassGen Coordination
 """
 
 import functools
-import logging
 import os
 import re
 import threading
@@ -20,7 +19,7 @@ if TYPE_CHECKING:
         PlanApprovalResult,
     )
 
-from massgen.logger_config import get_log_session_dir, logger
+from massgen.logger_config import get_event_emitter, get_log_session_dir, logger
 
 from .terminal_display import TerminalDisplay
 
@@ -28,25 +27,15 @@ try:
     from rich.text import Text
     from textual import events, on
     from textual.app import App, ComposeResult
-    from textual.containers import (
-        Container,
-        Horizontal,
-        ScrollableContainer,
-        Vertical,
-        VerticalScroll,
-    )
+    from textual.containers import Container, Horizontal, Vertical, VerticalScroll
     from textual.message import Message
     from textual.reactive import reactive
     from textual.screen import ModalScreen
     from textual.widget import Widget
     from textual.widgets import Button, Footer, Input, Label, RichLog, Static, TextArea
 
-    from .content_handlers import (
-        ThinkingContentHandler,
-        ToolBatchTracker,
-        ToolContentHandler,
-    )
-    from .content_normalizer import ContentNormalizer
+    from .base_tui_layout import BaseTUILayoutMixin
+    from .content_handlers import ToolBatchTracker
 
     # Import extracted modals from the new textual/ package
     from .textual import (  # Browser modals; Status modals; Coordination modals; Content modals; Input modals; Shortcuts modal; Workspace modals; Agent output modal
@@ -91,7 +80,7 @@ try:
         QueuedInputBanner,
         SessionInfoClicked,
         SubagentCard,
-        SubagentModal,
+        SubagentScreen,
         TaskPlanCard,
         TaskPlanModal,
         TasksClicked,
@@ -102,534 +91,15 @@ try:
         ViewPlanRequested,
         ViewSelected,
     )
+    from .tui_event_pipeline import TimelineEventAdapter
     from .tui_modes import TuiModeState
 
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False
 
-# TUI Debug logger - writes to /tmp/massgen_tui_debug.log
-_tui_debug_logger: Optional[logging.Logger] = None
-
-
-def get_tui_debug_logger() -> logging.Logger:
-    """Get or create a debug logger for TUI that writes to /tmp."""
-    global _tui_debug_logger
-    if _tui_debug_logger is None:
-        _tui_debug_logger = logging.getLogger("massgen.tui.debug")
-        _tui_debug_logger.setLevel(logging.DEBUG)
-        # Prevent propagation to root logger
-        _tui_debug_logger.propagate = False
-        # File handler to /tmp
-        handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-        handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter(
-            "%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
-            datefmt="%H:%M:%S",
-        )
-        handler.setFormatter(formatter)
-        _tui_debug_logger.addHandler(handler)
-        # Write startup marker
-        _tui_debug_logger.info("=" * 60)
-        _tui_debug_logger.info("TUI Debug Session Started")
-        _tui_debug_logger.info("=" * 60)
-    return _tui_debug_logger
-
-
-def tui_log(msg: str, level: str = "debug") -> None:
-    """Log a debug message to /tmp/massgen_tui_debug.log."""
-    log = get_tui_debug_logger()
-    if level == "error":
-        log.error(msg)
-    elif level == "warning":
-        log.warning(msg)
-    elif level == "info":
-        log.info(msg)
-    else:
-        log.debug(msg)
-
-
-# Tool message patterns for parsing
-TOOL_PATTERNS = {
-    # MCP tool patterns (Response API format)
-    "mcp_start": re.compile(r"🔧 \[MCP\] Calling tool '([^']+)'"),
-    "mcp_complete": re.compile(r"✅ \[MCP\] Tool '([^']+)' completed"),
-    "mcp_failed": re.compile(r"❌ \[MCP\] Tool '([^']+)' failed: (.+)"),
-    # MCP tool patterns (older format)
-    "mcp_tool_start": re.compile(r"🔧 \[MCP Tool\] Calling ([^\.]+)\.\.\."),
-    "mcp_tool_complete": re.compile(r"✅ \[MCP Tool\] ([^ ]+) completed"),
-    # Custom tool patterns
-    "custom_start": re.compile(r"🔧 \[Custom Tool\] Calling ([^\.]+)\.\.\."),
-    "custom_complete": re.compile(r"✅ \[Custom Tool\] ([^ ]+) completed"),
-    "custom_failed": re.compile(r"❌ \[Custom Tool Error\] (.+)"),
-    # Arguments pattern
-    "arguments": re.compile(r"^Arguments:(.+)", re.DOTALL),
-    # Progress/status patterns
-    "progress": re.compile(r"⏳.*progress|⏳.*in progress", re.IGNORECASE),
-    "connected": re.compile(r"✅ \[MCP\] Connected to (\d+) servers?"),
-    "unavailable": re.compile(r"⚠️ \[MCP\].*Setup failed"),
-    # Injection patterns (cross-agent context sharing)
-    "injection": re.compile(r"📥 \[INJECTION\] (.+)", re.DOTALL),
-    # Reminder patterns (high priority task reminders)
-    "reminder": re.compile(r"💡 \[REMINDER\] (.+)", re.DOTALL),
-    # Session completed pattern
-    "session_complete": re.compile(r"✅ \[MCP\] Session completed"),
-}
-
-# Tool category detection - maps tool names to semantic categories
-TOOL_CATEGORIES = {
-    "filesystem": {
-        "icon": "📁",
-        "color": "green",
-        "patterns": [
-            "read_file",
-            "write_file",
-            "list_directory",
-            "create_directory",
-            "delete_file",
-            "move_file",
-            "copy_file",
-            "file_exists",
-            "mcp__filesystem",
-            "read_text_file",
-            "write_text_file",
-            "get_file_info",
-            "search_files",
-            "list_allowed_directories",
-        ],
-    },
-    "web": {
-        "icon": "🌐",
-        "color": "blue",
-        "patterns": [
-            "web_search",
-            "search_web",
-            "google_search",
-            "fetch_url",
-            "browse",
-            "http_get",
-            "http_post",
-            "scrape",
-            "crawl",
-            "mcp__brave",
-            "mcp__web",
-            "mcp__fetch",
-        ],
-    },
-    "code": {
-        "icon": "💻",
-        "color": "yellow",
-        "patterns": [
-            "execute_command",
-            "run_code",
-            "bash",
-            "python",
-            "shell",
-            "exec",
-            "terminal",
-            "command",
-            "run_script",
-            "execute_python",
-            "mcp__code",
-            "mcp__shell",
-            "mcp__terminal",
-        ],
-    },
-    "database": {
-        "icon": "🗄️",
-        "color": "magenta",
-        "patterns": [
-            "query",
-            "sql",
-            "database",
-            "db_",
-            "select",
-            "insert",
-            "mcp__postgres",
-            "mcp__sqlite",
-            "mcp__mysql",
-            "mcp__mongo",
-            "arbitrary_query",
-            "schema_reference",
-        ],
-    },
-    "git": {
-        "icon": "🔀",
-        "color": "red",
-        "patterns": [
-            "git_",
-            "commit",
-            "push",
-            "pull",
-            "branch",
-            "merge",
-            "mcp__git",
-            "clone",
-            "checkout",
-            "diff",
-            "log",
-        ],
-    },
-    "api": {
-        "icon": "🔌",
-        "color": "cyan",
-        "patterns": [
-            "api_",
-            "rest_",
-            "graphql",
-            "request",
-            "endpoint",
-            "mcp__slack",
-            "mcp__discord",
-            "mcp__twitter",
-            "mcp__notion",
-        ],
-    },
-    "ai": {
-        "icon": "🤖",
-        "color": "bright_magenta",
-        "patterns": [
-            "llm_",
-            "ai_",
-            "generate",
-            "embed",
-            "chat_completion",
-            "mcp__openai",
-            "mcp__anthropic",
-            "mcp__gemini",
-        ],
-    },
-    "weather": {
-        "icon": "🌤️",
-        "color": "bright_cyan",
-        "patterns": [
-            "weather",
-            "forecast",
-            "temperature",
-            "get-forecast",
-            "mcp__weather",
-        ],
-    },
-    "memory": {
-        "icon": "🧠",
-        "color": "bright_yellow",
-        "patterns": [
-            "memory",
-            "remember",
-            "recall",
-            "store",
-            "retrieve",
-            "mcp__memory",
-            "knowledge",
-            "context",
-        ],
-    },
-}
-
-
-def _get_tool_category(tool_name: str) -> dict:
-    """Determine the semantic category of a tool based on its name.
-
-    Args:
-        tool_name: The tool name (e.g., "mcp__filesystem__read_file")
-
-    Returns:
-        Dict with icon, color, and category name
-    """
-    tool_lower = tool_name.lower()
-
-    for category, info in TOOL_CATEGORIES.items():
-        for pattern in info["patterns"]:
-            if pattern in tool_lower:
-                return {
-                    "category": category,
-                    "icon": info["icon"],
-                    "color": info["color"],
-                }
-
-    # Default for unknown tools
-    return {
-        "category": "tool",
-        "icon": "🔧",
-        "color": "cyan",
-    }
-
-
-def _format_tool_name(tool_name: str) -> str:
-    """Format tool name for display - strip prefixes and clean up.
-
-    Args:
-        tool_name: Raw tool name (e.g., "mcp__filesystem__read_file")
-
-    Returns:
-        Cleaned display name (e.g., "read_file")
-    """
-    # Strip common prefixes
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
-        if len(parts) >= 3:
-            # mcp__server__tool -> tool (server)
-            return f"{parts[-1]} ({parts[1]})"
-        elif len(parts) == 2:
-            return parts[1]
-
-    return tool_name
-
-
-def _clean_tool_arguments(args_str: str) -> str:
-    """Clean up tool arguments for display - extract key info from dicts/JSON.
-
-    Args:
-        args_str: Raw arguments string (may be dict repr or JSON)
-
-    Returns:
-        Clean, readable summary of the arguments
-    """
-    import json
-
-    args_str = args_str.strip()
-
-    # Try to parse as JSON/dict
-    try:
-        # Handle dict-like strings
-        if args_str.startswith("{") or args_str.startswith("Arguments:"):
-            clean = args_str.replace("Arguments:", "").strip()
-            # Try JSON parse
-            try:
-                data = json.loads(clean)
-            except json.JSONDecodeError:
-                # Try eval for dict repr (safely)
-                import ast
-
-                try:
-                    data = ast.literal_eval(clean)
-                except (ValueError, SyntaxError):
-                    data = None
-
-            if isinstance(data, dict):
-                # Extract key fields for nice display
-                parts = []
-                for key, value in data.items():
-                    # Skip long content fields
-                    if key in ("content", "body", "text", "data") and isinstance(value, str) and len(value) > 50:
-                        parts.append(f"{key}: [{len(value)} chars]")
-                    # Shorten paths
-                    elif key in ("path", "file", "directory", "work_dir") and isinstance(value, str):
-                        # Show just filename or last part of path
-                        short_path = value.split("/")[-1] if "/" in value else value
-                        if len(value) > 40:
-                            parts.append(f"{key}: .../{short_path}")
-                        else:
-                            parts.append(f"{key}: {value}")
-                    # Truncate command
-                    elif key == "command" and isinstance(value, str):
-                        if len(value) > 60:
-                            parts.append(f"{key}: {value[:60]}...")
-                        else:
-                            parts.append(f"{key}: {value}")
-                    # Skip internal fields
-                    elif key.startswith("_"):
-                        continue
-                    # Show other fields truncated
-                    elif isinstance(value, str) and len(value) > 50:
-                        parts.append(f"{key}: {value[:50]}...")
-                    elif isinstance(value, (list, dict)):
-                        parts.append(f"{key}: [{type(value).__name__}]")
-                    else:
-                        parts.append(f"{key}: {value}")
-
-                if parts:
-                    return " | ".join(parts[:3])  # Max 3 fields
-                return "[no args]"
-    except Exception:
-        pass
-
-    # Fallback: just truncate
-    if len(args_str) > 80:
-        return args_str[:80] + "..."
-    return args_str
-
-
-def _clean_tool_result(result_str: str, tool_name: str = "") -> str:
-    """Clean up tool result for display - summarize long output.
-
-    Args:
-        result_str: Raw result string
-        tool_name: Tool name for context-aware formatting
-
-    Returns:
-        Clean, readable summary of the result
-    """
-    import json
-
-    result_str = result_str.strip()
-
-    # Handle common MCP result formats
-    if result_str.startswith("{"):
-        try:
-            data = json.loads(result_str)
-            if isinstance(data, dict):
-                # Check for success/error status
-                if "success" in data:
-                    status = "✓" if data["success"] else "✗"
-                    if "message" in data:
-                        return f"{status} {data['message'][:60]}"
-                    return f"{status} completed"
-
-                # Check for content result
-                if "content" in data:
-                    content = data["content"]
-                    if isinstance(content, str):
-                        lines = content.count("\n") + 1
-                        return f"[{lines} lines]"
-                    return "[content]"
-
-                # Check for exit code (command execution)
-                if "exit_code" in data:
-                    code = data["exit_code"]
-                    status = "✓" if code == 0 else f"exit {code}"
-                    return status
-
-                # Generic dict - show key count
-                return f"[{len(data)} fields]"
-        except json.JSONDecodeError:
-            pass
-
-    # Handle path-related results
-    if "Parent directory does not exist" in result_str:
-        return "✗ directory not found"
-    if "does not exist" in result_str:
-        return "✗ not found"
-    if "Permission denied" in result_str:
-        return "✗ permission denied"
-
-    # Handle file content (multiple lines)
-    lines = result_str.split("\n")
-    if len(lines) > 5:
-        return f"[{len(lines)} lines]"
-
-    # Short result - show truncated
-    if len(result_str) > 60:
-        return result_str[:60] + "..."
-    return result_str
-
-
-def _parse_tool_message(content: str) -> dict:
-    """Parse tool message to extract structured info.
-
-    Args:
-        content: Tool message text from backend
-
-    Returns:
-        Dict with keys:
-        - event: "start", "complete", "failed", "arguments", "progress", "status", "unknown"
-        - tool_name: Name of the tool (if applicable)
-        - tool_type: "mcp" or "custom"
-        - category: Tool category info (icon, color, category name)
-        - display_name: Formatted display name
-        - error: Error message (if failed)
-        - arguments: Arguments string (if arguments event)
-        - raw: Original content (always present)
-    """
-    result = {"event": "unknown", "raw": content}
-
-    def enrich_with_category(parsed: dict) -> dict:
-        """Add category info to parsed result."""
-        if "tool_name" in parsed:
-            parsed["category"] = _get_tool_category(parsed["tool_name"])
-            parsed["display_name"] = _format_tool_name(parsed["tool_name"])
-        return parsed
-
-    # Check MCP start patterns
-    match = TOOL_PATTERNS["mcp_start"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "start", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    match = TOOL_PATTERNS["mcp_tool_start"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "start", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    # Check Custom tool start
-    match = TOOL_PATTERNS["custom_start"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "start", "tool_name": match.group(1), "tool_type": "custom", "raw": content},
-        )
-
-    # Check MCP complete patterns
-    match = TOOL_PATTERNS["mcp_complete"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "complete", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    match = TOOL_PATTERNS["mcp_tool_complete"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "complete", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
-        )
-
-    # Check Custom complete
-    match = TOOL_PATTERNS["custom_complete"].search(content)
-    if match:
-        return enrich_with_category(
-            {"event": "complete", "tool_name": match.group(1), "tool_type": "custom", "raw": content},
-        )
-
-    # Check MCP failed pattern
-    match = TOOL_PATTERNS["mcp_failed"].search(content)
-    if match:
-        return enrich_with_category(
-            {
-                "event": "failed",
-                "tool_name": match.group(1),
-                "tool_type": "mcp",
-                "error": match.group(2),
-                "raw": content,
-            },
-        )
-
-    # Check Custom failed pattern
-    match = TOOL_PATTERNS["custom_failed"].search(content)
-    if match:
-        return {"event": "failed", "tool_type": "custom", "error": match.group(1), "raw": content}
-
-    # Check arguments pattern
-    match = TOOL_PATTERNS["arguments"].search(content)
-    if match or content.strip().startswith("Arguments:"):
-        return {"event": "arguments", "arguments": content, "raw": content}
-
-    # Check progress pattern
-    if TOOL_PATTERNS["progress"].search(content):
-        return {"event": "progress", "raw": content}
-
-    # Check status patterns (connected, unavailable)
-    match = TOOL_PATTERNS["connected"].search(content)
-    if match:
-        return {"event": "status", "status_type": "connected", "server_count": match.group(1), "raw": content}
-
-    if TOOL_PATTERNS["unavailable"].search(content):
-        return {"event": "status", "status_type": "unavailable", "raw": content}
-
-    # Check injection pattern (cross-agent context sharing)
-    match = TOOL_PATTERNS["injection"].search(content)
-    if match:
-        return {"event": "injection", "content": match.group(1), "raw": content}
-
-    # Check reminder pattern (high priority task reminders)
-    match = TOOL_PATTERNS["reminder"].search(content)
-    if match:
-        return {"event": "reminder", "content": match.group(1), "raw": content}
-
-    # Check session complete pattern
-    if TOOL_PATTERNS["session_complete"].search(content):
-        return {"event": "session_complete", "raw": content}
-
-    return result
+# TUI Debug logger - use shared implementation
+from .shared.tui_debug import tui_log  # noqa: E402
 
 
 def _process_line_buffer(
@@ -657,159 +127,7 @@ def _process_line_buffer(
     return buffer
 
 
-# Language mapping for syntax highlighting
-FILE_LANG_MAP = {
-    ".py": "python",
-    ".js": "javascript",
-    ".ts": "typescript",
-    ".jsx": "jsx",
-    ".tsx": "tsx",
-    ".json": "json",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".toml": "toml",
-    ".html": "html",
-    ".css": "css",
-    ".scss": "scss",
-    ".sh": "bash",
-    ".bash": "bash",
-    ".zsh": "zsh",
-    ".rs": "rust",
-    ".go": "go",
-    ".java": "java",
-    ".kt": "kotlin",
-    ".swift": "swift",
-    ".c": "c",
-    ".cpp": "cpp",
-    ".h": "c",
-    ".hpp": "cpp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".sql": "sql",
-    ".xml": "xml",
-    ".r": "r",
-    ".lua": "lua",
-    ".vim": "vim",
-    ".dockerfile": "dockerfile",
-}
-
-# Binary file extensions to reject for preview
-BINARY_EXTENSIONS = {
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".bmp",
-    ".ico",
-    ".webp",
-    ".pdf",
-    ".doc",
-    ".docx",
-    ".xls",
-    ".xlsx",
-    ".ppt",
-    ".pptx",
-    ".zip",
-    ".tar",
-    ".gz",
-    ".bz2",
-    ".7z",
-    ".rar",
-    ".exe",
-    ".dll",
-    ".so",
-    ".dylib",
-    ".mp3",
-    ".mp4",
-    ".wav",
-    ".avi",
-    ".mov",
-    ".mkv",
-    ".pyc",
-    ".pyo",
-    ".class",
-    ".o",
-    ".obj",
-}
-
-
-def render_file_preview(
-    file_path: Path,
-    max_size: int = 50000,
-    theme: str = "monokai",
-) -> Tuple[Any, bool]:
-    """Render file content with syntax highlighting or markdown.
-
-    Args:
-        file_path: Path to the file to preview.
-        max_size: Maximum file size in bytes to render (default 50KB).
-        theme: Syntax highlighting theme (default "monokai").
-
-    Returns:
-        Tuple of (renderable, is_rich) where:
-        - renderable: Rich Markdown, Syntax, or plain string
-        - is_rich: True if renderable is a Rich object, False for plain text
-    """
-    from rich.markdown import Markdown
-    from rich.syntax import Syntax
-
-    try:
-        ext = file_path.suffix.lower()
-
-        # Handle binary files
-        if ext in BINARY_EXTENSIONS:
-            return f"[Binary file: {ext}]", False
-
-        # Check file size
-        if file_path.stat().st_size > max_size:
-            return f"[File too large: {file_path.stat().st_size:,} bytes]", False
-
-        # Read content
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return "[Binary or non-UTF-8 file]", False
-
-        # Empty file
-        if not content.strip():
-            return "[Empty file]", False
-
-        # Markdown files - render as Markdown
-        if ext in (".md", ".markdown"):
-            return Markdown(content), True
-
-        # Code files - render with syntax highlighting
-        if ext in FILE_LANG_MAP:
-            return (
-                Syntax(
-                    content,
-                    FILE_LANG_MAP[ext],
-                    theme=theme,
-                    line_numbers=True,
-                    word_wrap=True,
-                ),
-                True,
-            )
-
-        # Special files without extensions
-        if file_path.name.lower() in ("dockerfile", "makefile", "jenkinsfile"):
-            lang = file_path.name.lower()
-            if lang == "makefile":
-                lang = "make"
-            return Syntax(content, lang, theme=theme, line_numbers=True, word_wrap=True), True
-
-        # Default: plain text (truncate if very long)
-        lines = content.split("\n")
-        if len(lines) > 500:
-            content = "\n".join(lines[:500]) + f"\n\n... [{len(lines) - 500} more lines]"
-        return content, False
-
-    except FileNotFoundError:
-        return "[File not found]", False
-    except PermissionError:
-        return "[Permission denied]", False
-    except Exception as e:
-        return f"[Error reading file: {e}]", False
+# File preview utilities imported from shared module
 
 
 # Emoji fallback mapping for terminals without Unicode support
@@ -1010,6 +328,8 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._buffer_lock = threading.Lock()
         self._recent_web_chunks: Dict[str, Deque[str]] = {agent_id: deque(maxlen=self.max_web_search_lines) for agent_id in self.agent_ids}
 
+        self._event_listener_registered = False
+
     def _validate_agent_ids(self):
         """Validate agent IDs for security and robustness."""
         if not self.agent_ids:
@@ -1058,8 +378,8 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app:
             try:
                 self._app.reset_turn_state()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
     def _detect_emoji_support(self) -> bool:
         """Detect if terminal supports emoji."""
@@ -1079,8 +399,8 @@ class TextualTerminalDisplay(TerminalDisplay):
             encoding = locale.getpreferredencoding()
             if encoding.lower() in ["utf-8", "utf8"]:
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[TextualDisplay] {e}")
 
         lang = os.environ.get("LANG", "")
         if "UTF-8" in lang or "utf8" in lang:
@@ -1194,8 +514,8 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app:
             try:
                 self._app.set_input_handler(handler)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
     def set_human_input_hook(self, hook) -> None:
         """Set the human input hook for injecting user input during execution.
@@ -1274,6 +594,8 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         if not content:
             return
+
+        tui_log(f"[update_agent_content] agent={agent_id} type={content_type} len={len(content)} content={content[:80]}")
 
         # Auto-set status to streaming when content arrives and agent is idle/waiting
         # This ensures the status indicator updates immediately when streaming starts
@@ -1647,8 +969,8 @@ class TextualTerminalDisplay(TerminalDisplay):
             logger.info(
                 f"[FinalAnswer] show_final_answer: selected_agent={selected_agent} " f"answer_len={len(display_answer)} vote_keys={list((vote_results or {}).keys())}",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[TextualDisplay] {e}")
 
         # Add context path writes footer if any files were written
         context_writes_footer = self._get_context_path_writes_footer()
@@ -2507,8 +1829,8 @@ if TEXTUAL_AVAILABLE:
                     cwd_widget.update(f"[green]📁 {cwd_short} \\[read+write][/]")
                 else:
                     cwd_widget.update(f"[dim]📁[/] {cwd_short}")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             # Post message to notify app of the toggle
             self.post_message(StatusBarCwdClicked(str(cwd), self._cwd_context_mode))
 
@@ -2529,8 +1851,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 phase_widget = self.query_one("#status_phase", Static)
                 phase_widget.update(display_text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
             # Update hints based on phase - always show ?:help, add q:cancel during coordination
             try:
@@ -2540,8 +1862,8 @@ if TEXTUAL_AVAILABLE:
                 else:
                     hints_widget.update("[dim]q:cancel • ?:help[/]")
                 hints_widget.remove_class("hidden")  # Always visible
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
             # Update phase-based styling
             self.remove_class("phase-idle")
@@ -2565,8 +1887,8 @@ if TEXTUAL_AVAILABLE:
                     mcp_widget.update(f"🔌 {server_count}s/{tool_count}t")
                 else:
                     mcp_widget.update("")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def update_running_tools(self, count: int) -> None:
             """Update running tools counter in status bar."""
@@ -2578,8 +1900,8 @@ if TEXTUAL_AVAILABLE:
                 else:
                     tools_widget.update("")
                     tools_widget.add_class("hidden")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def update_progress(
             self,
@@ -2616,8 +1938,8 @@ if TEXTUAL_AVAILABLE:
                     text = " | ".join(parts) if parts else ""
 
                 progress_widget.update(text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def add_vote(self, voted_for: str, voter: str = "") -> None:
             """Increment vote count for an agent and track history."""
@@ -2676,16 +1998,16 @@ if TEXTUAL_AVAILABLE:
                         votes_widget.add_class("leader-changed")
                     # Remove animation classes after delay
                     self.set_timer(0.5, lambda: self._remove_vote_animation(votes_widget))
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def _remove_vote_animation(self, widget: Static) -> None:
             """Remove animation classes from vote widget."""
             try:
                 widget.remove_class("vote-updated")
                 widget.remove_class("leader-changed")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def get_standings_text(self) -> str:
             """Get current vote standings as text."""
@@ -2716,8 +2038,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 events_widget = self.query_one("#status_events", Static)
                 events_widget.update(display_text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def start_timer(self) -> None:
             """Start the elapsed timer."""
@@ -2740,8 +2062,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 timer_widget = self.query_one("#status_timer", Static)
                 timer_widget.update(display_text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def stop_timer(self) -> None:
             """Stop the timer updates."""
@@ -2761,8 +2083,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 timer_widget = self.query_one("#status_timer", Static)
                 timer_widget.update("⏱️ 0:00")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def show_cancel_button(self, show: bool = True) -> None:
             """Show or hide the cancel button."""
@@ -2773,8 +2095,8 @@ if TEXTUAL_AVAILABLE:
                     cancel_widget.remove_class("hidden")
                 else:
                     cancel_widget.add_class("hidden")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def show_restart_count(self, attempt: int, max_attempts: int) -> None:
             """Show restart count in the phase indicator."""
@@ -2782,16 +2104,16 @@ if TEXTUAL_AVAILABLE:
                 phase_widget = self.query_one("#status_phase", Static)
                 phase_widget.update(f"🔄 Restart {attempt}/{max_attempts}")
                 phase_widget.add_class("restart-active")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def clear_restart_indicator(self) -> None:
             """Clear the restart indicator."""
             try:
                 phase_widget = self.query_one("#status_phase", Static)
                 phase_widget.remove_class("restart-active")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def set_agent_working(self, agent_id: str, working: bool = True) -> None:
             """Mark an agent as working or not working.
@@ -2855,8 +2177,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 activity_widget = self.query_one("#status_activity", Static)
                 activity_widget.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Start animation interval (update every 100ms for smooth animation)
             self._spinner_interval = self.set_interval(0.1, self._animate_spinner)
@@ -2872,8 +2194,8 @@ if TEXTUAL_AVAILABLE:
                 activity_widget = self.query_one("#status_activity", Static)
                 activity_widget.add_class("hidden")
                 activity_widget.update("")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _animate_spinner(self) -> None:
             """Animate the spinner to next frame."""
@@ -2924,8 +2246,8 @@ if TEXTUAL_AVAILABLE:
                     activity_widget.remove_class("hidden")
                 else:
                     activity_widget.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
     # BaseModal is now imported from .textual package
 
@@ -2939,6 +2261,7 @@ if TEXTUAL_AVAILABLE:
         # Only canonical shortcuts that users expect
         BINDINGS = [
             # Agent navigation
+            Binding("w", "go_to_winner", "Go to Winner", show=False),
             Binding("tab", "next_agent", "Next Agent"),
             Binding("left", "prev_agent", "Prev Agent", show=False),
             Binding("right", "next_agent", "Next Agent", show=False),
@@ -2993,7 +2316,11 @@ if TEXTUAL_AVAILABLE:
             self._tab_bar: Optional[AgentTabBar] = None
             self._status_ribbon: Optional[AgentStatusRibbon] = None
             self._execution_status_line: Optional[ExecutionStatusLine] = None
+            # Side panel removed - using separate SubagentScreen
+            # self._subagent_side_panel: Optional[Container] = None
+            # self._subagent_view: Optional[SubagentView] = None
             self._active_agent_id: Optional[str] = None
+            self._winner_agent_id: Optional[str] = None
             # Final presentation state (streams into winner's AgentPanel)
             self._final_presentation_agent: Optional[str] = None
             self._final_presentation_card: Optional[FinalPresentationCard] = None
@@ -3008,6 +2335,14 @@ if TEXTUAL_AVAILABLE:
             self._thread_id: Optional[int] = None
             self._orchestrator_events: List[str] = []
             self._input_handler: Optional[Callable[[str], None]] = None
+
+            # Event-driven pipeline state
+            self._event_adapters: Dict[str, TimelineEventAdapter] = {}
+            # Event batching: accumulate events for ~16ms before marshaling
+            self._event_batch: Deque = deque()
+            self._event_batch_lock = threading.Lock()
+            self._event_batch_timer: Optional[threading.Timer] = None
+            self._EVENT_BATCH_INTERVAL = 0.016  # 16ms (~60fps)
 
             # Answer tracking for browser modal
             self._answers: List[Dict[str, Any]] = []  # All answers with metadata
@@ -3090,8 +2425,8 @@ if TEXTUAL_AVAILABLE:
                 try:
                     self._queued_input_banner.remove()
                     self._queued_input_banner = None
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
             # Agent pulsing - stop all pulse animations
             self._pulsing_agents.clear()
@@ -3200,15 +2535,20 @@ if TEXTUAL_AVAILABLE:
 
             # Main container with agent panels (hidden during welcome)
             with Container(id="main_container", classes="hidden" if self._showing_welcome else ""):
-                with Container(id="agents_container"):
-                    for idx, agent_id in enumerate(agent_ids):
-                        # Only first agent is visible, rest are hidden
-                        is_hidden = idx > 0
-                        agent_widget = AgentPanel(agent_id, self.coordination_display, idx + 1)
-                        if is_hidden:
-                            agent_widget.add_class("hidden")
-                        self.agent_widgets[agent_id] = agent_widget
-                        yield agent_widget
+                with Horizontal(id="main_split"):
+                    with Container(id="agents_container"):
+                        for idx, agent_id in enumerate(agent_ids):
+                            # Only first agent is visible, rest are hidden
+                            is_hidden = idx > 0
+                            agent_widget = AgentPanel(agent_id, self.coordination_display, idx + 1)
+                            if is_hidden:
+                                agent_widget.add_class("hidden")
+                            self.agent_widgets[agent_id] = agent_widget
+                            yield agent_widget
+
+                    # Subagent side panel removed - now using separate SubagentScreen
+                    # self._subagent_side_panel = Container(id="subagent_side_panel", classes="hidden")
+                    # yield self._subagent_side_panel
 
                 # Phase 13.2: Execution status line - shows all agents' states at a glance
                 # Placed at bottom of main content area, above mode bar
@@ -3253,6 +2593,7 @@ if TEXTUAL_AVAILABLE:
             """Set up periodic buffer flushing when app starts."""
             self._thread_id = threading.get_ident()
             self.coordination_display._app_ready.set()
+            self._register_event_listener()
             self.set_interval(self.buffer_flush_interval, self._flush_buffers)
             if self.coordination_display.restart_reason and self.header_widget:
                 self.header_widget.show_restart_context(
@@ -3456,8 +2797,8 @@ if TEXTUAL_AVAILABLE:
                 icon_map = {"dark": "D", "light": "L", "transparent": "T"}
                 icon = f"[dim]{icon_map.get(theme, 'D')}[/]"
                 theme_widget.update(icon)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def set_input_handler(self, handler: Callable[[str], None]) -> None:
             """Set the input handler callback for controller integration."""
@@ -3486,8 +2827,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 main_container = self.query_one("#main_container", Container)
                 main_container.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def on_key(self, event: events.Key) -> None:
             """Handle key events for agent shortcuts and @ autocomplete.
@@ -3582,6 +2923,267 @@ if TEXTUAL_AVAILABLE:
             """Handle dropdown dismissal."""
             if hasattr(self, "question_input"):
                 self.question_input.autocomplete_active = False
+
+        def _register_event_listener(self) -> None:
+            """Register this TUI as a listener on the global EventEmitter.
+
+            Events flow directly from the emitter to per-agent TimelineEventAdapters.
+            """
+            if self.coordination_display._event_listener_registered:
+                tui_log("[_register_event_listener] SKIP: already registered")
+                return
+
+            emitter = get_event_emitter()
+            if emitter is None:
+                tui_log("[_register_event_listener] SKIP: emitter is None")
+                return
+
+            emitter.add_listener(self._handle_event_from_emitter)
+            self.coordination_display._event_listener_registered = True
+            tui_log("[_register_event_listener] SUCCESS: listener registered")
+
+        def _handle_event_from_emitter(self, event) -> None:
+            """Handle an event from the global EventEmitter.
+
+            Called from backend/orchestrator threads. Events are batched for
+            ~16ms before being marshaled to the Textual main thread via a
+            single call_from_thread(), reducing per-token thread sync overhead.
+            """
+            # Skip legacy stream_chunk events from old log files
+            if event.event_type == "stream_chunk":
+                return
+
+            # Coordination events (answer_submitted, vote, winner_selected,
+            # context_received) are now rendered through the event pipeline
+            # instead of direct display callbacks.
+
+            agent_id = event.agent_id
+            if not agent_id or agent_id not in self.agent_widgets:
+                return
+
+            with self._event_batch_lock:
+                self._event_batch.append(event)
+                # Start timer on first event in batch
+                if self._event_batch_timer is None:
+                    self._event_batch_timer = threading.Timer(
+                        self._EVENT_BATCH_INTERVAL,
+                        self._flush_event_batch,
+                    )
+                    self._event_batch_timer.daemon = True
+                    self._event_batch_timer.start()
+
+        def _flush_event_batch(self) -> None:
+            """Flush accumulated events to the Textual main thread."""
+            with self._event_batch_lock:
+                if not self._event_batch:
+                    self._event_batch_timer = None
+                    return
+                batch = list(self._event_batch)
+                self._event_batch.clear()
+                self._event_batch_timer = None
+
+            try:
+                self.call_from_thread(self._route_event_batch, batch)
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Don't crash for display issues
+
+        def _route_event_batch(self, events) -> None:
+            """Route a batch of events to their agent TimelineEventAdapters.
+
+            Runs on the Textual main thread (via call_from_thread).
+            """
+            for event in events:
+                # Handle coordination event side effects first (some events like
+                # orchestrator_timeout don't have an agent_id)
+                self._handle_coordination_event_side_effects(event)
+
+                agent_id = event.agent_id
+
+                # Orchestrator-level events (no agent_id) go to all adapters
+                if not agent_id and event.event_type == "orchestrator_timeout":
+                    for aid, panel in self.agent_widgets.items():
+                        adapter = self._event_adapters.get(aid)
+                        if adapter is None:
+                            adapter = TimelineEventAdapter(panel, agent_id=aid)
+                            self._event_adapters[aid] = adapter
+                        adapter.handle_event(event)
+                    continue
+
+                if not agent_id or agent_id not in self.agent_widgets:
+                    continue
+
+                panel = self.agent_widgets[agent_id]
+                adapter = self._event_adapters.get(agent_id)
+                if adapter is None:
+                    adapter = TimelineEventAdapter(panel, agent_id=agent_id)
+                    self._event_adapters[agent_id] = adapter
+
+                adapter.handle_event(event)
+
+        def _handle_coordination_event_side_effects(self, event) -> None:
+            """Handle status bar, toast, and browser tracking for coordination events.
+
+            These side effects were previously in direct display methods
+            (notify_vote, notify_new_answer, highlight_winner_quick).
+            """
+            import time
+
+            if event.event_type == "answer_submitted":
+                agent_id = event.agent_id or ""
+                content = event.data.get("content", "")
+                answer_label = event.data.get("answer_label", "")
+                answer_number = event.data.get("answer_number", 1)
+
+                model_name = self.coordination_display.agent_models.get(agent_id, "")
+
+                # Track for browser
+                self._answers.append(
+                    {
+                        "agent_id": agent_id,
+                        "model": model_name,
+                        "content": content,
+                        "answer_id": None,
+                        "answer_number": answer_number,
+                        "answer_label": answer_label,
+                        "workspace_path": event.data.get("workspace_path"),
+                        "timestamp": time.time(),
+                        "is_final": False,
+                        "is_winner": False,
+                    },
+                )
+
+                # Update status bar
+                if self._status_bar:
+                    agent_count = len(self.coordination_display.agent_ids)
+                    answer_count = len(self._answers)
+                    vote_count = len(self._votes)
+                    self._status_bar.update_progress(agent_count, answer_count, vote_count)
+                    self._status_bar.increment_agent_answer(agent_id)
+
+                # Show toast
+                agent_display = f"{agent_id}" + (f" ({model_name})" if model_name else "")
+                preview = content[:100].replace("\n", " ")
+                if len(content) > 100:
+                    preview += "..."
+                self.notify(
+                    f"📝 [bold green]New Answer[/] from [bold]{agent_display}[/]\n   Answer #{answer_number}: {preview}",
+                    timeout=5,
+                )
+
+            elif event.event_type == "vote":
+                voter = event.agent_id or ""
+                target = event.data.get("target_id", "")
+                reason = event.data.get("reason", "")
+
+                voter_model = self.coordination_display.agent_models.get(voter, "")
+                voted_for_model = self.coordination_display.agent_models.get(target, "")
+
+                # Get voted-for answer label from coordination tracker
+                voted_for_label = None
+                tracker = None
+                if hasattr(self.coordination_display, "orchestrator") and self.coordination_display.orchestrator:
+                    tracker = getattr(self.coordination_display.orchestrator, "coordination_tracker", None)
+                if tracker:
+                    voted_for_label = tracker.get_voted_for_label(voter, target)
+
+                vote_count = len(self._votes) + 1
+                self._votes.append(
+                    {
+                        "voter": voter,
+                        "voter_model": voter_model,
+                        "voted_for": target,
+                        "voted_for_model": voted_for_model,
+                        "voted_for_label": voted_for_label,
+                        "reason": reason,
+                        "timestamp": time.time(),
+                    },
+                )
+
+                if self._status_bar:
+                    self._status_bar.add_vote(target, voter)
+                    agent_count = len(self.coordination_display.agent_ids)
+                    answer_count = len(self._answers)
+                    expected_votes = agent_count * (agent_count - 1) if agent_count > 1 else 0
+                    self._status_bar.update_progress(agent_count, answer_count, vote_count, expected_votes)
+
+                    standings = self._status_bar.get_standings_text()
+                    voter_display = f"{voter}" + (f" ({voter_model})" if voter_model else "")
+                    target_display = f"{target}" + (f" ({voted_for_model})" if voted_for_model else "")
+
+                    if standings:
+                        self.notify(
+                            f"🗳️ [bold]{voter_display}[/] voted for [bold cyan]{target_display}[/]\n📊 {standings}",
+                            timeout=4,
+                        )
+                    else:
+                        self.notify(
+                            f"🗳️ [bold]{voter_display}[/] voted for [bold cyan]{target_display}[/]",
+                            timeout=3,
+                        )
+                else:
+                    self.notify(f"🗳️ {voter} voted for {target}", timeout=3)
+
+            elif event.event_type == "winner_selected":
+                winner_id = event.agent_id or ""
+                # Switch to winner tab and mark with trophy
+                if self._tab_bar:
+                    self._tab_bar.set_active(winner_id)
+                    self._tab_bar.set_winner(winner_id)
+
+                # Update ExecutionStatusLine: all agents to done
+                if self._execution_status_line:
+                    for aid in self._execution_status_line._agent_ids:
+                        self._execution_status_line.set_agent_state(aid, "done")
+
+                # Show winner panel, hide others
+                self._winner_agent_id = winner_id
+                if winner_id in self.agent_widgets:
+                    if self._active_agent_id and self._active_agent_id in self.agent_widgets:
+                        self.agent_widgets[self._active_agent_id].add_class("hidden")
+                    self.agent_widgets[winner_id].remove_class("hidden")
+                    self._active_agent_id = winner_id
+
+            elif event.event_type == "final_presentation_start":
+                agent_id = event.agent_id or ""
+                self._winner_agent_id = agent_id
+                # Switch to winner tab if not already
+                if self._tab_bar:
+                    self._tab_bar.set_active(agent_id)
+                    self._tab_bar.set_winner(agent_id)
+                if self._execution_status_line:
+                    for aid in self._execution_status_line._agent_ids:
+                        self._execution_status_line.set_agent_state(aid, "done")
+
+            elif event.event_type == "answer_locked":
+                agent_id = event.agent_id or ""
+                # Update input placeholder
+                if hasattr(self, "question_input"):
+                    self.question_input.placeholder = "Type your follow-up question..."
+
+            elif event.event_type == "orchestrator_timeout":
+                # Show toast notification
+                timeout_reason = event.data.get("timeout_reason", "")
+                available = event.data.get("available_answers", 0)
+                self.notify(
+                    f"[bold yellow]Orchestration timed out[/bold yellow]\n{timeout_reason}\n{available} answer(s) available",
+                    timeout=8,
+                )
+
+                # Update ExecutionStatusLine: mark unfinished agents as timed out
+                if self._execution_status_line:
+                    summary = event.data.get("agent_answer_summary", {})
+                    for aid, info in summary.items():
+                        if not info.get("has_answer"):
+                            self._execution_status_line.set_agent_state(aid, "error")
+
+            elif event.event_type == "context_received":
+                agent_id = event.agent_id or ""
+                context_labels = event.data.get("context_labels", [])
+                if hasattr(self, "update_agent_context"):
+                    try:
+                        self.update_agent_context(agent_id, context_labels)
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def _is_execution_in_progress(self) -> bool:
             """Check if agents are currently executing.
@@ -3759,8 +3361,8 @@ if TEXTUAL_AVAILABLE:
                         main_container.remove_class("hidden")
                         if self.header_widget:
                             self.header_widget.update_question(text)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                 return
 
             if text.startswith("/"):
@@ -3795,8 +3397,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 main_container = self.query_one("#main_container", Container)
                 main_container.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Submit through the input handler
             if self._input_handler:
@@ -4032,6 +3634,11 @@ Type your question and press Enter to ask the agents.
                 widget.update_status("waiting")
                 widget._line_buffer = ""
                 widget.current_line_label.update("")
+                if agent_id in self._event_adapters:
+                    try:
+                        self._event_adapters[agent_id].reset()
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                 # Reset round state when doing full reset
                 if hasattr(widget, "reset_round_state"):
                     widget.reset_round_state()
@@ -4051,6 +3658,12 @@ Type your question and press Enter to ask the agents.
             """
             self._pending_flush = False
             all_updates = []
+            # Debug: log buffer sizes
+            for _aid in self.coordination_display.agent_ids:
+                with self._buffer_lock:
+                    blen = len(self._buffers.get(_aid, []))
+                if blen > 0:
+                    tui_log(f"[_flush_buffers] agent={_aid} buffer_size={blen}")
             max_items_per_agent = 5  # Limit to prevent blocking
 
             for agent_id in self.coordination_display.agent_ids:
@@ -4108,8 +3721,19 @@ Type your question and press Enter to ask the agents.
             tool_call_id: Optional[str] = None,
         ):
             """Update agent widget with content."""
-            if agent_id in self.agent_widgets:
-                self.agent_widgets[agent_id].add_content(content, content_type, tool_call_id)
+            if agent_id not in self.agent_widgets:
+                tui_log(f"[update_agent_widget] SKIP agent={agent_id} not in agent_widgets")
+                return
+
+            # Tool content is handled via structured TOOL_START/TOOL_COMPLETE events
+            # from _handle_event_from_emitter. Skip it here to avoid duplicates.
+            if content_type == "tool":
+                return
+
+            # All TUI content is handled via structured events routed through
+            # _handle_event_from_emitter. This method is a no-op for Textual TUI.
+            # Non-Textual displays still use update_agent_content directly.
+            return
 
         def update_agent_status(self, agent_id: str, status: str):
             """Update agent status."""
@@ -4288,11 +3912,23 @@ Type your question and press Enter to ask the agents.
 
             tui_log(f"show_subagent_card_from_spawn: creating card for {len(tasks)} tasks")
 
+            # Resolve base log directory for subagents in this session
+            subagent_logs_base = None
+            try:
+                from massgen.logger_config import get_log_session_dir
+
+                log_dir = get_log_session_dir()
+                if log_dir:
+                    subagent_logs_base = log_dir / "subagents"
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
+
             # Create SubagentDisplayData for each task (all pending/running)
             subagents = []
             for i, task_data in enumerate(tasks):
                 subagent_id = task_data.get("subagent_id", task_data.get("id", f"subagent_{i}"))
                 task_desc = task_data.get("task", "")
+                log_path = str(subagent_logs_base / subagent_id) if subagent_logs_base else None
 
                 subagents.append(
                     SubagentDisplayData(
@@ -4307,7 +3943,7 @@ Type your question and press Enter to ask the agents.
                         last_log_line="Starting...",
                         error=None,
                         answer_preview=None,
-                        log_path=None,
+                        log_path=log_path,
                     ),
                 )
 
@@ -4319,6 +3955,19 @@ Type your question and press Enter to ask the agents.
                 panel = self.agent_widgets[agent_id]
                 try:
                     timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
+
+                    # Flush any pending tool batch so the card appears
+                    # after all preceding tools in chronological order
+                    if hasattr(panel, "_batch_tracker") and panel._batch_tracker:
+                        panel._batch_tracker.mark_content_arrived()
+                        panel._batch_tracker.finalize_current_batch()
+
+                    # Remove stale SubagentCards from failed spawn attempts
+                    try:
+                        for old_card in list(timeline.query(SubagentCard)):
+                            old_card.remove()
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
                     # Create and add SubagentCard to timeline
                     card = SubagentCard(
@@ -4394,8 +4043,8 @@ Type your question and press Enter to ask the agents.
                 logger.info(
                     f"[FinalAnswer] _add_final_completion_card: agent_id={agent_id} " f"answer_len={len(answer)} vote_keys={list(vote_results.keys())}",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Prevent duplicate cards
             if hasattr(self, "_final_completion_added") and self._final_completion_added:
@@ -4469,8 +4118,8 @@ Type your question and press Enter to ask the agents.
                 try:
                     existing_card = timeline.query_one("#final_presentation_card", FinalPresentationCard)
                     existing_card.remove()
-                except Exception:
-                    pass  # No existing card, that's fine
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")  # No existing card, that's fine
 
                 # Create the final answer card with content
                 card = FinalPresentationCard(
@@ -4495,8 +4144,8 @@ Type your question and press Enter to ask the agents.
                     logger.info(
                         f"[FinalAnswer] Timeline children after card add: {len(list(timeline.children))} " f"current_round={current_round}",
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
                 # Set the answer content and mark as complete
                 def set_content_and_complete():
@@ -4507,18 +4156,14 @@ Type your question and press Enter to ask the agents.
                         logger.info(
                             "[FinalAnswer] Card completed and locked to timeline",
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                     # Auto-lock timeline to show only final answer
                     timeline.lock_to_final_answer("final_presentation_card")
                     card.set_locked_mode(True)
                     # Auto-collapse task plan when final presentation shows
-                    try:
-                        pinned_container = panel.query_one(f"#{panel._pinned_task_plan_id}", Container)
-                        pinned_container.add_class("collapsed")
-                        panel._task_plan_visible = False
-                    except Exception:
-                        pass
+                    if hasattr(panel, "_task_plan_host"):
+                        panel._task_plan_host.collapse()
                     # Update input placeholder to encourage follow-up
                     if hasattr(self, "question_input"):
                         self.question_input.placeholder = "Type your follow-up question..."
@@ -4631,11 +4276,14 @@ Type your question and press Enter to ask the agents.
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         timeline.lock_to_final_answer("final_presentation_card")
                         self._final_presentation_card.set_locked_mode(True)
+                        # Auto-collapse task plan when final answer shows
+                        if hasattr(panel, "_task_plan_host"):
+                            panel._task_plan_host.collapse()
                         # Update input placeholder to encourage follow-up
                         if hasattr(self, "question_input"):
                             self.question_input.placeholder = "Type your follow-up question..."
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
                 # Phase 12.4: Store final answer for view-based navigation
                 if agent_id in self.agent_widgets:
@@ -4663,8 +4311,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         timeline._auto_scroll()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def begin_final_stream(self, agent_id: str, vote_results: Dict[str, Any]):
             """DEPRECATED: Start final presentation streaming.
@@ -4688,8 +4336,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         self._final_stream_timeline = timeline
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                 return
 
             # Store the winner agent for routing chunks
@@ -4919,11 +4567,14 @@ Type your question and press Enter to ask the agents.
                         try:
                             timeline.lock_to_final_answer("winner_selected_card")
                             card.set_locked_mode(True)
+                            # Auto-collapse task plan when final answer shows
+                            if hasattr(panel, "_task_plan_host"):
+                                panel._task_plan_host.collapse()
                             # Update input placeholder to encourage follow-up
                             if hasattr(self, "question_input"):
                                 self.question_input.placeholder = "Type your follow-up question..."
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            tui_log(f"[TextualDisplay] {e}")
 
                     self.set_timer(0.1, auto_lock_after_add)
 
@@ -5048,8 +4699,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         timeline.scroll_home()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
             logger.info(f"[TUI-App] prepare_for_new_turn() complete for turn {turn}")
 
@@ -5067,8 +4718,8 @@ Type your question and press Enter to ask the agents.
             try:
                 main_container = self.query_one("#main_container", Container)
                 main_container.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             # Update tab bar session info (turn + question)
             if self._tab_bar:
                 self._tab_bar.update_turn(turn)
@@ -5128,8 +4779,8 @@ Type your question and press Enter to ask the agents.
                 logger.error(f"Error in set_input_enabled: {e}")
                 try:
                     self._mode_state.unlock()
-                except Exception:
-                    pass  # Best effort to recover
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")  # Best effort to recover
                 raise
 
             # Update mode bar enabled state
@@ -5183,6 +4834,13 @@ Type your question and press Enter to ask the agents.
             # Also show prominent restart separator in ALL agent panels
             for agent_id, panel in self.agent_widgets.items():
                 panel.show_restart_separator(attempt, reason)
+                adapter = self._event_adapters.get(agent_id)
+                if adapter:
+                    try:
+                        adapter.set_round_number(attempt)
+                        adapter.flush()
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def show_restart_context(self, reason: str, instructions: str):
             """Show restart context."""
@@ -5203,6 +4861,15 @@ Type your question and press Enter to ask the agents.
             if panel:
                 # Use start_new_round which handles timeline visibility and ribbon update
                 panel.start_new_round(round_num, is_context_reset=False)
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG: MassGenApp.show_agent_restart called panel.start_new_round\n")
+                adapter = self._event_adapters.get(agent_id)
+                if adapter:
+                    try:
+                        adapter.set_round_number(round_num)
+                        adapter.flush()
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def show_final_presentation_start(self, agent_id: str, vote_counts: Optional[Dict[str, int]] = None, answer_labels: Optional[Dict[str, str]] = None):
             """Show that the final presentation is starting for the winning agent.
@@ -5262,10 +4929,15 @@ Type your question and press Enter to ask the agents.
                 if prev_agent:
                     self._switch_to_agent(prev_agent)
 
-        def action_show_subagents(self):
-            """Show subagent modal for first running subagent.
+        def action_go_to_winner(self):
+            """Switch to the winner agent tab."""
+            if self._winner_agent_id:
+                self._switch_to_agent(self._winner_agent_id)
 
-            Searches all agent panels for subagent cards and opens the modal
+        def action_show_subagents(self):
+            """Show subagent screen for first running subagent.
+
+            Searches all agent panels for subagent cards and opens the screen
             for the first running subagent found (or first overall).
             """
             # Find subagent cards in all agent panels
@@ -5277,15 +4949,36 @@ Type your question and press Enter to ask the agents.
                             # Find first running subagent
                             running = [sa for sa in card.subagents if sa.status == "running"]
                             if running:
-                                self.push_screen(SubagentModal(running[0], card.subagents))
+                                screen = SubagentScreen(
+                                    subagent=running[0],
+                                    all_subagents=card.subagents,
+                                )
+                                self.push_screen(screen)
                                 return
                             # Fallback to first subagent
-                            self.push_screen(SubagentModal(card.subagents[0], card.subagents))
+                            screen = SubagentScreen(
+                                subagent=card.subagents[0],
+                                all_subagents=card.subagents,
+                            )
+                            self.push_screen(screen)
                             return
                 except Exception:
                     continue
 
             self.notify("No active subagents", severity="information", timeout=2)
+
+        # Side panel methods removed - now using separate SubagentScreen
+        # def _open_subagent_side_panel(
+        #     self,
+        #     subagent: SubagentDisplayData,
+        #     all_subagents: List[SubagentDisplayData],
+        # ) -> None:
+        #     """Open the right-panel subagent view."""
+        #     ...
+        #
+        # def _close_subagent_side_panel(self) -> None:
+        #     """Close the right-panel subagent view."""
+        #     ...
 
         def _switch_to_agent(self, agent_id: str) -> None:
             """Switch the visible agent tab.
@@ -5312,10 +5005,10 @@ Type your question and press Enter to ask the agents.
                     new_panel.remove_class("hidden")
                     # Auto-scroll to bottom so user sees latest content
                     try:
-                        timeline = new_panel.query_one("#timeline_container", ScrollableContainer)
+                        timeline = new_panel.query_one(f"#{new_panel._timeline_section_id}", TimelineSection)
                         timeline._scroll_to_end(animate=False, force=True)
-                    except Exception:
-                        pass  # Timeline may not exist yet
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")  # Timeline may not exist yet
                 else:
                     tui_log(f"  Panel not found for: {agent_id}", level="warning")
                     # Agent panel doesn't exist yet, just update state
@@ -5336,6 +5029,10 @@ Type your question and press Enter to ask the agents.
 
                 self._active_agent_id = agent_id
                 tui_log(f"  Switch complete to: {agent_id}")
+
+                # Notify if navigating away from winner
+                if self._winner_agent_id and agent_id != self._winner_agent_id:
+                    self.notify("Press W to go to winner agent", timeout=4)
 
                 # Update current_agent_index for compatibility with existing methods
                 try:
@@ -5908,20 +5605,58 @@ Type your question and press Enter to ask the agents.
             event.stop()
 
         def on_subagent_card_open_modal(self, event: SubagentCard.OpenModal) -> None:
-            """Handle subagent card click - show subagent modal with log streaming."""
-            modal = SubagentModal(
+            """Handle subagent card click - open separate screen."""
+            # Track timeline child count before entering subagent view
+            timeline_count_before = 0
+            try:
+                active_agent = self.coordination_display.agent_ids[0] if self.coordination_display.agent_ids else None
+                if active_agent and active_agent in self.agent_widgets:
+                    panel = self.agent_widgets[active_agent]
+                    tl = panel._get_timeline()
+                    if tl:
+                        timeline_count_before = len(tl.children)
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
+
+            def _on_screen_dismiss(result: object = None) -> None:
+                """Show badge if new timeline items appeared while in subagent view."""
+                try:
+                    active_agent = self.coordination_display.agent_ids[0] if self.coordination_display.agent_ids else None
+                    if active_agent and active_agent in self.agent_widgets:
+                        panel = self.agent_widgets[active_agent]
+                        tl = panel._get_timeline()
+                        if tl:
+                            new_count = len(tl.children) - timeline_count_before
+                            if new_count > 0:
+                                self.notify(
+                                    f"\u2193 {new_count} new item{'s' if new_count != 1 else ''} added",
+                                    severity="information",
+                                    timeout=5,
+                                )
+                                # Scroll to bottom to show new content
+                                tl.scroll_end(animate=True)
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
+
+            screen = SubagentScreen(
                 subagent=event.subagent,
                 all_subagents=event.all_subagents,
             )
-            self.push_screen(modal)
+            self.push_screen(screen, _on_screen_dismiss)
             event.stop()
+
+        # Close handler removed - SubagentScreen handles its own closing
+        # def on_subagent_view_close_requested(self, event: SubagentView.CloseRequested) -> None:
+        #     """Handle close request from the right-panel subagent view."""
+        #     ...
 
         def on_tasks_clicked(self, event: TasksClicked) -> None:
             """Handle tasks label click in ribbon - show task plan modal."""
             if event.agent_id in self.agent_widgets:
                 panel = self.agent_widgets[event.agent_id]
-                if panel._active_task_plan_tasks:
-                    modal = TaskPlanModal(tasks=panel._active_task_plan_tasks)
+                tasks = panel.get_task_plan_tasks()
+                if tasks:
+                    modal = TaskPlanModal(tasks=tasks)
                     self.push_screen(modal)
             event.stop()
 
@@ -6382,8 +6117,8 @@ Type your question and press Enter to ask the agents.
                         cwd_widget.update(f"[green]📁 {cwd_short} \\[read+write][/]")
                     else:
                         cwd_widget.update(f"[dim]📁[/] {cwd_short}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
             # Update welcome screen hint if showing
             self._update_cwd_hint()
@@ -6401,8 +6136,8 @@ Type your question and press Enter to ask the agents.
                     hint_widget.update(f"[green]● Ctrl+P: File access to {cwd_short} \\[rw][/][dim]{at_hint}[/]")
                 else:
                     hint_widget.update(f"[dim]○ Ctrl+P: File access to {cwd_short}{at_hint}[/]")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _update_status_bar_restart_info(self) -> None:
             """Update StatusBar to show restart count."""
@@ -6413,8 +6148,8 @@ Type your question and press Enter to ask the agents.
                 attempt = self._current_restart.get("attempt", 1)
                 max_attempts = self._current_restart.get("max_attempts", 3)
                 self._status_bar.show_restart_count(attempt, max_attempts)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         # === Status Bar Notification Methods ===
 
@@ -6537,8 +6272,8 @@ Type your question and press Enter to ask the agents.
                         # NOTE: Vote separator banner disabled - clutters UI
                         # sep_label = f"🗳️ VOTED → {target_short}"
                         # timeline.add_separator(sep_label, round_number=current_round)
-                except Exception:
-                    pass  # Silently ignore if panel not found
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")  # Silently ignore if panel not found
 
         def notify_new_answer(
             self,
@@ -6737,8 +6472,8 @@ Type your question and press Enter to ask the agents.
                     if getattr(tab, "agent_id", "") == winner_id:
                         tab.add_class("winner")
                         break
-            except Exception:
-                pass  # Tab bar might not be available
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Tab bar might not be available
 
             # 3. Enhanced toast notification for winner
             winner_display = f"{winner_id}" + (f" ({model_name})" if model_name else "")
@@ -6889,8 +6624,8 @@ Type your question and press Enter to ask the agents.
                                 parts.append(f"⏱ {secs}s")
 
                     self._execution_status.update("  |  ".join(parts))
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _show_cancelled_status(self) -> None:
             """Stop execution status updates and show cancelled state with PERSISTENT visual feedback.
@@ -6956,10 +6691,10 @@ Type your question and press Enter to ask the agents.
                     self.notify("Execution cancelled - type to continue", severity="warning", timeout=3)
 
                     # NO auto-dismiss timer - state persists until user provides new input
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _clear_cancelled_state(self) -> None:
             """Clear the persistent cancelled state when user starts a new turn."""
@@ -6972,14 +6707,14 @@ Type your question and press Enter to ask the agents.
                 try:
                     main = self.query_one("#main_container")
                     main.remove_class("cancelled-state")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
                 # Restore default placeholder
                 if hasattr(self, "question_input"):
                     self.question_input.placeholder = "Enter to submit • Shift+Enter for newline • @ for files • Ctrl+G help"
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         # =====================================================================
         # Agent Pulsing Animation
@@ -7016,8 +6751,8 @@ Type your question and press Enter to ask the agents.
                 panel = self.agent_widgets.get(agent_id)
                 if panel:
                     panel.remove_class("pulse-bright", "pulse-normal")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Stop the timer if no agents are pulsing
             if not self._pulsing_agents and self._pulse_timer:
@@ -7191,8 +6926,8 @@ Type your question and press Enter to ask the agents.
                 for timeline in self.query(TimelineSection):
                     if timeline.in_scroll_mode:
                         return True
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             return False
 
         def _exit_scroll_mode(self) -> None:
@@ -7203,8 +6938,8 @@ Type your question and press Enter to ask the agents.
                     if timeline.in_scroll_mode:
                         timeline.exit_scroll_mode()
                         exited = True
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             if exited:
                 self.notify("Resumed auto-scroll", severity="information", timeout=1)
 
@@ -7219,8 +6954,8 @@ Type your question and press Enter to ask the agents.
             try:
                 if path.exists():
                     content = path.read_text(encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             if not content:
                 content = "Content unavailable."
             self._show_modal_async(TextContentModal(title, content))
@@ -7232,8 +6967,8 @@ Type your question and press Enter to ask the agents.
             if status_path and Path(status_path).exists():
                 try:
                     content = Path(status_path).read_text(encoding="utf-8")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
             if not content:
                 content = "System status log is empty or unavailable."
             self._show_modal_async(SystemStatusModal(content))
@@ -7314,8 +7049,8 @@ Type your question and press Enter to ask the agents.
             if self._resize_debounce_handle:
                 try:
                     self._resize_debounce_handle.cancel()
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
             debounce_time = 0.15 if self.coordination_display._terminal_type in ("vscode", "windows_terminal") else 0.05
             try:
@@ -7414,11 +7149,13 @@ Type your question and press Enter to ask the agents.
             """Show restart context - handled via status line."""
             pass  # Restart info shown via show_restart_banner  # Restart info shown via show_restart_banner
 
-    class AgentPanel(Container):
+    class AgentPanel(Container, BaseTUILayoutMixin):
         """Panel for individual agent output.
 
         Note: This is a Container, not ScrollableContainer. Scrolling happens
         in the inner TimelineSection widget which inherits from ScrollableContainer.
+
+        Inherits BaseTUILayoutMixin for shared content pipeline functionality.
         """
 
         def __init__(self, agent_id: str, display: TextualTerminalDisplay, key_index: int = 0):
@@ -7447,9 +7184,7 @@ Type your question and press Enter to ask the agents.
             self._not_in_use_id = f"not_in_use_{self._dom_safe_id}"
             self._is_in_use = True  # Track if panel is active in single-agent mode
 
-            # New section-based content handlers
-            self._tool_handler = ToolContentHandler()
-            self._thinking_handler = ThinkingContentHandler()
+            # Batch tracker (used by start_new_round, show_restart_separator, etc.)
             self._batch_tracker = ToolBatchTracker()
 
             # Section widget IDs - using timeline for chronological view
@@ -7460,9 +7195,6 @@ Type your question and press Enter to ask the agents.
             self._status_badge_id = f"status_badge_{self._dom_safe_id}"
             self._completion_footer_id = f"completion_footer_{self._dom_safe_id}"
 
-            # Legacy tool tracking (kept for restart detection)
-            self._pending_tool: Optional[dict] = None
-            self._tool_row_count = 0
             self._reasoning_header_shown = False
 
             # Session/restart tracking
@@ -7481,12 +7213,17 @@ Type your question and press Enter to ask the agents.
             # Timeout state tracking (for per-agent timeout display)
             self._timeout_state: Optional[Dict[str, Any]] = None
 
-            # Task plan tracking for toggle feature
-            self._active_task_plan_id: Optional[str] = None
-            self._active_task_plan_tasks: Optional[List[Dict[str, Any]]] = None
-            self._task_plan_visible: bool = False
-            self._task_plan_toggle_id = f"task_plan_toggle_{self._dom_safe_id}"
-            self._task_plan_display_id = f"task_plan_display_{self._dom_safe_id}"
+            # Task plan host (shared pinned UI)
+            from massgen.frontend.displays.textual_widgets.task_plan_host import (
+                TaskPlanHost,
+            )
+
+            self._task_plan_host = TaskPlanHost(
+                agent_id=self.agent_id,
+                ribbon=None,
+                id=f"task_plan_host_{self._dom_safe_id}",
+                classes="pinned-task-plan hidden",
+            )
 
             # Phase 12: CSS-based round navigation (no storage needed - widgets stay in DOM)
             self._current_round: int = 1  # which round content is being received
@@ -7563,8 +7300,7 @@ Type your question and press Enter to ask the agents.
                     yield Label("Single-agent mode active", classes="not-in-use-sublabel")
 
                 # Pinned task plan - stays at top, collapsible (hidden until task plan created)
-                self._pinned_task_plan_id = f"pinned_task_plan_{self._dom_safe_id}"
-                yield Container(id=self._pinned_task_plan_id, classes="pinned-task-plan hidden")
+                yield self._task_plan_host
 
                 # Chronological timeline layout - tools and text interleaved
                 yield TimelineSection(id=self._timeline_section_id)
@@ -7599,24 +7335,24 @@ Type your question and press Enter to ask the agents.
                     # Hide container
                     loading = self.query_one(f"#{self._loading_id}")
                     loading.add_class("hidden")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
         def _update_loading_text(self, text: str):
             """Update the loading indicator text."""
             try:
                 progress = self.query_one(f"#progress_{self._dom_safe_id}")
                 progress.message = text
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _start_loading_spinner(self, message: str = "Waiting for agent..."):
             """Start the loading spinner with a message."""
             try:
                 progress = self.query_one(f"#progress_{self._dom_safe_id}")
                 progress.start_spinner(message)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def on_mount(self) -> None:
             """Start the loading spinner when the panel is mounted."""
@@ -7630,8 +7366,27 @@ Type your question and press Enter to ask the agents.
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_round(self.agent_id, 1, False)
                     logger.debug(f"AgentPanel.on_mount: Initialized ribbon with Round 1 for {self.agent_id}")
+                    self._task_plan_host.set_ribbon(app._status_ribbon)
             except Exception as e:
                 logger.debug(f"AgentPanel.on_mount: Failed to initialize ribbon: {e}")
+
+        # -------------------------------------------------------------------------
+        # BaseTUILayoutMixin abstract method implementations
+        # -------------------------------------------------------------------------
+
+        def _get_timeline(self) -> Optional[TimelineSection]:
+            """Get the TimelineSection widget (implements BaseTUILayoutMixin)."""
+            try:
+                return self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+            except Exception:
+                return None
+
+        def _get_ribbon(self) -> Optional[AgentStatusRibbon]:
+            """Get the AgentStatusRibbon widget (implements BaseTUILayoutMixin)."""
+            try:
+                return self.coordination_display._agent_status_ribbon
+            except Exception:
+                return None
 
         def set_in_use(self, in_use: bool) -> None:
             """Set whether this panel is in use (for single-agent mode).
@@ -7646,8 +7401,8 @@ Type your question and press Enter to ask the agents.
                     overlay.add_class("hidden")
                 else:
                     overlay.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def is_in_use(self) -> bool:
             """Check if this panel is currently in use."""
@@ -7686,8 +7441,8 @@ Type your question and press Enter to ask the agents.
                 else:
                     context_label.update("")
                     context_label.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def update_task_plan(self, tasks: List[Dict[str, Any]], plan_id: str = None, operation: str = "create") -> None:
             """Update the active task plan for this agent.
@@ -7697,24 +7452,11 @@ Type your question and press Enter to ask the agents.
                 plan_id: ID of the task plan (tool_id)
                 operation: Type of operation (create, update, etc.)
             """
-            self._active_task_plan_id = plan_id
-            # Deep copy each task dict to avoid reference issues
-            self._active_task_plan_tasks = [t.copy() for t in tasks] if tasks else None
+            self._task_plan_host.update_task_plan(tasks, plan_id=plan_id, operation=operation)
 
-            # Debug: log task statuses
-            if tasks:
-                completed = sum(1 for t in tasks if t.get("status") in ("completed", "verified"))
-                verified = sum(1 for t in tasks if t.get("status") == "verified")
-                in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
-                tui_log(f"update_task_plan: {completed} completed, {verified} verified, {in_progress} in_progress (of {len(tasks)} total)")
-
-                # Update ribbon tasks display
-                try:
-                    ribbon = self.coordination_display._agent_status_ribbon
-                    if ribbon:
-                        ribbon.set_tasks(self.agent_id, completed, len(tasks))
-                except Exception:
-                    pass
+        def get_task_plan_tasks(self) -> Optional[List[Dict[str, Any]]]:
+            """Return the active task plan tasks, if any."""
+            return self._task_plan_host.get_active_tasks()
 
         def _refresh_header(self) -> None:
             """Refresh the header display.
@@ -7727,19 +7469,7 @@ Type your question and press Enter to ask the agents.
 
         def toggle_task_plan(self) -> None:
             """Toggle the visibility of the pinned task plan."""
-            if not self._active_task_plan_tasks:
-                return
-
-            self._task_plan_visible = not self._task_plan_visible
-
-            try:
-                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
-                if self._task_plan_visible:
-                    pinned_container.remove_class("collapsed")
-                else:
-                    pinned_container.add_class("collapsed")
-            except Exception:
-                pass
+            self._task_plan_host.toggle()
 
         def _update_pinned_task_plan(
             self,
@@ -7756,251 +7486,15 @@ Type your question and press Enter to ask the agents.
                 operation: Type of operation
                 show_notification: Whether to show update notification in timeline
             """
-            from massgen.frontend.displays.textual_widgets import TaskPlanCard
-
             try:
-                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
-
-                # Find existing card or create new one
-                existing_card = None
-                try:
-                    existing_card = pinned_container.query_one(TaskPlanCard)
-                except Exception:
-                    pass
-
-                if existing_card:
-                    # Update existing card (per-task highlighting handled inside)
-                    existing_card.update_tasks(tasks, focused_task_id=focused_task_id, operation=operation)
-                else:
-                    # Create new card
-                    card = TaskPlanCard(
-                        tasks=tasks,
-                        focused_task_id=focused_task_id,
-                        operation=operation,
-                        id=f"pinned_card_{self._dom_safe_id}",
-                    )
-                    pinned_container.mount(card)
-
-                # Show the pinned area
-                pinned_container.remove_class("hidden")
-                self._task_plan_visible = True
-
-                # NOTE: Task update notifications removed - pinned task card at top
-                # already shows current status, so inline notifications are redundant
-
+                self._task_plan_host.update_pinned_task_plan(
+                    tasks=tasks,
+                    focused_task_id=focused_task_id,
+                    operation=operation,
+                    show_notification=show_notification,
+                )
             except Exception as e:
                 tui_log(f"_update_pinned_task_plan error: {e}")
-
-        def _make_full_width_bar(self, content: str, style: str) -> Text:
-            """Create a full-width bar with background color spanning the entire display.
-
-            Args:
-                content: The text content
-                style: Rich style string (including 'on #color' for background)
-
-            Returns:
-                Text object padded to full width with single line spacing
-            """
-            # Get terminal width dynamically - add extra padding to ensure full coverage
-            try:
-                width = self.app.size.width
-                if width < 80:
-                    width = 200
-                else:
-                    # Add extra width to account for any padding/margins and ensure full coverage
-                    width = width + 50
-            except Exception:
-                width = 300  # Large fallback to ensure full coverage
-
-            # Pad content to fill entire width and beyond
-            padded = content.ljust(width)
-            text = Text()
-            # Always add a single blank line before for consistent spacing
-            text.append("\n")
-            text.append(padded, style=style)
-            return text
-
-        def _format_tool_line(self, parsed: dict, event: str) -> Text:
-            """Format a tool event as a full-width bar with alternating colors.
-
-            Design: Full-width bars with clear visual separation
-            - Each tool line spans the full width
-            - Alternating background colors for row separation
-            - Special colors for success/error states
-
-            Args:
-                parsed: Parsed tool message dict
-                event: Event type (start, complete, failed, etc.)
-
-            Returns:
-                Styled Rich Text object
-            """
-            category = parsed.get("category", {"icon": "🔧", "color": "cyan", "category": "tool"})
-            display_name = parsed.get("display_name", parsed.get("tool_name", "unknown"))
-            icon = category["icon"]
-
-            # Alternating row backgrounds for clear separation
-            self._tool_row_count += 1
-            is_odd_row = self._tool_row_count % 2 == 1
-            bg_row_odd = "on #2d333b"  # Slightly lighter
-            bg_row_even = "on #22272e"  # Slightly darker
-
-            # Special backgrounds for status
-            bg_success = "on #1c4532"  # Dark green
-            bg_error = "on #4a1c1c"  # Dark red
-            bg_warning = "on #4a4520"  # Dark yellow
-            bg_injection = "on #2d2d4a"  # Dark purple/blue for injections
-            bg_reminder = "on #4a3d2d"  # Dark orange for reminders
-
-            # Get alternating background
-            bg_alt = bg_row_odd if is_odd_row else bg_row_even
-
-            if event == "start":
-                # Track start time for this tool
-                self._pending_tool = {
-                    "name": parsed.get("tool_name"),
-                    "start_time": datetime.now(),
-                    "display_name": display_name,
-                    "category": category,
-                }
-                # Reset reasoning header on new tool
-                self._reasoning_header_shown = False
-                # Format: full-width bar with icon + name (bold)
-                content = f"  {icon}  {display_name}"
-                return self._make_full_width_bar(content, f"bold white {bg_alt}")
-
-            elif event == "complete":
-                # Calculate elapsed time
-                elapsed_str = ""
-                if self._pending_tool and self._pending_tool.get("name") == parsed.get("tool_name"):
-                    elapsed = (datetime.now() - self._pending_tool["start_time"]).total_seconds()
-                    if elapsed < 60:
-                        elapsed_str = f" ({elapsed:.1f}s)"
-                    else:
-                        mins = int(elapsed // 60)
-                        secs = int(elapsed % 60)
-                        elapsed_str = f" ({mins}m{secs}s)"
-                    self._pending_tool = None
-
-                # Format: success bar - always green background (bold)
-                content = f"  ✓  {display_name} completed{elapsed_str}"
-                return self._make_full_width_bar(content, f"bold white {bg_success}")
-
-            elif event == "failed":
-                error = parsed.get("error", "Unknown error")
-                if len(error) > 50:
-                    error = error[:50] + "..."
-                elapsed_str = ""
-                if self._pending_tool:
-                    elapsed = (datetime.now() - self._pending_tool["start_time"]).total_seconds()
-                    elapsed_str = f" ({elapsed:.1f}s)"
-                    self._pending_tool = None
-
-                # Format: error bar - always red background (bold)
-                content = f"  ✗  {display_name} failed: {error}{elapsed_str}"
-                return self._make_full_width_bar(content, f"bold white {bg_error}")
-
-            elif event == "injection":
-                # Cross-agent context sharing - prominent purple bar
-                injection_content = parsed.get("content", "")
-                preview = injection_content[:80] + "..." if len(injection_content) > 80 else injection_content
-                content = f"  📥  Context Update: {preview}"
-                return self._make_full_width_bar(content, f"bold white {bg_injection}")
-
-            elif event == "reminder":
-                # High priority task reminder - orange bar
-                reminder_content = parsed.get("content", "")
-                preview = reminder_content[:80] + "..." if len(reminder_content) > 80 else reminder_content
-                content = f"  💡  Reminder: {preview}"
-                return self._make_full_width_bar(content, f"bold white {bg_reminder}")
-
-            elif event == "session_complete":
-                # Session completed - green bar
-                content = "  ✓  Session completed"
-                return self._make_full_width_bar(content, f"bold white {bg_success}")
-
-            elif event == "arguments":
-                args = parsed.get("arguments", parsed.get("raw", ""))
-                args_clean = _clean_tool_arguments(args)
-                content = f"      └ {args_clean}"
-                return self._make_full_width_bar(content, f"{bg_alt}")
-
-            elif event == "status":
-                status_type = parsed.get("status_type", "")
-                raw = parsed.get("raw", "")
-                if status_type == "connected":
-                    clean = raw.replace("[MCP]", "").replace("✅", "").strip()
-                    content = f"  ✓  {clean}"
-                    return self._make_full_width_bar(content, f"bold white {bg_success}")
-                elif status_type == "unavailable":
-                    clean = raw.replace("[MCP]", "").replace("⚠️", "").strip()
-                    content = f"  ⚠  {clean}"
-                    return self._make_full_width_bar(content, f"bold yellow {bg_warning}")
-                else:
-                    content = f"  •  {raw}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-            elif event == "progress":
-                raw = parsed.get("raw", "")
-                clean = raw.replace("⏳", "").strip()
-                content = f"      ⏳ {clean}"
-                return self._make_full_width_bar(content, f"italic {bg_alt}")
-
-            else:
-                # Unknown tool content
-                raw = parsed.get("raw", "")
-
-                # Check if it looks like results output
-                if "MCP: Results" in raw or "Results for" in raw:
-                    result_part = raw
-                    if ": {" in raw:
-                        result_part = raw[raw.index(": {") + 2 :]
-                    elif "Results" in raw and "{" in raw:
-                        result_part = raw[raw.index("{") :]
-                    clean_result = _clean_tool_result(result_part)
-                    content = f"      └ {clean_result}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-                # Check if it's an arguments line
-                if "Arguments:" in raw or "MCP: Arguments" in raw:
-                    args_part = raw
-                    if "Arguments:" in raw:
-                        args_part = raw[raw.index("Arguments:") :]
-                    clean_args = _clean_tool_arguments(args_part)
-                    content = f"      └ {clean_args}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-                # Check if it looks like raw dict/JSON output
-                if "{" in raw and "}" in raw:
-                    clean = _clean_tool_result(raw)
-                    content = f"      └ {clean}"
-                    return self._make_full_width_bar(content, f"{bg_alt}")
-
-                # Clean common prefixes and truncate
-                clean = raw.replace("🔧", "").replace("[MCP]", "").replace("[Custom Tool]", "").strip()
-                if len(clean) > 80:
-                    clean = clean[:80] + "..."
-                content = f"  •  {clean}"
-                return self._make_full_width_bar(content, f"{bg_alt}")
-
-        def _format_restart_banner(self) -> Text:
-            """Create a highly visible full-width restart banner."""
-            content = " ⚡⚡⚡  RESTART  ⚡⚡⚡ "
-            # Bright orange/red background, centered
-            banner = "═" * 50 + content + "═" * 50
-            return self._make_full_width_bar(banner, "bold white on #c53030")
-
-        def _handle_tool_content(self, content: str):
-            """Handle tool-related content by formatting as styled bars in RichLog.
-
-            Uses full-width styled bars with status colors for clear visual hierarchy.
-            """
-            self._hide_loading()  # Hide loading when tool content arrives
-            parsed = _parse_tool_message(content)
-            event = parsed.get("event", "unknown")
-
-            formatted = self._format_tool_line(parsed, event)
-            self.content_log.write(formatted)
 
         def show_restart_separator(self, attempt: int = 1, reason: str = ""):
             """Handle restart - start new round with view-based navigation.
@@ -8021,503 +7515,13 @@ Type your question and press Enter to ask the agents.
             self.start_new_round(attempt, is_context_reset)
 
             # Reset per-attempt UI state
-            self._tool_row_count = 0
             self._reasoning_header_shown = False
 
-        def add_content(self, content: str, content_type: str, tool_call_id: Optional[str] = None):
-            """Add content to agent panel using section-based routing.
-
-            Content is normalized and routed to appropriate sections:
-            - Tool content -> ToolSection (collapsible tool cards)
-            - Thinking/text -> ThinkingSection (streaming RichLog)
-            - Status -> Updates status badge
-            - Presentation -> ThinkingSection with completion footer
-            - Restart -> Restart separator in ThinkingSection
-
-            Args:
-                content: The content to add
-                content_type: Type hint from backend
-                tool_call_id: Optional unique ID for this tool call
-            """
-            self._hide_loading()  # Hide loading when any content arrives
-
-            # Normalize content first, passing tool_call_id
-            normalized = ContentNormalizer.normalize(content, content_type, tool_call_id)
-
-            # Route based on detected content type
-            if normalized.content_type.startswith("tool_"):
-                self._add_tool_content(normalized, content, content_type)
-            elif normalized.content_type == "status":
-                self._add_status_content(normalized)
-            elif normalized.content_type == "presentation":
-                self._add_presentation_content(normalized)
-            elif content_type == "restart":
-                self._add_restart_content(content)
-            elif normalized.content_type == "injection":
-                self._add_injection_content(normalized)
-            elif normalized.content_type == "reminder":
-                self._add_reminder_content(normalized)
-            elif normalized.content_type in ("thinking", "text", "content"):
-                self._add_thinking_content(normalized, content_type)
-            else:
-                # Fallback: route to thinking section if displayable
-                if normalized.should_display:
-                    self._add_thinking_content(normalized, content_type)
-
-        def _add_tool_content(self, normalized, raw_content: str, raw_type: str):
-            """Route tool content to TimelineSection (chronologically).
-
-            Note: Restart detection is handled solely via show_restart_separator()
-            called from the orchestrator. We removed the duplicate detection here
-            that used _session_count to avoid conflicting round transitions.
-
-            MCP tools from the same server are batched into ToolBatchCard when 2+
-            consecutive tools arrive. Single tools appear as normal ToolCallCard.
-            """
-            # Flush any pending line buffer content to timeline before processing tool
-            # This ensures thinking/reasoning content that didn't end with newline is preserved
-            self._flush_line_buffer_to_timeline()
-
-            # Process through handler
-            tool_data = self._tool_handler.process(normalized)
-
-            if not tool_data:
-                return
-
-            # Phase 12: No viewing_current check needed - CSS visibility handles it
-            # Add or update tool card in TimelineSection (chronologically)
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-
-                # Check if this is a Planning MCP tool - we'll show TaskPlanCard instead
-                is_planning_tool = self._is_planning_mcp_tool(tool_data.tool_name)
-                # Check if this is a subagent tool - we'll show SubagentCard instead
-                is_subagent_tool = self._is_subagent_tool(tool_data.tool_name)
-
-                # Skip batching for special tool types (planning, subagent)
-                skip_batching = is_planning_tool or is_subagent_tool
-
-                # Debug: Log tool content (skip planning tools for cleaner trace)
-                # Only log new tools (running status) or completions, not args updates
-                if not is_planning_tool:
-                    # Check if this is an args update for existing tool
-                    existing_card = timeline.get_tool(tool_data.tool_id) if tool_data.status == "running" else None
-                    existing_batch = timeline.get_tool_batch(tool_data.tool_id) if tool_data.status == "running" and not skip_batching else None
-                    existing_card is not None or existing_batch is not None
-
-                if tool_data.status == "running":
-                    # Check if this is an args update for existing tool
-                    existing_card = timeline.get_tool(tool_data.tool_id)
-                    existing_batch = timeline.get_tool_batch(tool_data.tool_id) if not skip_batching else None
-
-                    if existing_card:
-                        # Update existing standalone card with args
-                        if tool_data.args_summary:
-                            existing_card.set_params(tool_data.args_summary, tool_data.args_full)
-                    elif existing_batch:
-                        # Update existing tool in batch with args
-                        timeline.update_tool_in_batch(tool_data.tool_id, tool_data)
-                    elif is_subagent_tool:
-                        # Subagent tool starting - show SubagentCard with pending tasks from args
-                        self._show_subagent_card_from_args(tool_data, timeline)
-                    elif is_planning_tool:
-                        # Planning tools are skipped - TaskPlanCard is shown on completion
-                        pass
-                    elif not skip_batching:
-                        # Check if this MCP tool should be batched
-                        action, server_name, batch_id, pending_id = self._batch_tracker.process_tool(tool_data)
-
-                        if action == "pending":
-                            # First MCP tool - show as normal card, track for potential batch
-                            timeline.add_tool(tool_data, round_number=self._current_round)
-                        elif action == "convert_to_batch" and server_name and batch_id and pending_id:
-                            # Second tool from same server - convert to batch
-                            timeline.convert_tool_to_batch(
-                                pending_id,
-                                tool_data,
-                                batch_id,
-                                server_name,
-                                round_number=self._current_round,
-                            )
-                        elif action == "add_to_batch" and batch_id:
-                            # Add to existing batch
-                            timeline.add_tool_to_batch(batch_id, tool_data)
-                        else:
-                            # Standalone non-MCP tool
-                            timeline.add_tool(tool_data, round_number=self._current_round)
-                    else:
-                        # Fallback for other special tools
-                        timeline.add_tool(tool_data, round_number=self._current_round)
-                else:
-                    # Tool completed/failed - update the card in timeline
-                    # Phase 12: No storage needed - widgets stay in DOM with round tags
-                    if not is_planning_tool and not is_subagent_tool:
-                        # Use batch tracker to determine if this is a batch or standalone update
-                        action, server_name, batch_id, _ = self._batch_tracker.process_tool(tool_data)
-
-                        if action == "update_batch" and timeline.get_tool_batch(tool_data.tool_id):
-                            timeline.update_tool_in_batch(tool_data.tool_id, tool_data)
-                        else:
-                            # Update standalone tool card with result/error
-                            timeline.update_tool(tool_data.tool_id, tool_data)
-
-                    # Check if this is a Planning MCP tool and display TaskPlanCard
-                    tui_log(f"_add_tool_content: tool_status={tool_data.status}, tool_name={tool_data.tool_name}")
-                    if tool_data.status == "success":
-                        self._check_and_display_task_plan(tool_data, timeline)
-                        # Check if this is a subagent tool - update existing card with results
-                        if is_subagent_tool:
-                            self._update_subagent_card_with_results(tool_data, timeline)
-
-                        # Check if this is a terminal tool (new_answer, vote) and mark for delayed transition
-                        tool_name_lower = tool_data.tool_name.lower()
-                        if "new_answer" in tool_name_lower or "vote" in tool_name_lower:
-                            self.mark_terminal_tool_complete()
-                            tui_log(f"Terminal tool completed: {tool_data.tool_name}")
-
-                    # Refresh header if this is a background operation (to show bg badge)
-                    if tool_data.status == "background":
-                        self._refresh_header()
-
-                # Update running tools count in status bar
-                self._update_running_tools_count()
-            except Exception as e:
-                # Fallback to legacy RichLog
-                tui_log(f"Tool content error: {e}")
-                self._handle_tool_content(raw_content)
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _add_status_content(self, normalized):
-            """Route status content to TimelineSection with subtle display."""
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            # Detect session completion for restart tracking
-            if "completed" in normalized.cleaned_content.lower():
-                self._session_completed = True
-                # NOTE: Completion footer disabled - clutters UI
-                # self._show_completion_footer()
-
-            # Add status to timeline as a subtle line
-            # Phase 12: Pass round_number for CSS visibility
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                timeline.add_text(f"● {normalized.cleaned_content}", style="dim cyan", text_class="status", round_number=self._current_round)
-            except Exception:
-                # Fallback
-                status_bar = self._make_full_width_bar(f"  📊  {normalized.cleaned_content}", "bold yellow on #2d333b")
-                self.content_log.write(status_bar)
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _update_running_tools_count(self) -> None:
-            """Update running tools counter in status bar."""
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                count = timeline.get_running_tools_count()
-                if self._status_bar:
-                    self._status_bar.update_running_tools(count)
-            except Exception:
-                pass  # Silently fail if timeline not found
-
-        def _add_presentation_content(self, normalized):
-            """Route presentation content to TimelineSection."""
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            # Mark presentation shown for restart detection
-            if "Providing answer" in normalized.original:
-                self._presentation_shown = True
-                # NOTE: Completion footer disabled - clutters UI
-                # self._show_completion_footer()
-
-            # Add to timeline with response styling
-            # Phase 12: Pass round_number for CSS visibility
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                timeline.add_text(normalized.cleaned_content, style="bold #4ec9b0", text_class="response", round_number=self._current_round)
-            except Exception:
-                # Fallback
-                self.content_log.write(Text(f"🎤 {normalized.cleaned_content}", style="magenta"))
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _add_restart_content(self, content: str):
-            """Handle round transition - start a new round with view-based navigation.
-
-            With Phase 12 view-based navigation, rounds are separated by the dropdown
-            selector rather than inline banners. This method:
-            1. Parses the round number
-            2. Starts the new round (which clears the timeline)
-            3. Does NOT add inline separators (use dropdown to switch views)
-            """
-            # Parse attempt number
-            attempt = 1
-            is_context_reset = "context" in content.lower() or "reset" in content.lower()
-
-            if "attempt:" in content:
-                try:
-                    parts = content.split("attempt:")
-                    if len(parts) > 1:
-                        attempt_part = parts[1].split()[0]
-                        attempt = int(attempt_part)
-                except (ValueError, IndexError):
-                    pass
-
-            # Start the new round (clears timeline, updates ribbon)
-            # No inline separator - view dropdown handles round navigation
-            self.start_new_round(attempt, is_context_reset)
-
-            self._line_buffer = ""
-            self.current_line_label.update(Text(""))
-
-        def _flush_line_buffer_to_timeline(self, text_class: str = None) -> None:
-            """Flush any remaining line buffer content to the timeline.
-
-            Called when content type changes (e.g., thinking -> tool) to ensure
-            all content is written, even if it didn't end with a newline.
-
-            Args:
-                text_class: CSS class for the content. If None, uses the last
-                    text_class that was used (tracked via _last_text_class).
-            """
-            if self._line_buffer.strip():
-                # Use stored text_class if not provided - this preserves the correct
-                # type when flushing buffered content on content type transitions
-                if text_class is None:
-                    text_class = getattr(self, "_last_text_class", "content-inline")
-                try:
-                    timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                    timeline.add_text(
-                        self._line_buffer,
-                        style="dim italic",
-                        text_class=text_class,
-                        round_number=self._current_round,
-                    )
-                except Exception:
-                    pass
-                self._line_buffer = ""
-                self.current_line_label.update(Text(""))
-
-        def _add_thinking_content(self, normalized, raw_type: str):
-            """Route thinking/text content to TimelineSection.
-
-            Phase 15.5: Only display thinking/reasoning content, skip plain text.
-            Tool cards (answer, vote, etc.) already show meaningful output,
-            so raw text is redundant and clutters the UI.
-            """
-            # Process through handler for extra filtering
-            cleaned = self._thinking_handler.process(normalized)
-            if not cleaned:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            # Check if this is coordination content
-            is_coordination = getattr(normalized, "is_coordination", False)
-
-            # Phase 15.5: Display thinking and content, skip other types
-            if not is_coordination and raw_type not in ("thinking", "content", "text"):
-                return  # Skip non-displayable content
-
-            # Add to timeline
-            # Phase 12: No storage needed - widgets stay in DOM with round tags
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-
-                # Handle line buffering for streaming
-                # Capture current_round in closure for CSS visibility tagging
-                current_round = self._current_round
-
-                # Use different text_class for thinking vs content
-                # This affects how TimelineSection labels the CollapsibleTextCard
-                # NOTE: Use normalized.content_type instead of raw_type to ensure
-                # consistent labeling even if the backend sent a different content_type
-                text_class = "thinking-inline" if normalized.content_type == "thinking" else "content-inline"
-
-                # Flush line buffer if content type changed to prevent type mixing
-                # This ensures incomplete lines from previous type don't get labeled with new type
-                if not hasattr(self, "_last_text_class"):
-                    self._last_text_class = text_class
-                if self._last_text_class != text_class and self._line_buffer.strip():
-                    # Flush with the PREVIOUS text_class before switching
-                    prev_text_class = self._last_text_class
-                    timeline.add_text(self._line_buffer, style="dim italic", text_class=prev_text_class, round_number=current_round)
-                    self._line_buffer = ""
-                self._last_text_class = text_class
-
-                def write_line(line: str):
-                    # Phase 12: Pass round_number for CSS visibility
-                    timeline.add_text(line, style="dim italic", text_class=text_class, round_number=current_round)
-
-                # Use original content for line buffer to preserve inter-token
-                # whitespace (e.g. " CSS") that strip_prefixes/clean_content
-                # would remove. The handler check above already validated the
-                # content is displayable.
-                buffer_content = normalized.original if normalized.original else cleaned
-                self._line_buffer = _process_line_buffer(
-                    self._line_buffer,
-                    buffer_content,
-                    write_line,
-                )
-                self.current_line_label.update(Text(self._line_buffer))
-            except Exception:
-                # Fallback to legacy RichLog
-                # Use normalized.content_type for consistency
-                if normalized.content_type == "thinking":
-                    self._line_buffer = _process_line_buffer(
-                        self._line_buffer,
-                        cleaned,
-                        lambda line: self.content_log.write(Text(f"     {line}", style="dim")),
-                    )
-                    self.current_line_label.update(Text(self._line_buffer, style="dim"))
-                else:
-                    self._line_buffer = _process_line_buffer(
-                        self._line_buffer,
-                        cleaned,
-                        lambda line: self.content_log.write(Text(line)),
-                    )
-                    self.current_line_label.update(Text(self._line_buffer))
-
-        def _add_injection_content(self, normalized):
-            """Add injection content (cross-agent context sharing) to timeline.
-
-            Displays as a styled purple bar in the timeline.
-            """
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            content = normalized.cleaned_content
-            # Truncate preview if very long
-            preview = content[:100] + "..." if len(content) > 100 else content
-            preview = preview.replace("\n", " ")
-
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-                # Add as styled text with injection class
-                # Phase 12: Pass round_number for CSS visibility
-                timeline.add_text(
-                    f"📥 Context Update: {preview}",
-                    style="bold",
-                    text_class="injection",
-                    round_number=self._current_round,
-                )
-            except Exception:
-                # Fallback to legacy RichLog
-                self.content_log.write(Text(f"📥 Context Update: {preview}", style="bold magenta"))
-
-        def _add_reminder_content(self, normalized):
-            """Add reminder content (high priority task reminders) to TaskPlanCard.
-
-            Attaches the reminder to the most recent TaskPlanCard if one exists,
-            otherwise displays as a standalone styled bar in the timeline.
-            """
-            if not normalized.should_display:
-                return
-
-            # Mark that non-tool content arrived (prevents future batching across this content)
-            self._batch_tracker.mark_content_arrived()
-            # Finalize any current batch when non-tool content arrives
-            self._batch_tracker.finalize_current_batch()
-
-            content = normalized.cleaned_content
-
-            # Try to attach reminder to the most recent TaskPlanCard
-            try:
-                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
-
-                # Look for the most recent TaskPlanCard by active task plan ID
-                task_plan_card = None
-                if self._active_task_plan_id:
-                    try:
-                        from massgen.frontend.displays.textual_widgets import (
-                            TaskPlanCard,
-                        )
-
-                        task_plan_card = timeline.query_one(
-                            f"#task_plan_{self._active_task_plan_id}",
-                            TaskPlanCard,
-                        )
-                    except Exception:
-                        pass
-
-                # If no card found by ID, try to find any TaskPlanCard in timeline
-                if not task_plan_card:
-                    try:
-                        from massgen.frontend.displays.textual_widgets import (
-                            TaskPlanCard,
-                        )
-
-                        cards = list(timeline.query(TaskPlanCard))
-                        if cards:
-                            task_plan_card = cards[-1]  # Most recent card
-                    except Exception:
-                        pass
-
-                if task_plan_card:
-                    # Attach reminder to the TaskPlanCard
-                    task_plan_card.set_reminder(content)
-                    return
-
-                # Fallback: display as standalone text in timeline
-                preview = content[:100] + "..." if len(content) > 100 else content
-                preview = preview.replace("\n", " ")
-                # Phase 12: Pass round_number for CSS visibility
-                timeline.add_text(
-                    f"💡 Reminder: {preview}",
-                    style="bold",
-                    text_class="reminder",
-                    round_number=self._current_round,
-                )
-            except Exception:
-                # Fallback to legacy RichLog
-                preview = content[:100] + "..." if len(content) > 100 else content
-                preview = preview.replace("\n", " ")
-                self.content_log.write(Text(f"💡 Reminder: {preview}", style="bold yellow"))
-
         def _is_planning_mcp_tool(self, tool_name: str) -> bool:
-            """Check if a tool is a Planning MCP tool (should show TaskPlanCard instead of tool card).
+            """Check if a tool is a Planning MCP tool (should show TaskPlanCard instead of tool card)."""
+            from massgen.frontend.displays.task_plan_support import is_planning_tool
 
-            Args:
-                tool_name: The tool name to check
-
-            Returns:
-                True if this is a Planning MCP tool
-            """
-            planning_tools = [
-                "create_task_plan",
-                "update_task_status",
-                "add_task",
-                "edit_task",
-                "get_task_plan",
-                "delete_task",
-                "get_ready_tasks",
-                "get_blocked_tasks",
-            ]
-            tool_lower = tool_name.lower()
-            return any(pt in tool_lower for pt in planning_tools)
+            return is_planning_tool(tool_name)
 
         def _is_subagent_tool(self, tool_name: str) -> bool:
             """Check if a tool is a subagent tool (should show SubagentCard instead of tool card).
@@ -8553,17 +7557,18 @@ Type your question and press Enter to ask the agents.
                 timeline.query_one(f"#{card_id}", SubagentCard)
                 tui_log(f"_show_subagent_card_from_args: card {card_id} already exists, skipping")
                 return
-            except Exception:
-                pass  # Card doesn't exist, continue to create it
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Card doesn't exist, continue to create it
 
-            # Also check for any SubagentCard in the timeline (callback might use different ID)
+            # Also check if a card for THIS tool call already exists under a different ID
+            # (callback path might use a different ID scheme)
             try:
-                cards = list(timeline.query(SubagentCard))
-                if cards:
-                    tui_log(f"_show_subagent_card_from_args: SubagentCard already exists ({cards[0].id}), skipping")
-                    return
-            except Exception:
-                pass
+                for existing_card in timeline.query(SubagentCard):
+                    if getattr(existing_card, "tool_call_id", None) == tool_data.tool_id:
+                        tui_log(f"_show_subagent_card_from_args: card for tool {tool_data.tool_id} already exists ({existing_card.id}), skipping")
+                        return
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Parse args to get task list
             args = tool_data.args_full
@@ -8588,11 +7593,23 @@ Type your question and press Enter to ask the agents.
 
             tui_log(f"_show_subagent_card_from_args: found {len(tasks)} tasks to spawn")
 
+            # Resolve base log directory for subagents in this session
+            subagent_logs_base = None
+            try:
+                from massgen.logger_config import get_log_session_dir
+
+                log_dir = get_log_session_dir()
+                if log_dir:
+                    subagent_logs_base = log_dir / "subagents"
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
+
             # Create SubagentDisplayData for each task (all pending/running)
             subagents = []
             for task_data in tasks:
                 subagent_id = task_data.get("subagent_id", task_data.get("id", f"subagent_{len(subagents)}"))
                 task_desc = task_data.get("task", "")
+                log_path = str(subagent_logs_base / subagent_id) if subagent_logs_base else None
 
                 subagents.append(
                     SubagentDisplayData(
@@ -8607,7 +7624,7 @@ Type your question and press Enter to ask the agents.
                         last_log_line="Starting...",
                         error=None,
                         answer_preview=None,
-                        log_path=None,
+                        log_path=log_path,
                     ),
                 )
 
@@ -8615,10 +7632,13 @@ Type your question and press Enter to ask the agents.
                 return
 
             # Create and add SubagentCard to timeline
+            import re as _re
+
+            _safe_id = _re.sub(r"[^a-zA-Z0-9_-]", "_", tool_data.tool_id)
             card = SubagentCard(
                 subagents=subagents,
                 tool_call_id=tool_data.tool_id,
-                id=f"subagent_{tool_data.tool_id}",
+                id=f"subagent_{_safe_id}",
             )
             timeline.add_widget(card)
             tui_log(f"_show_subagent_card_from_args: added SubagentCard with {len(subagents)} pending subagents")
@@ -8645,8 +7665,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         card = timeline.query_one(f"#{alt_id}", SubagentCard)
                         tui_log(f"_update_subagent_card_with_results: found card by tool_call_id: {alt_id}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
                 # Try finding ANY SubagentCard in the timeline
                 if card is None:
@@ -8655,8 +7675,8 @@ Type your question and press Enter to ask the agents.
                         if cards:
                             card = cards[0]  # Use first matching card
                             tui_log(f"_update_subagent_card_with_results: found card by query: {card.id}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
             if card is None:
                 tui_log(f"_update_subagent_card_with_results: no card found (tried {card_id}), skipping duplicate creation")
@@ -8679,6 +7699,14 @@ Type your question and press Enter to ask the agents.
 
             # Extract spawned subagents list
             spawned = result_data.get("results", result_data.get("spawned_subagents", result_data.get("subagents", [])))
+
+            # Remove card only on true spawn failure (no results at all)
+            if not result_data.get("success", True) and not spawned:
+                try:
+                    card.remove()
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
+                return
             if not spawned:
                 return
 
@@ -8712,8 +7740,8 @@ Type your question and press Enter to ask the agents.
                     if workspace.exists():
                         try:
                             file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            tui_log(f"[TextualDisplay] {e}")
 
                 # Try to get task from original card data
                 task = sa_data.get("task", "")
@@ -8813,8 +7841,8 @@ Type your question and press Enter to ask the agents.
                     if workspace.exists():
                         try:
                             file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            tui_log(f"[TextualDisplay] {e}")
 
                 subagents.append(
                     SubagentDisplayData(
@@ -8837,149 +7865,47 @@ Type your question and press Enter to ask the agents.
                 return
 
             # Create and add SubagentCard to timeline
+            import re as _re
+
+            _safe_id = _re.sub(r"[^a-zA-Z0-9_-]", "_", tool_data.tool_id)
             card = SubagentCard(
                 subagents=subagents,
                 tool_call_id=tool_data.tool_id,
-                id=f"subagent_{tool_data.tool_id}",
+                id=f"subagent_{_safe_id}",
             )
             timeline.add_widget(card)
             tui_log(f"_check_and_display_subagent_card: added SubagentCard with {len(subagents)} subagents")
 
         def _check_and_display_task_plan(self, tool_data, timeline) -> None:
-            """Check if tool result is from Planning MCP and display/update TaskPlanCard.
-
-            Instead of adding a new card each time, this method:
-            - Creates a single persistent TaskPlanCard on first create_task_plan
-            - Updates that same card in place for subsequent updates
-
-            Planning MCP tools include:
-            - create_task_plan
-            - update_task_status
-            - add_task
-            - edit_task
-            - get_task_plan
-            """
-            import json
-
-            # Planning MCP tool names
-            PLANNING_TOOLS = {
-                "create_task_plan": "create",
-                "update_task_status": "update",
-                "add_task": "add",
-                "edit_task": "edit",
-                "get_task_plan": "get",
-            }
-
-            # Check if tool name matches a planning tool
-            tool_name = tool_data.tool_name.lower()
-            tui_log(f"_check_and_display_task_plan: tool_name={tool_name}")
-            operation = None
-            for planning_tool, op in PLANNING_TOOLS.items():
-                if planning_tool in tool_name:
-                    operation = op
-                    break
-
-            if not operation:
-                tui_log(f"_check_and_display_task_plan: no operation match for {tool_name}")
-                return
-
-            # Try to parse the result as JSON to extract tasks
-            result = tool_data.result_full
-            tui_log(f"_check_and_display_task_plan: result_full={result[:200] if result else 'None'}...")
-            if not result:
-                tui_log("_check_and_display_task_plan: no result_full")
-                return
-
-            try:
-                result_data = json.loads(result)
-            except (json.JSONDecodeError, TypeError) as e:
-                tui_log(f"_check_and_display_task_plan: JSON parse error: {e}")
-                return
-
-            # Check if the result has task data
-            if not isinstance(result_data, dict):
-                return
-
-            # Extract tasks list
-            tasks = []
-            focused_task_id = None
-
-            if "tasks" in result_data:
-                tasks = result_data["tasks"]
-            elif "plan" in result_data and isinstance(result_data["plan"], dict):
-                tasks = result_data["plan"].get("tasks", [])
-
-            # For update_task_status, update the existing task plan with the new status
-            if operation in ("update", "edit") and "task" in result_data:
-                updated_task = result_data["task"]
-                focused_task_id = updated_task.get("id")
-                updated_status = updated_task.get("status")
-                tui_log(f"_check_and_display_task_plan: update/edit - task_id={focused_task_id}, new_status={updated_status}")
-
-                # If we have a cached task plan, update it with the new task status
-                if self._active_task_plan_tasks and not tasks:
-                    tasks = [t.copy() for t in self._active_task_plan_tasks]  # Deep copy task dicts
-                    # Update the task in our cached list
-                    task_found = False
-                    for i, task in enumerate(tasks):
-                        if task.get("id") == focused_task_id:
-                            tui_log(f"_check_and_display_task_plan: found task at index {i}, old_status={task.get('status')}")
-                            tasks[i] = updated_task.copy()  # Copy the updated task too
-                            task_found = True
-                            break
-                    if not task_found:
-                        tui_log(f"_check_and_display_task_plan: task {focused_task_id} NOT found in cached tasks")
-
-            if not tasks:
-                tui_log("_check_and_display_task_plan: no tasks found in result")
-                return
-
-            tui_log(f"_check_and_display_task_plan: found {len(tasks)} tasks, updating pinned area")
-
-            # Update the pinned task plan area (shows notification for updates)
-            self._update_pinned_task_plan(
-                tasks=tasks,
-                focused_task_id=focused_task_id,
-                operation=operation,
-                show_notification=(operation != "create"),  # Only show notification for updates
+            """Check if tool result is from Planning MCP and display/update TaskPlanCard."""
+            from massgen.frontend.displays.task_plan_support import (
+                update_task_plan_from_tool,
             )
 
-            # Update the agent panel's task plan tracking
-            self.update_task_plan(tasks, plan_id=tool_data.tool_id, operation=operation)
+            update_task_plan_from_tool(self._task_plan_host, tool_data, timeline, log=tui_log)
 
         def _clear_timeline(self):
             """Clear the timeline for a new session/round."""
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.clear()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Reset per-round state
             self._reset_round_state()
 
         def _reset_round_state(self):
             """Reset per-round state (task plan, background tools indicator, etc.)."""
-            # Clear task plan tracking
-            self._active_task_plan_id = None
-            self._active_task_plan_tasks = None
-
-            # Clear pinned task plan UI container
-            try:
-                pinned_container = self.query_one(f"#{self._pinned_task_plan_id}", Container)
-                pinned_container.remove_children()
-                pinned_container.add_class("hidden")
-                pinned_container.remove_class("collapsed")
-                self._task_plan_visible = True  # Reset visibility state for next round
-            except Exception:
-                pass
+            # Clear task plan tracking + UI
+            self._task_plan_host.clear()
 
             # Clear tools tracking (resets bg count) but keep visual timeline
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.clear_tools_tracking()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Refresh header to hide badges (bg shells will be killed by orchestrator)
             self._refresh_header()
@@ -8990,24 +7916,24 @@ Type your question and press Enter to ask the agents.
             try:
                 tool_section = self.query_one(f"#{self._tool_section_id}", ToolSection)
                 tool_section.clear()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _show_completion_footer(self):
             """Show the completion footer."""
             try:
                 footer = self.query_one(f"#{self._completion_footer_id}", CompletionFooter)
                 footer.show_completed()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _hide_completion_footer(self):
             """Hide the completion footer."""
             try:
                 footer = self.query_one(f"#{self._completion_footer_id}", CompletionFooter)
                 footer.hide()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         # ========================================================================
         # Phase 12: CSS-based round navigation
@@ -9045,18 +7971,7 @@ Type your question and press Enter to ask the agents.
                 return
 
             if self._last_tool_was_terminal:
-                # Delay transition so users can see the completed terminal tool
-                self._transition_pending = True
-                self._pending_round_transition = (round_number, is_context_reset)
-                self._transition_timer = self.set_timer(5.0, self._execute_round_transition)
                 self._last_tool_was_terminal = False  # Reset for next round
-
-                # Show a subtle notification
-                try:
-                    self.notify("Round complete - transitioning in 5s", timeout=3)
-                except Exception:
-                    pass  # Notification is optional
-                return
 
             # Execute the round transition immediately
             self._execute_round_transition_impl(round_number, is_context_reset)
@@ -9100,7 +8015,6 @@ Type your question and press Enter to ask the agents.
 
             # Step 4: Reset per-round UI state
             self._hide_completion_footer()
-            self._tool_handler.reset()
             self._batch_tracker.reset()
             self._reasoning_header_shown = False
 
@@ -9175,7 +8089,6 @@ Type your question and press Enter to ask the agents.
 
             # Step 4: Reset per-round UI state
             self._hide_completion_footer()
-            self._tool_handler.reset()
             self._batch_tracker.reset()
             self._reasoning_header_shown = False
 
@@ -9188,8 +8101,8 @@ Type your question and press Enter to ask the agents.
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     # Mark this as a final presentation round - shows "F" instead of "R{n}"
                     app._status_ribbon.set_round(self.agent_id, new_round, is_final_presentation=True)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             logger.debug("AgentPanel.start_final_presentation: completed")
 
@@ -9200,8 +8113,8 @@ Type your question and press Enter to ask the agents.
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_round(self.agent_id, round_number, is_context_reset)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def switch_to_round(self, round_number: int) -> None:
             """Scroll to a specific round in the unified timeline.
@@ -9219,16 +8132,16 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.switch_to_round(round_number)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Update ribbon to show we're viewing this round
             try:
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_viewed_round(self.agent_id, round_number)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Restore context display for this round
             self._restore_context_for_round(round_number)
@@ -9263,8 +8176,8 @@ Type your question and press Enter to ask the agents.
                 else:
                     context_label.update("")
                     context_label.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def switch_to_final_answer(self) -> None:
             """Switch the view to display the final answer."""
@@ -9276,8 +8189,8 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Show the final answer view and update its content
             try:
@@ -9295,8 +8208,8 @@ Type your question and press Enter to ask the agents.
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_viewing_final_answer(self.agent_id, True)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def switch_from_final_answer(self) -> None:
             """Switch back from final answer view to round view."""
@@ -9308,22 +8221,22 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             try:
                 final_view = self.query_one(f"#{self._final_answer_view_id}", FinalAnswerView)
                 final_view.hide()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Update ribbon
             try:
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_viewing_final_answer(self.agent_id, False)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def set_final_answer(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
             """Store the final answer content for this agent.
@@ -9340,8 +8253,8 @@ Type your question and press Enter to ask the agents.
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_final_answer_available(self.agent_id, True)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def get_current_round(self) -> int:
             """Get the current round number being received."""
@@ -9438,8 +8351,8 @@ Type your question and press Enter to ask the agents.
             except Exception:
                 try:
                     self.content_log.scroll_end()
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
         def add_hook_to_tool(self, tool_call_id: Optional[str], hook_info: Dict[str, Any]):
             """Route hook execution info to the TimelineSection's tool card.
@@ -9544,13 +8457,14 @@ Type your question and press Enter to ask the agents.
             Returns:
                 Formatted task plan string or None if no active plan.
             """
-            if not self._active_task_plan_tasks:
+            tasks = self._task_plan_host.get_active_tasks()
+            if not tasks:
                 return None
 
-            total = len(self._active_task_plan_tasks)
+            total = len(tasks)
             # Count both "completed" and "verified" as done
-            completed = sum(1 for t in self._active_task_plan_tasks if t.get("status") in ("completed", "verified"))
-            in_progress = sum(1 for t in self._active_task_plan_tasks if t.get("status") == "in_progress")
+            completed = sum(1 for t in tasks if t.get("status") in ("completed", "verified"))
+            in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
 
             # Format: "Tasks: 3/9" or "Tasks: 3/9 ●2" if tasks in progress
             task_text = f"Tasks: {completed}/{total}"
@@ -9776,15 +8690,15 @@ Type your question and press Enter to ask the agents.
             # Hide footer during streaming (will show when complete)
             try:
                 self.query_one("#final_stream_footer").add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Hide the main input area when final answer is displayed (webui parity)
             try:
                 input_area = self.app.query_one("#input_area")
                 input_area.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def append_chunk(self, chunk: str):
             """Append streaming text with buffering."""
@@ -9824,8 +8738,8 @@ Type your question and press Enter to ask the agents.
                 # Focus the follow-up input
                 followup_input = self.query_one("#followup_input", Input)
                 followup_input.focus()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             """Handle action button presses."""
@@ -9852,8 +8766,8 @@ Type your question and press Enter to ask the agents.
             try:
                 input_area = self.app.query_one("#input_area")
                 input_area.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Submit the follow-up question through the app
             if hasattr(self.app, "_submit_followup_question"):

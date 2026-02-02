@@ -1922,6 +1922,41 @@ class FilesystemManager:
             logger.error(f"[FilesystemManager] Failed to clear workspace: {e}")
             # Don't raise - agent can still work with non-empty workspace
 
+    def restore_from_snapshot_storage(self) -> None:
+        """Restore workspace from snapshot_storage (used before post-evaluation).
+
+        After save_snapshot clears the workspace, this restores files from
+        snapshot_storage back into the live workspace so the post-evaluator
+        can see them.
+        """
+        if not self.snapshot_storage or not self.snapshot_storage.exists():
+            logger.info("[FilesystemManager] No snapshot_storage to restore from")
+            return
+
+        workspace_path = self.get_current_workspace()
+        if not workspace_path or not workspace_path.exists():
+            logger.warning("[FilesystemManager] No workspace to restore into")
+            return
+
+        items_restored = 0
+        for item in self.snapshot_storage.iterdir():
+            if item.is_symlink():
+                continue
+            dest = workspace_path / item.name
+            if dest.exists():
+                continue  # Don't overwrite existing files
+            try:
+                if item.is_file():
+                    shutil.copy2(item, dest)
+                    items_restored += 1
+                elif item.is_dir():
+                    shutil.copytree(item, dest, symlinks=True, ignore_dangling_symlinks=True)
+                    items_restored += 1
+            except Exception as e:
+                logger.warning(f"[FilesystemManager] Failed to restore {item.name}: {e}")
+
+        logger.info(f"[FilesystemManager] Restored {items_restored} items from snapshot_storage to workspace")
+
     def clear_temp_workspace(self) -> None:
         """
         Clear the temporary workspace parent directory at orchestration startup.

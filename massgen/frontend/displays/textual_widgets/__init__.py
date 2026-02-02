@@ -54,8 +54,11 @@ from .session_info_panel import SessionInfoPanel
 from .setup_wizard import SetupWizard
 from .subagent_card import SubagentCard
 from .subagent_modal import SubagentModal
+from .subagent_screen import SubagentPanel, SubagentScreen, SubagentView
+from .subagent_tui_modal import SubagentTuiModal
 from .tab_bar import AgentTab, AgentTabBar, AgentTabChanged, SessionInfoClicked
 from .task_plan_card import TaskPlanCard
+from .task_plan_host import TaskPlanHost
 from .task_plan_modal import TaskPlanModal
 from .tool_batch_card import ToolBatchCard, ToolBatchItem
 from .tool_card import ToolCallCard, format_tool_display_name, get_tool_category
@@ -111,13 +114,18 @@ __all__ = [
     "format_tool_display_name",
     # Task plan card and modal
     "TaskPlanCard",
+    "TaskPlanHost",
     "TaskPlanModal",
     # Plan approval modal
     "PlanApprovalModal",
     "PlanApprovalResult",
-    # Subagent card and modal
+    # Subagent card, modal, and screen
     "SubagentCard",
     "SubagentModal",
+    "SubagentPanel",
+    "SubagentScreen",
+    "SubagentView",
+    "SubagentTuiModal",
     # Background tasks modal
     "BackgroundTasksModal",
     # Injection sub-card

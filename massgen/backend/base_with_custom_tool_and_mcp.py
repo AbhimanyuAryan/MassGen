@@ -56,7 +56,7 @@ from ..filesystem_manager._constants import (
     TOOL_RESULT_EVICTION_PREVIEW_TOKENS,
     TOOL_RESULT_EVICTION_THRESHOLD_TOKENS,
 )
-from ..logger_config import log_backend_activity, logger
+from ..logger_config import get_event_emitter, log_backend_activity, logger
 from ..mcp_tools.hooks import GeneralHookManager, HookType
 from ..mcp_tools.server_registry import get_auto_discovery_servers, get_registry_info
 from ..nlip.schema import (
@@ -1551,6 +1551,22 @@ class CustomToolAndMCPBackend(LLMBackend):
                     # Update metrics to reflect actual input that will run
                     metric.input_chars = len(arguments_str)
 
+            # Emit structured tool_start event for TUI event pipeline
+
+            emitter = get_event_emitter()
+            if emitter:
+                try:
+                    args_dict = json.loads(arguments_str) if arguments_str else {}
+                except (json.JSONDecodeError, TypeError):
+                    args_dict = {"raw": arguments_str}
+                emitter.emit_tool_start(
+                    tool_id=call_id,
+                    tool_name=tool_name,
+                    args=args_dict,
+                    server_name=config.source_prefix.rstrip("_: ") if config.tool_type == "mcp" else None,
+                    agent_id=self.agent_id,
+                )
+
             # Yield tool called status
             yield StreamChunk(
                 type=config.chunk_type,
@@ -1567,6 +1583,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 content=f"Arguments for Calling {tool_name}: {arguments_str}",
                 source=f"{config.source_prefix}{tool_name}",
                 tool_call_id=call_id,
+                display=False,  # Verbose diagnostic - shown in tool card instead
             )
 
             # Special handling for subagent spawn - notify TUI immediately via callback
@@ -1685,6 +1702,18 @@ class CustomToolAndMCPBackend(LLMBackend):
                     source=f"{config.source_prefix}{tool_name}",
                     tool_call_id=call_id,
                 )
+                # Emit structured tool_complete event for MCP failure
+                if emitter:
+                    emitter.emit_tool_complete(
+                        tool_id=call_id,
+                        tool_name=tool_name,
+                        result=error_msg,
+                        elapsed_seconds=execution_end_time - metric.start_time,
+                        status="error",
+                        is_error=True,
+                        agent_id=self.agent_id,
+                    )
+
                 # Record MCP failure metrics (use pre-captured execution end time)
                 metric.end_time = execution_end_time
                 metric.success = False
@@ -1873,6 +1902,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 content=f"Results for Calling {tool_name}: {display_result}",
                 source=f"{config.source_prefix}{tool_name}",
                 tool_call_id=call_id,
+                display=False,  # Verbose diagnostic - shown in tool card instead
             )
 
             # Yield injection chunk if there was mid-stream injection
@@ -1908,6 +1938,18 @@ class CustomToolAndMCPBackend(LLMBackend):
                 source=f"{config.source_prefix}{tool_name}",
                 tool_call_id=call_id,
             )
+
+            # Emit structured tool_complete event for TUI event pipeline
+            if emitter:
+                emitter.emit_tool_complete(
+                    tool_id=call_id,
+                    tool_name=tool_name,
+                    result=display_result,
+                    elapsed_seconds=execution_end_time - metric.start_time,
+                    status="success",
+                    is_error=False,
+                    agent_id=self.agent_id,
+                )
 
             processed_call_ids.add(call.get("call_id", ""))
             logger.info(f"Executed {config.tool_type} tool: {tool_name}")
@@ -1961,6 +2003,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 content=f"Arguments for Calling {tool_name}: {arguments_str}",
                 source=f"{config.source_prefix}{tool_name}",
                 tool_call_id=call_id,
+                display=False,  # Verbose diagnostic - shown in tool card instead
             )
 
             # Yield error status chunk
@@ -1971,6 +2014,18 @@ class CustomToolAndMCPBackend(LLMBackend):
                 source=f"{config.source_prefix}{tool_name}",
                 tool_call_id=call_id,
             )
+
+            # Emit structured tool_complete event for exception
+            if emitter:
+                emitter.emit_tool_complete(
+                    tool_id=call_id,
+                    tool_name=tool_name,
+                    result=error_msg,
+                    elapsed_seconds=time.time() - metric.start_time,
+                    status="error",
+                    is_error=True,
+                    agent_id=self.agent_id,
+                )
 
             # Append error to messages
             self._append_tool_error_message(
@@ -2207,6 +2262,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             content=f"Arguments for Calling {tool_name}: {arguments_str}",
             source=f"{config.source_prefix}{tool_name}",
             tool_call_id=call_id,
+            display=False,  # Verbose diagnostic - shown in tool card instead
         )
 
         request = self._build_nlip_request(call)
@@ -2284,6 +2340,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                         content=f"Results for Calling {tool_name}: {result_text}",
                         source=f"{config.source_prefix}{tool_name}",
                         tool_call_id=call_id,
+                        display=False,  # Verbose diagnostic - shown in tool card instead
                     )
 
                     yield StreamChunk(

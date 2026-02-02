@@ -40,7 +40,7 @@ MassGen: Multi-Agent Scaling System for GenAI
 
 .. raw:: html
 
-   <a href="https://www.youtube.com/watch?v=5JofXWf_Ok8" style="display: block; text-align: center;">
+   <a href="https://www.youtube.com/watch?v=5JofXWf_Ok8" target="_blank" style="display: block; text-align: center;">
      <img src="_static/images/readme.gif" width="800" alt="MassGen Demo - Multi-agent collaboration in action" class="theme-image-light">
      <img src="_static/images/readme.gif" width="800" alt="MassGen Demo - Multi-agent collaboration in action" class="theme-image-dark">
    </a>
@@ -49,6 +49,14 @@ What is MassGen?
 ----------------
 
 MassGen is a cutting-edge multi-agent system that leverages the power of collaborative AI to solve complex tasks. It assigns a task to multiple AI agents who work in parallel, observe each other's progress, and refine their approaches to converge on the best solution to deliver a comprehensive and high-quality result.
+
+.. raw:: html
+
+   <div style="text-align: center; margin: 20px 0;">
+     <a href="case_studies/index.html" target="_blank" style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 1.1em; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); transition: transform 0.2s, box-shadow 0.2s;">
+       🎨 View Case Study Demos →
+     </a>
+   </div>
 
 **How It Works:**
 
@@ -59,17 +67,6 @@ MassGen is a cutting-edge multi-agent system that leverages the power of collabo
 * **Natural Consensus** - Coordination continues until all agents vote, then the agent with most votes presents the final answer
 
 Think of it as a "parallel study group" for AI - inspired by advanced systems like **xAI's Grok Heavy** and **Google DeepMind's Gemini Deep Think**. Agents learn from each other to produce better results than any single agent could achieve alone.
-
-.. raw:: html
-
-   <div style="text-align: center; margin: 20px 0;">
-     <a href="case_studies/index.html" style="display: inline-block; padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 1.1em; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); transition: transform 0.2s, box-shadow 0.2s;">
-       🎨 View Interactive Case Studies →
-     </a>
-   </div>
-
-See visual comparisons between MassGen and single-agent solutions, highlighting how MassGen unifies different agentic approaches for better outcomes.
-
 
 How Does MassGen Compare?
 -------------------------
@@ -131,21 +128,19 @@ Video Tutorials
 
 .. raw:: html
 
-   <div style="text-align: center; margin: 20px 0;">
-     <a href="https://www.youtube.com/watch?v=JMCnQL615Ek" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 10px 20px; background: #ff0000; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 1em; box-shadow: 0 2px 10px rgba(255, 0, 0, 0.3);">
-       ▶️ Getting Started
-     </a>
-   </div>
+   <a href="https://www.youtube.com/watch?v=JMCnQL615Ek" target="_blank" style="display: block; text-align: center; margin-bottom: 30px;">
+     <img src="_static/images/tutorial-getting-started.gif" width="800" alt="Getting Started with MassGen" class="theme-image-light">
+     <img src="_static/images/tutorial-getting-started.gif" width="800" alt="Getting Started with MassGen" class="theme-image-dark">
+   </a>
 
 Learn how to install, configure, and run your first multi-agent collaboration with MassGen.
 
 .. raw:: html
 
-   <div style="text-align: center; margin: 20px 0;">
-     <a href="https://www.youtube.com/watch?v=Dfz3D460EDs" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 10px 20px; background: #ff0000; color: white; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 1em; box-shadow: 0 2px 10px rgba(255, 0, 0, 0.3);">
-       ▶️ Develop on MassGen
-     </a>
-   </div>
+   <a href="https://www.youtube.com/watch?v=Dfz3D460EDs" target="_blank" style="display: block; text-align: center; margin-top: 30px;">
+     <img src="_static/images/tutorial-develop.gif" width="800" alt="Develop on MassGen" class="theme-image-light">
+     <img src="_static/images/tutorial-develop.gif" width="800" alt="Develop on MassGen" class="theme-image-dark">
+   </a>
 
 Explore how to build custom agents and tools with MassGen.
 
@@ -190,17 +185,17 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.46 (February 2, 2026)** - Subagent TUI Streaming & Event Architecture Refactor
+
+Real-time subagent TUI streaming with interactive preview cards that expand to full timeline views. Unified display components ensure identical tool displays between main and subagents. Enhanced final presentation with workspace visualization and winning agent highlighting. Major TUI event architecture refactor with structured emission pipeline. Bug fixes for banner display, tool call ID handling, and round tracking.
+
 **v0.1.45 (January 30, 2026)** - TUI as Default & Config Migration
 
-Textual Terminal UI now launches by default for all users with automatic config migration. All 160+ example configs updated to use ``textual_terminal`` display mode. Setup wizard (``--setup``, ``--quickstart``) generates TUI configs by default. Enhanced first-run experience with prominent TUI feature descriptions. Bug fixes for case study paths, PyPI packaging, and ReadTheDocs configuration.
+Textual Terminal UI now launches by default for all users with automatic config migration. Example configs updated to use ``textual_terminal`` display mode. Setup wizard (``--setup``, ``--quickstart``) generates TUI configs by default. Enhanced first-run experience with prominent TUI feature descriptions. Bug fixes for case study paths, PyPI packaging, and ReadTheDocs configuration.
 
 **v0.1.44 (January 28, 2026)** - Execute Mode for Independent Plan Selection
 
 New Execute mode for cycling through Normal → Planning → Execute modes via ``Shift+Tab``. Users can browse and select from existing plans with a plan selector popover. Context paths preserved between planning and execution phases. Enhanced case studies page with setup guides and quick start instructions.
-
-**v0.1.43 (January 26, 2026)** - Tool Call Batching & Interactive Case Studies
-
-Consecutive MCP tool calls now grouped into collapsible tree views with timing info. New interactive case studies page with side-by-side SVG comparisons. Plan mode enhancements with ``PlanOptionsPopover`` for browsing plans and selecting depth. Quoted path support for paths with spaces. Final presentation display fixes.
 
 :doc:`Full changelog → <changelog>`
 

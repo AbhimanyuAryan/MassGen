@@ -143,6 +143,80 @@ def _setup_logfire_observability() -> bool:
     return True
 
 
+# Module-level flag: when True, stdout is reserved for JSONL events
+_stream_events_active = False
+
+
+def _automation_print(msg: str) -> None:
+    """Print automation-mode status lines (LOG_DIR, STATUS, OUTPUT_FILE, etc.).
+
+    When event streaming is active, stdout is reserved for JSONL, so these
+    lines are routed to stderr instead.
+    """
+    print(msg, file=sys.stderr if _stream_events_active else sys.stdout)
+
+
+def _setup_event_streaming() -> None:
+    """Configure event streaming to stdout for subprocess-based TUI display.
+
+    When --stream-events is passed, this adds a listener to the EventEmitter
+    that writes all events as JSON lines to stdout. This enables parent processes
+    (like the TUI subagent modal) to receive real-time updates by reading stdout.
+
+    Events are written in JSONL format (one JSON object per line), flushed
+    immediately for real-time streaming.
+    """
+    global _stream_events_active
+    _stream_events_active = True
+
+    from .events import get_event_emitter
+
+    def stream_to_stdout(event):
+        """Write event as JSON line to stdout."""
+        sys.stdout.write(event.to_json() + "\n")
+        sys.stdout.flush()
+
+    # Get the event emitter (initialized by setup_logging)
+    emitter = get_event_emitter()
+    if emitter:
+        emitter.add_listener(stream_to_stdout)
+
+
+def _setup_timeline_event_recording() -> None:
+    """Emit timeline_entry events derived from streaming events (env-gated)."""
+    import os
+
+    if not os.environ.get("MASSGEN_TUI_TIMELINE_EVENTS"):
+        return
+
+    from .events import get_event_emitter
+    from .frontend.displays.timeline_event_recorder import TimelineEventRecorder
+
+    emitter = get_event_emitter()
+    if not emitter:
+        return
+
+    def emit_line(line: str) -> None:
+        emitter.emit_raw("timeline_entry", line=line)
+
+    recorder = TimelineEventRecorder(emit_line)
+
+    def record_event(event):
+        try:
+            recorder.handle_event(event)
+        except Exception:
+            pass
+
+    emitter.add_listener(record_event)
+
+    try:
+        import atexit
+
+        atexit.register(recorder.flush)
+    except Exception:
+        pass
+
+
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -3181,7 +3255,7 @@ async def run_single_question(
             output_path.write_text(final_response)
             logger.info(f"Wrote final answer to: {output_file}")
             # Print in automation mode for easy parsing
-            print(f"OUTPUT_FILE: {output_path.resolve()}")
+            _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
 
         if return_metadata:
             # Get comprehensive coordination result from orchestrator
@@ -5743,6 +5817,8 @@ async def run_textual_interactive_mode(
         # Signal shutdown
         controller.stop()
         orch_thread.join(timeout=5)
+        # Restore terminal to canonical mode (echo + line editing)
+        _restore_terminal_for_input()
 
     print("✅ Textual session ended")
 
@@ -7085,6 +7161,14 @@ async def main(args):
     # Setup logging (only for actual agent runs, not special commands)
     setup_logging(debug=args.debug)
 
+    # Configure event streaming to stdout if requested
+    # This enables parent processes (TUI subagent modal) to receive real-time updates
+    if getattr(args, "stream_events", False):
+        # --stream-events implies --automation
+        args.automation = True
+        _setup_event_streaming()
+        _setup_timeline_event_recording()
+
     # Configure Logfire observability if requested
     if getattr(args, "logfire", False):
         _setup_logfire_observability()
@@ -7458,8 +7542,8 @@ async def main(args):
             # LOG_DIR is the main session directory, STATUS includes turn/attempt subdirectory
             if args.automation:
                 full_log_dir = get_log_session_dir()
-                print(f"LOG_DIR: {log_dir}")
-                print(f"STATUS: {full_log_dir / 'status.json'}")
+                _automation_print(f"LOG_DIR: {log_dir}")
+                _automation_print(f"STATUS: {full_log_dir / 'status.json'}")
 
             # Only register in global session registry if not suppressed (e.g., subagent runs)
             if not getattr(args, "no_session_registry", False):
@@ -7630,12 +7714,12 @@ async def main(args):
                 output_path = Path(args.output_file)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(final_answer)
-                print(f"OUTPUT_FILE: {output_path.resolve()}")
+                _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
 
             # Print plan location for automation mode
             if args.automation:
-                print(f"PLAN_DIR: {plan_session.plan_dir}")
-                print(f"PLAN_ID: {plan_session.plan_id}")
+                _automation_print(f"PLAN_DIR: {plan_session.plan_dir}")
+                _automation_print(f"PLAN_ID: {plan_session.plan_id}")
 
             sys.exit(0)
 
@@ -7662,12 +7746,12 @@ async def main(args):
                     output_path = Path(args.output_file)
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     output_path.write_text(final_answer)
-                    print(f"OUTPUT_FILE: {output_path.resolve()}")
+                    _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
 
                 # Print plan location for automation mode
                 if args.automation:
-                    print(f"PLAN_DIR: {plan_session.plan_dir}")
-                    print(f"PLAN_ID: {plan_session.plan_id}")
+                    _automation_print(f"PLAN_DIR: {plan_session.plan_dir}")
+                    _automation_print(f"PLAN_ID: {plan_session.plan_id}")
 
                 sys.exit(0)
 
@@ -7698,7 +7782,7 @@ async def main(args):
 
                         final_dir = get_log_session_dir() / "final"
                         if final_dir.exists():
-                            print(f"FINAL_DIR: {final_dir}")
+                            _automation_print(f"FINAL_DIR: {final_dir}")
                     except Exception:
                         pass  # Log paths not available
             else:
@@ -7848,6 +7932,15 @@ async def main(args):
                         futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
                         for future in as_completed(futures):
                             pass  # Just wait for completion
+
+        # Cleanup MCP servers → terminates subagent processes
+        if "agents" in locals() and agents:
+            for agent_id, agent in agents.items():
+                if hasattr(agent, "backend") and hasattr(agent.backend, "cleanup_mcp"):
+                    try:
+                        await agent.backend.cleanup_mcp()
+                    except Exception:
+                        pass
 
         rich_console.print("[green]👋 Goodbye![/green]")
         sys.exit(EXIT_INTERRUPTED)
@@ -8326,6 +8419,11 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--stream-events",
+        action="store_true",
+        help="Stream events to stdout as JSON lines. Used by parent processes (e.g., TUI subagent modal) " "to receive real-time updates. Implies --automation.",
     )
     parser.add_argument(
         "--plan",
@@ -9280,7 +9378,7 @@ Environment Variables:
         asyncio.run(main(args))
     except KeyboardInterrupt:
         # User pressed Ctrl+C - exit gracefully without traceback
-        pass
+        _restore_terminal_for_input()
 
 
 if __name__ == "__main__":

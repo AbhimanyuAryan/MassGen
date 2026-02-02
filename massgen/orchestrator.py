@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 from .logger_config import get_log_session_dir  # Import to get log directory
 from .logger_config import logger  # Import logger directly for INFO logging
 from .logger_config import (
+    get_event_emitter,
     log_coordination_step,
     log_orchestrator_activity,
     log_orchestrator_agent_message,
@@ -442,6 +443,20 @@ class Orchestrator(ChatAgent):
             # Single agent - no need for threading overhead
             for agent_id, agent in self.agents.items():
                 _setup_agent_orchestration(agent_id, agent)
+
+        # Create workspace symlinks in the log directory for easy inspection
+        try:
+            log_dir = get_log_session_dir()
+            for agent_id, agent in self.agents.items():
+                if agent.backend.filesystem_manager and agent.backend.filesystem_manager.cwd:
+                    agent_log_dir = log_dir / agent_id
+                    agent_log_dir.mkdir(parents=True, exist_ok=True)
+                    workspace_link = agent_log_dir / "workspace"
+                    if not workspace_link.exists():
+                        workspace_link.symlink_to(Path(agent.backend.filesystem_manager.cwd).resolve())
+                        logger.info(f"[Orchestrator] Symlinked {workspace_link} → {agent.backend.filesystem_manager.cwd}")
+        except Exception as e:
+            logger.debug(f"[Orchestrator] Failed to create workspace symlinks: {e}")
 
         # Initialize broadcast channel for agent-to-agent communication
         self.broadcast_channel = BroadcastChannel(self)
@@ -1275,7 +1290,7 @@ class Orchestrator(ChatAgent):
         try:
             log_dir = get_log_session_dir()
             if log_dir:
-                log_directory = str(log_dir)
+                log_directory = str(log_dir.resolve())
         except Exception:
             pass  # Log directory not configured
 
@@ -1571,13 +1586,12 @@ class Orchestrator(ChatAgent):
     @staticmethod
     def _is_tool_related_content(content: str) -> bool:
         """
-        Check if content is tool-related output that should be excluded from clean answer.
+        Defensive check: exclude tool-related output from clean answer text.
 
-        Tool-related content includes:
-        - Tool calls: 🔧 tool_name(...)
-        - Tool results: 🔧 Tool ✅ Result: ... or 🔧 Tool ❌ Error: ...
-        - MCP status: 🔧 MCP: ...
-        - Backend status: Final Temp Working directory: ...
+        This guards against backends (e.g., ClaudeCode) that may embed tool
+        output or status messages in content-type chunks. Normally these are
+        handled via separate chunk_type branches (mcp_status, backend_status,
+        custom_tool_status), but this catches any that leak through.
 
         Args:
             content: The content string to check
@@ -1588,11 +1602,11 @@ class Orchestrator(ChatAgent):
         if not content:
             return False
 
-        # Tool calls and results from ClaudeCodeBackend
+        # Tool output prefixed by orchestrator for mcp_status / custom_tool_status
         if content.startswith("🔧 "):
             return True
 
-        # Backend status messages
+        # Backend status messages (session info from ClaudeCode)
         if content.startswith("Final Temp Working directory:"):
             return True
         if content.startswith("Final Session ID:"):
@@ -1646,8 +1660,9 @@ class Orchestrator(ChatAgent):
             )
             return
 
-        # Add user message to history
-        self.add_to_history("user", user_message)
+        # Add user message to history (skip on restart to avoid duplication)
+        if self.current_attempt == 0:
+            self.add_to_history("user", user_message)
 
         # Determine what to do based on current state and conversation context
         if self.workflow_phase == "idle":
@@ -1687,10 +1702,19 @@ class Orchestrator(ChatAgent):
             self._clear_context_path_write_tracking()
 
             # Clear agent workspaces for new turn (if this is a multi-turn conversation with history)
-            if conversation_context and conversation_context.get(
-                "conversation_history",
+            # Skip on restart attempts - workspace should be preserved from previous attempt
+            if (
+                self.current_attempt == 0
+                and conversation_context
+                and conversation_context.get(
+                    "conversation_history",
+                )
             ):
                 self._clear_agent_workspaces()
+
+            # On restart, inject accumulated conversation history so agents have context
+            if self.current_attempt > 0 and self.conversation_history:
+                conversation_context["conversation_history"] = list(self.conversation_history)
 
             # Check if planning mode is enabled in config
             planning_mode_config_exists = (
@@ -3034,6 +3058,16 @@ Your answer:"""
             current_answers,
         )
 
+        # Emit voting complete status for TUI event pipeline
+
+        _vote_emitter = get_event_emitter()
+        if _vote_emitter and self._selected_agent:
+            _vote_emitter.emit_status(
+                f"Voting complete - selected agent: {self._selected_agent}",
+                level="info",
+                agent_id=self._selected_agent,
+            )
+
         # Track winning agent for memory sharing in future turns
         self._current_turn += 1
         if self._selected_agent:
@@ -3320,73 +3354,30 @@ Your answer:"""
                             # End round token tracking with "answer" outcome
                             if agent and hasattr(agent.backend, "end_round_tracking"):
                                 agent.backend.end_round_tracking("answer")
-                            # Notify web display if available
+                            # Emit answer_submitted event (unified pipeline for main + subagent TUI)
+                            _ans_list = self.coordination_tracker.answers_by_agent.get(agent_id, [])
+                            _answer_number = len(_ans_list)
+                            _agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                            _answer_label = f"agent{_agent_num}.{_answer_number}"
+
+                            _emitter = get_event_emitter()
+                            if _emitter:
+                                _emitter.emit_answer_submitted(
+                                    agent_id=agent_id,
+                                    content=result_data,
+                                    answer_number=_answer_number,
+                                    answer_label=_answer_label,
+                                )
+
+                            # Notify web display for browser tracking (non-TUI displays)
                             if hasattr(self, "coordination_ui") and self.coordination_ui:
                                 display = getattr(self.coordination_ui, "display", None)
-                                if display and hasattr(display, "send_new_answer"):
-                                    # Get answer count and label for this agent
-                                    agent_answers = self.coordination_tracker.answers_by_agent.get(
-                                        agent_id,
-                                        [],
-                                    )
-                                    answer_number = len(agent_answers)
-                                    agent_num = self.coordination_tracker._get_agent_number(
-                                        agent_id,
-                                    )
-                                    answer_label = f"agent{agent_num}.{answer_number}"
-
-                                    # Get workspace path from snapshot mapping
-                                    workspace_path = None
-                                    snapshot_mapping = self.coordination_tracker.snapshot_mappings.get(
-                                        answer_label,
-                                    )
-                                    if snapshot_mapping:
-                                        # Build absolute workspace path from mapping
-                                        log_session_dir = get_log_session_dir()
-                                        if log_session_dir and snapshot_mapping.get(
-                                            "path",
-                                        ):
-                                            # path is like "agent_a/20251230_123456/answer.txt"
-                                            # workspace is at "agent_a/20251230_123456/workspace"
-                                            snapshot_path = snapshot_mapping["path"]
-                                            if snapshot_path.endswith("/answer.txt"):
-                                                workspace_rel = snapshot_path[: -len("/answer.txt")] + "/workspace"
-                                            else:
-                                                workspace_rel = f"{agent_id}/{answer_timestamp}/workspace"
-                                            workspace_path = str(
-                                                Path(log_session_dir) / workspace_rel,
-                                            )
-
+                                if display and hasattr(display, "send_new_answer") and not hasattr(display, "_app"):
                                     display.send_new_answer(
                                         agent_id=agent_id,
                                         content=result_data,
-                                        answer_number=answer_number,
-                                        answer_label=answer_label,
-                                        workspace_path=workspace_path,
-                                    )
-                                # Record answer with context for timeline visualization
-                                if display and hasattr(
-                                    display,
-                                    "record_answer_with_context",
-                                ):
-                                    agent_answers = self.coordination_tracker.answers_by_agent.get(
-                                        agent_id,
-                                        [],
-                                    )
-                                    answer_number = len(agent_answers)
-                                    agent_num = self.coordination_tracker._get_agent_number(
-                                        agent_id,
-                                    )
-                                    # Use same label format as coordination_tracker: "agent1.1"
-                                    answer_label = f"agent{agent_num}.{answer_number}"
-                                    context_sources = self.coordination_tracker.get_agent_context_labels(
-                                        agent_id,
-                                    )
-                                    display.record_answer_with_context(
-                                        agent_id=agent_id,
-                                        answer_label=answer_label,
-                                        context_sources=context_sources,
-                                        round_num=answer_number,
+                                        answer_number=_answer_number,
+                                        answer_label=_answer_label,
                                     )
                             # Update status file for real-time monitoring
                             # Run in executor to avoid blocking event loop
@@ -3401,25 +3392,6 @@ Your answer:"""
                                 )
                             restart_triggered_id = agent_id  # Last agent to provide new answer
                             reset_signal = True
-                            log_stream_chunk(
-                                "orchestrator",
-                                "content",
-                                "✅ Answer provided\n",
-                                agent_id,
-                            )
-
-                            # Track new answer event
-                            log_stream_chunk(
-                                "orchestrator",
-                                "content",
-                                "✅ Answer provided\n",
-                                agent_id,
-                            )
-                            yield StreamChunk(
-                                type="agent_status" if self.trace_classification == "strict" else "content",
-                                content="✅ Answer provided\n",
-                                source=agent_id,
-                            )
 
                         elif result_type == "vote":
                             # Agent voted for existing answer
@@ -3529,45 +3501,15 @@ Your answer:"""
                                             target_id=result_data.get("agent_id", ""),
                                             reason=result_data.get("reason", ""),
                                         )
-                                    # Record vote with context for timeline visualization
-                                    if display and hasattr(
-                                        display,
-                                        "record_vote_with_context",
-                                    ):
-                                        agent_num = self.coordination_tracker._get_agent_number(
-                                            agent_id,
-                                        )
-                                        # Count previous votes by this agent to get vote number
-                                        votes_by_agent = [v for v in self.coordination_tracker.votes if v.voter_id == agent_id]
-                                        vote_number = len(
-                                            votes_by_agent,
-                                        )  # Already recorded above, so this is the count
-                                        # Use format like "vote1.1" (matches answer format "agent1.1")
-                                        vote_label = f"vote{agent_num}.{vote_number}"
-                                        available_answers = self.coordination_tracker.iteration_available_labels.copy()
-                                        # Get the answer label that was voted for (e.g., "agent2.3")
-                                        voted_for_agent = result_data.get(
-                                            "agent_id",
-                                            "",
-                                        )
-                                        voted_for_label = self.coordination_tracker.get_voted_for_label(
-                                            agent_id,
-                                            voted_for_agent,
-                                        )
-                                        display.record_vote_with_context(
-                                            voter_id=agent_id,
-                                            vote_label=vote_label,
-                                            voted_for=voted_for_label or voted_for_agent,
-                                            available_answers=available_answers,
-                                            voting_round=self.coordination_tracker.current_iteration,
-                                        )
-                                    # Notify TUI to display vote tool card (TextualTerminalDisplay)
-                                    if display and hasattr(display, "notify_vote"):
-                                        display.notify_vote(
-                                            voter=agent_id,
-                                            voted_for=result_data.get("agent_id", ""),
-                                            reason=result_data.get("reason", ""),
-                                        )
+                                # Emit vote event (unified pipeline for main + subagent TUI)
+
+                                _emitter = get_event_emitter()
+                                if _emitter:
+                                    _emitter.emit_vote(
+                                        voter_id=agent_id,
+                                        target_id=result_data.get("agent_id", ""),
+                                        reason=result_data.get("reason", ""),
+                                    )
                                 # Update status file for real-time monitoring
                                 # Run in executor to avoid blocking event loop
                                 log_session_dir = get_log_session_dir()
@@ -4044,6 +3986,13 @@ Your answer:"""
                     agent.backend.filesystem_manager.clear_workspace()
                     logger.info(
                         f"[Orchestrator._save_agent_snapshot] Cleared workspace for {agent_id} after saving snapshot",
+                    )
+                else:
+                    # Final snapshot: restore workspace from snapshot_storage so
+                    # post-evaluator can see the files
+                    agent.backend.filesystem_manager.restore_from_snapshot_storage()
+                    logger.info(
+                        f"[Orchestrator._save_agent_snapshot] Restored workspace from snapshot_storage for {agent_id} (final snapshot)",
                     )
         else:
             logger.info(
@@ -4606,6 +4555,16 @@ Your answer:"""
                 f"Mid-stream: {len(new_answers)} answer(s)",
             )
 
+            # Emit injection_received event for TUI
+
+            _inj_emitter = get_event_emitter()
+            if _inj_emitter:
+                _inj_emitter.emit_injection_received(
+                    agent_id=agent_id,
+                    source_agents=list(new_answers.keys()),
+                    injection_type="mid_stream",
+                )
+
             # Update agent's context labels
             self.coordination_tracker.update_agent_context_with_new_answers(
                 agent_id,
@@ -4868,6 +4827,16 @@ Your answer:"""
 
             # Update known_answer_ids so vote validation knows this agent has seen these
             self.agent_states[agent_id].known_answer_ids.update(new_answers.keys())
+
+            # Emit injection_received event for TUI
+
+            _inj_emitter = get_event_emitter()
+            if _inj_emitter:
+                _inj_emitter.emit_injection_received(
+                    agent_id=agent_id,
+                    source_agents=list(new_answers.keys()),
+                    injection_type="mid_stream",
+                )
 
             # Track the injection
             logger.info(
@@ -5725,6 +5694,7 @@ Your answer:"""
 
         # Track whether we've notified TUI of new round (done once per real execution)
         _notified_round = False
+        _mid_stream_injection = False
 
         # Set round start time for per-round timeout tracking
         self.agent_states[agent_id].round_start_time = time.time()
@@ -5771,6 +5741,12 @@ Your answer:"""
         current_round = self.coordination_tracker.get_agent_round(agent_id)
         context_labels = self.coordination_tracker.get_agent_context_labels(agent_id)
         round_type = "voting" if answers else "initial_answer"
+
+        # Emit round_start event for TUI display (round banners)
+
+        event_emitter = get_event_emitter()
+        if event_emitter:
+            event_emitter.emit_round_start(round_number=current_round, agent_id=agent_id)
 
         span_attributes = {
             "massgen.agent_id": agent_id,
@@ -5915,10 +5891,18 @@ Your answer:"""
 
             # Inject restart context if this is a restart attempt (like multi-turn context)
             if self.restart_reason and self.restart_instructions:
+                # Check if workspace has files from previous attempt
+                workspace_populated = False
+                agent_obj = self.agents.get(agent_id)
+                if agent_obj and agent_obj.backend.filesystem_manager:
+                    ws = agent_obj.backend.filesystem_manager.get_current_workspace()
+                    if ws and ws.exists() and any(ws.iterdir()):
+                        workspace_populated = True
                 restart_context = self.message_templates.format_restart_context(
                     self.restart_reason,
                     self.restart_instructions,
                     previous_answer=self.previous_attempt_answer,
+                    workspace_populated=workspace_populated,
                 )
                 # Prepend restart context to user message
                 conversation["user_message"] = restart_context + "\n\n" + conversation["user_message"]
@@ -5937,6 +5921,11 @@ Your answer:"""
                 context_labels = self.coordination_tracker.get_agent_context_labels(agent_id)
                 if context_labels and hasattr(self, "display") and self.display and hasattr(self.display, "notify_context_received"):
                     self.display.notify_context_received(agent_id, context_labels)
+                # Emit to events.jsonl for subagent TUI parity
+
+                _emitter = get_event_emitter()
+                if _emitter:
+                    _emitter.emit_context_received(agent_id=agent_id, context_labels=context_labels)
 
             # Store the context in agent state for later use when saving snapshots
             self.agent_states[agent_id].last_context = conversation
@@ -6063,13 +6052,17 @@ Your answer:"""
                         # Note: agent_restart notification is yielded at the top of _stream_agent_execution
                         yield ("done", None)
                         return
-                    # else: injection_count >= 1, mid-stream callback will handle via tool results
-                    # Do NOT clear restart_pending here - the callback checks this flag
-                    # and will clear it after injecting content (see get_injection_content)
+                    else:
+                        # injection_count >= 1, mid-stream callback will handle via tool results
+                        # Do NOT clear restart_pending here - the callback checks this flag
+                        # and will clear it after injecting content (see get_injection_content)
+                        # Only suppress the round banner once streaming has already started.
+                        if not is_first_real_attempt:
+                            _mid_stream_injection = True
 
                 # Track restarts for TUI round display - only when agent is about to do real work
                 # (not if it's exiting immediately due to restart_pending)
-                if not _notified_round:
+                if not _notified_round and not _mid_stream_injection:
                     _notified_round = True
                     self.agent_states[agent_id].restart_count += 1
                     current_round = self.agent_states[agent_id].restart_count
@@ -6211,7 +6204,25 @@ Your answer:"""
                         "reasoning_summary",
                         "reasoning_summary_done",
                     ]:
-                        # Stream reasoning content as tuple format
+                        # Emit structured event directly for TUI pipeline
+                        from massgen.events import EventType
+
+                        _emitter = get_event_emitter()
+                        if _emitter:
+                            is_done = chunk_type in ("reasoning_done", "reasoning_summary_done")
+                            reasoning_delta = getattr(chunk, "reasoning_delta", None)
+                            reasoning_text = getattr(chunk, "reasoning_text", None)
+                            summary_delta = getattr(chunk, "reasoning_summary_delta", None)
+                            content = reasoning_delta or reasoning_text or summary_delta or ""
+                            if content or is_done:
+                                _emitter.emit_raw(
+                                    EventType.THINKING,
+                                    content=content,
+                                    done=is_done,
+                                    agent_id=agent_id,
+                                )
+
+                        # Stream reasoning content as tuple format for Rich display
                         reasoning_chunk = StreamChunk(
                             type=chunk.type,
                             content=chunk.content,
@@ -6528,10 +6539,6 @@ Your answer:"""
 
                     logger.info(
                         f"[Orchestrator] Agent {agent_id} made {num_votes} votes - using last vote: {final_voted_agent}",
-                    )
-                    yield (
-                        "content",
-                        f"⚠️ Agent made {num_votes} votes - using last (final decision): {final_voted_agent}\n",
                     )
 
                 # Check for mixed new_answer and vote calls - violates binary decision framework
@@ -7227,6 +7234,16 @@ Your answer:"""
         # Get vote results for presentation
         vote_results = self._get_vote_results()
 
+        # Emit status event for TUI event pipeline
+
+        _emitter = get_event_emitter()
+        if _emitter:
+            _emitter.emit_status(
+                "Presenting final coordinated answer",
+                level="info",
+                agent_id=self._selected_agent,
+            )
+
         log_stream_chunk("orchestrator", "content", "## 🎯 Final Coordinated Answer\n")
         yield StreamChunk(
             type="coordination" if self.trace_classification == "strict" else "content",
@@ -7280,14 +7297,17 @@ Your answer:"""
                 # Use existing answer directly without an additional LLM call
                 existing_answer = self.agent_states[self._selected_agent].answer
                 if existing_answer:
-                    # Notify TUI to highlight winner (TextualTerminalDisplay)
-                    if hasattr(self, "coordination_ui") and self.coordination_ui:
-                        display = getattr(self.coordination_ui, "display", None)
-                        if display and hasattr(display, "highlight_winner_quick"):
-                            display.highlight_winner_quick(
-                                winner_id=self._selected_agent,
-                                vote_results=vote_results,
-                            )
+                    # Emit to events.jsonl for unified pipeline
+
+                    _emitter = get_event_emitter()
+                    if _emitter:
+                        _emitter.emit_winner_selected(
+                            winner_id=self._selected_agent,
+                            vote_results=vote_results,
+                        )
+                        _emitter.emit_answer_locked(
+                            agent_id=self._selected_agent,
+                        )
 
                     log_stream_chunk(
                         "orchestrator",
@@ -7420,7 +7440,22 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 # Exit here - CLI will detect restart_pending and call coordinate() again
                 return
 
-        # No restart - add final answer to conversation history
+        # No restart - emit answer_locked event now that answer is confirmed
+
+        _emitter = get_event_emitter()
+        if _emitter:
+            _emitter.emit_answer_locked(agent_id=self._selected_agent)
+
+        # Clear workspace after submit since orchestration is complete
+        if self._selected_agent:
+            agent = self.agents.get(self._selected_agent)
+            if agent and agent.backend.filesystem_manager:
+                agent.backend.filesystem_manager.clear_workspace()
+                logger.info(
+                    f"[Orchestrator._present_final_answer] Cleared workspace for {self._selected_agent} after submit",
+                )
+
+        # Add final answer to conversation history
         if self._final_presentation_content:
             self.add_to_history("assistant", self._final_presentation_content)
 
@@ -7435,7 +7470,51 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
     async def _handle_orchestrator_timeout(self) -> AsyncGenerator[StreamChunk, None]:
         """Handle orchestrator timeout by jumping directly to get_final_presentation."""
-        # Output orchestrator timeout message first
+        # Count available answers
+        available_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer and not state.is_killed}
+
+        # Determine best available agent for presentation (if any answers exist)
+        current_votes = {aid: state.votes for aid, state in self.agent_states.items() if state.votes and not state.is_killed}
+        selected_agent = None
+        selection_reason = "no answers available"
+
+        if available_answers:
+            selected_agent = self._determine_final_agent_from_votes(
+                current_votes,
+                available_answers,
+            )
+            if current_votes:
+                selection_reason = "most votes"
+            else:
+                selection_reason = "first with answer"
+
+        # Build per-agent summary
+        agent_answer_summary = {}
+        for aid, state in self.agent_states.items():
+            if state.is_killed:
+                continue
+            vote_count = 0
+            for v in current_votes.values():
+                if v.get("agent_id") == aid:
+                    vote_count += 1
+            agent_answer_summary[aid] = {
+                "has_answer": bool(state.answer),
+                "vote_count": vote_count,
+            }
+
+        # Emit structured event for TUI
+
+        _timeout_emitter = get_event_emitter()
+        if _timeout_emitter:
+            _timeout_emitter.emit_orchestrator_timeout(
+                timeout_reason=self.timeout_reason or "Unknown",
+                available_answers=len(available_answers),
+                selected_agent=selected_agent,
+                selection_reason=selection_reason,
+                agent_answer_summary=agent_answer_summary,
+            )
+
+        # Also yield as StreamChunk for non-TUI displays
         log_stream_chunk(
             "orchestrator",
             "content",
@@ -7445,21 +7524,6 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         yield StreamChunk(
             type="content",
             content=f"\n⚠️ **Orchestrator Timeout**: {self.timeout_reason}\n",
-            source=self.orchestrator_id,
-        )
-
-        # Count available answers
-        available_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer and not state.is_killed}
-
-        log_stream_chunk(
-            "orchestrator",
-            "content",
-            f"📊 Current state: {len(available_answers)} answers available\n",
-            self.orchestrator_id,
-        )
-        yield StreamChunk(
-            type="content",
-            content=f"📊 Current state: {len(available_answers)} answers available\n",
             source=self.orchestrator_id,
         )
 
@@ -7481,13 +7545,7 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             yield StreamChunk(type="done")
             return
 
-        # Determine best available agent for presentation
-        current_votes = {aid: state.votes for aid, state in self.agent_states.items() if state.votes and not state.is_killed}
-
-        self._selected_agent = self._determine_final_agent_from_votes(
-            current_votes,
-            available_answers,
-        )
+        self._selected_agent = selected_agent
 
         # Jump directly to get_final_presentation
         vote_results = self._get_vote_results()
@@ -7878,6 +7936,17 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             source=selected_agent_id,
         )
 
+        # Emit event for unified pipeline
+
+        _fp_emitter = get_event_emitter()
+        if _fp_emitter:
+            _fp_emitter.emit_final_presentation_start(
+                agent_id=selected_agent_id,
+                vote_counts=vote_counts,
+                answer_labels=answer_labels,
+                is_tie=vote_results.get("is_tie", False) if vote_results else False,
+            )
+
         # Start round token tracking for final presentation
         final_round = self.coordination_tracker.get_agent_round(selected_agent_id)
         if hasattr(agent.backend, "start_round_tracking"):
@@ -7890,13 +7959,21 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         # Use agent's chat method with proper system message (reset chat for clean presentation)
         presentation_content = ""  # All content for display/logging
         clean_answer_content = ""  # Only clean text for answer.txt (excludes tool calls/results)
+        submitted_answer = None  # Clean answer submitted via new_answer tool (preferred over clean_answer_content)
         final_snapshot_saved = False  # Track whether snapshot was saved during stream
         was_cancelled = False  # Track if we broke out due to cancellation
+
+        # Build presentation tools: only new_answer (no vote/broadcast)
+        from massgen.tool.workflow_toolkits import NewAnswerToolkit
+
+        _na_toolkit = NewAnswerToolkit()
+        presentation_tools = _na_toolkit.get_tools({"api_format": "chat_completions"})
 
         try:
             # Track final round iterations (each chunk is like an iteration)
             async for chunk in agent.chat(
                 presentation_messages,
+                presentation_tools,
                 reset_chat=True,  # Reset conversation history for clean presentation
                 current_stage=CoordinationStage.PRESENTATION,
                 orchestrator_turn=self._current_turn,
@@ -7936,12 +8013,35 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                         content=chunk.content,
                         source=selected_agent_id,
                     )
+                    # Emit chunk event for unified pipeline
+                    if _fp_emitter:
+                        _fp_emitter.emit_final_presentation_chunk(
+                            agent_id=selected_agent_id,
+                            content=chunk.content,
+                        )
                 elif chunk_type in [
                     "reasoning",
                     "reasoning_done",
                     "reasoning_summary",
                     "reasoning_summary_done",
                 ]:
+                    # Emit structured event for TUI pipeline (same as main coordination loop)
+                    if _fp_emitter:
+                        is_done = chunk_type in ("reasoning_done", "reasoning_summary_done")
+                        reasoning_delta = getattr(chunk, "reasoning_delta", None)
+                        reasoning_text = getattr(chunk, "reasoning_text", None)
+                        summary_delta = getattr(chunk, "reasoning_summary_delta", None)
+                        _thinking_content = reasoning_delta or reasoning_text or summary_delta or ""
+                        if _thinking_content or is_done:
+                            from massgen.events import EventType
+
+                            _fp_emitter.emit_raw(
+                                EventType.THINKING,
+                                content=_thinking_content,
+                                done=is_done,
+                                agent_id=selected_agent_id,
+                            )
+
                     # Stream reasoning content with proper attribution (same as main coordination)
                     reasoning_chunk = StreamChunk(
                         type=chunk_type,
@@ -8012,6 +8112,29 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                         source=selected_agent_id,
                         tool_call_id=getattr(chunk, "tool_call_id", None),
                     )
+                elif chunk_type == "tool_calls":
+                    # Intercept new_answer tool calls to extract clean answer
+                    chunk_tool_calls = getattr(chunk, "tool_calls", []) or []
+                    for tool_call in chunk_tool_calls:
+                        tool_name = agent.backend.extract_tool_name(tool_call)
+                        if tool_name == "new_answer":
+                            tool_args = agent.backend.extract_tool_arguments(tool_call)
+                            if isinstance(tool_args, dict):
+                                submitted_answer = tool_args.get("content", "")
+                            elif isinstance(tool_args, str):
+                                import json as _json
+
+                                try:
+                                    submitted_answer = _json.loads(tool_args).get("content", "")
+                                except (ValueError, AttributeError):
+                                    submitted_answer = tool_args
+                    # Yield tool calls through so TUI can display them
+                    yield StreamChunk(
+                        type="tool_calls",
+                        content=chunk.content,
+                        source=selected_agent_id,
+                        tool_calls=chunk_tool_calls,
+                    )
                 elif chunk_type == "hook_execution":
                     # Hook execution - pass through with source
                     log_stream_chunk(
@@ -8029,10 +8152,13 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                     )
                 elif chunk_type == "done":
                     # Save the final workspace snapshot (from final workspace directory)
-                    # Use clean_answer_content (excludes tool calls/results) for answer.txt
-                    final_answer = (
-                        clean_answer_content.strip() if clean_answer_content.strip() else self.agent_states[selected_agent_id].answer
-                    )  # fallback to stored answer if no clean content generated
+                    # Prefer submitted_answer (from new_answer tool) over clean_answer_content
+                    if submitted_answer and submitted_answer.strip():
+                        final_answer = submitted_answer.strip()
+                    elif clean_answer_content.strip():
+                        final_answer = clean_answer_content.strip()
+                    else:
+                        final_answer = self.agent_states[selected_agent_id].answer
                     final_context = self.get_last_context(selected_agent_id)
                     await self._save_agent_snapshot(
                         self._selected_agent,
@@ -8147,10 +8273,20 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 )
 
             # Store the final presentation content for post-evaluation and history
-            # Use clean_answer_content (excludes tool calls/results)
-            if clean_answer_content.strip():
+            # Prefer submitted_answer (from new_answer tool) over clean_answer_content
+            _display_answer = submitted_answer.strip() if submitted_answer and submitted_answer.strip() else clean_answer_content.strip()
+            if _display_answer:
                 # Store the clean final answer (used by post-evaluation and conversation history)
-                self._final_presentation_content = clean_answer_content.strip()
+                self._final_presentation_content = _display_answer
+
+                # Emit final_answer event for TUI event pipeline
+
+                _fa_emitter = get_event_emitter()
+                if _fa_emitter:
+                    _fa_emitter.emit_final_answer(
+                        self._final_presentation_content,
+                        agent_id=selected_agent_id,
+                    )
             elif not was_cancelled:
                 # Only yield fallback content if NOT cancelled - yielding after cancellation
                 # causes display issues since the UI has already raised CancellationRequested
@@ -8186,6 +8322,10 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 stored_answer = self.agent_states[selected_agent_id].answer
                 if stored_answer:
                     self._final_presentation_content = stored_answer
+
+            # Emit final_presentation_end event for unified pipeline
+            if _fp_emitter:
+                _fp_emitter.emit_final_presentation_end(agent_id=selected_agent_id)
 
             # Note: end_round_tracking for presentation is called from _present_final_answer
             # after the async for loop completes, to ensure reliable timing before save_coordination_logs
@@ -8328,6 +8468,16 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             source="orchestrator",
         )
 
+        # Emit post_evaluation start event for unified pipeline
+
+        _pe_emitter = get_event_emitter()
+        if _pe_emitter:
+            _pe_emitter.emit_post_evaluation(
+                phase="start",
+                content="Post-evaluation: Reviewing final answer",
+                agent_id=selected_agent_id,
+            )
+
         # Start round token tracking for post-evaluation
         post_eval_round = self.coordination_tracker.get_agent_round(selected_agent_id) + 1
         if hasattr(agent.backend, "start_round_tracking"):
@@ -8355,6 +8505,17 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                 ):
                     chunk_type = self._get_chunk_type_value(chunk)
 
+                    # Skip content/reasoning after evaluation decision (submit/restart)
+                    # to prevent stray text appearing after answer_locked
+                    if evaluation_complete and chunk_type in (
+                        "content",
+                        "reasoning",
+                        "reasoning_done",
+                        "reasoning_summary",
+                        "reasoning_summary_done",
+                    ):
+                        continue
+
                     if chunk_type == "content" and chunk.content:
                         log_stream_chunk(
                             "orchestrator",
@@ -8367,6 +8528,13 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                             content=chunk.content,
                             source=selected_agent_id,
                         )
+                        # Emit post_evaluation content for unified pipeline
+                        if _pe_emitter:
+                            _pe_emitter.emit_post_evaluation(
+                                phase="content",
+                                content=chunk.content,
+                                agent_id=selected_agent_id,
+                            )
 
                         # Accumulate content for JSON parsing across chunks
                         accumulated_content += chunk.content
@@ -8455,6 +8623,21 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                             selected_agent_id,
                         )
                         yield reasoning_chunk
+                        # Emit thinking events for the unified event pipeline
+                        if _pe_emitter and chunk.content:
+                            _pe_emitter.emit_thinking(
+                                content=chunk.content,
+                                agent_id=selected_agent_id,
+                            )
+                        if _pe_emitter and chunk_type in ("reasoning_done", "reasoning_summary_done"):
+                            from massgen.events import EventType as _EvType
+
+                            _pe_emitter.emit_raw(
+                                _EvType.THINKING,
+                                content="",
+                                done=True,
+                                agent_id=selected_agent_id,
+                            )
                     elif chunk_type == "tool_calls":
                         # Post-evaluation tool call detected - only set flag if valid tool found
                         if hasattr(chunk, "tool_calls") and chunk.tool_calls:
@@ -8572,6 +8755,15 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         finally:
             # Note: end_round_tracking for post_evaluation is called from _present_final_answer
             # after the async for loop completes, to ensure reliable timing before save_coordination_logs
+
+            # Emit post_evaluation end event for unified pipeline
+            if _pe_emitter:
+                winner = selected_agent_id if not self.restart_pending else None
+                _pe_emitter.emit_post_evaluation(
+                    phase="end",
+                    winner=winner,
+                    agent_id=selected_agent_id,
+                )
 
             # If evaluation didn't complete (no submit/restart called), auto-submit
             # This handles cases where:

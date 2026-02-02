@@ -12,8 +12,10 @@ Composable UI sections for displaying different content types:
 """
 
 import logging
+import re
 import time
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -22,11 +24,22 @@ from textual.reactive import reactive
 from textual.widgets import RichLog, Static
 
 from ..content_handlers import ToolDisplayData, get_mcp_tool_name
+from ..shared.tui_debug import tui_log
 from .collapsible_text_card import CollapsibleTextCard
 from .tool_batch_card import ToolBatchCard, ToolBatchItem
 from .tool_card import ToolCallCard
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_widget_id(raw_id: str) -> str:
+    """Sanitize a string for use as a Textual widget ID.
+
+    Textual widget IDs must match ``[a-zA-Z_][a-zA-Z0-9_-]*``.  Some backends
+    (e.g. OpenRouter/Kimi) produce tool IDs containing ``.`` and ``:`` which
+    are invalid and cause silent mount failures.
+    """
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", raw_id)
 
 
 class ToolSection(Vertical):
@@ -123,8 +136,8 @@ class ToolSection(Vertical):
         try:
             header = self.query_one("#tool_section_header", Static)
             header.update(self._build_header())
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def watch_tool_count(self, count: int) -> None:
         """Update header when tool count changes."""
@@ -137,8 +150,8 @@ class ToolSection(Vertical):
         try:
             header = self.query_one("#tool_section_header", Static)
             header.update(self._build_header())
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def on_click(self, event) -> None:
         """Toggle collapsed state on header click."""
@@ -147,8 +160,8 @@ class ToolSection(Vertical):
             header = self.query_one("#tool_section_header", Static)
             if event.widget == header or event.widget == self:
                 self.is_collapsed = not self.is_collapsed
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def add_tool(self, tool_data: ToolDisplayData) -> ToolCallCard:
         """Add a new tool card.
@@ -163,7 +176,7 @@ class ToolSection(Vertical):
             tool_name=tool_data.tool_name,
             tool_type=tool_data.tool_type,
             call_id=tool_data.tool_id,
-            id=f"card_{tool_data.tool_id}",
+            id=f"card_{_sanitize_widget_id(tool_data.tool_id)}",
         )
 
         # Set args preview if available (both truncated and full)
@@ -178,8 +191,8 @@ class ToolSection(Vertical):
             container.mount(card)
             # Auto-scroll to show new tool
             container.scroll_end(animate=False)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         return card
 
@@ -215,8 +228,8 @@ class ToolSection(Vertical):
         try:
             container = self.query_one("#tool_container", ScrollableContainer)
             container.scroll_end(animate=False)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def get_tool(self, tool_id: str) -> Optional[ToolCallCard]:
         """Get a tool card by ID."""
@@ -231,8 +244,8 @@ class ToolSection(Vertical):
         try:
             container = self.query_one("#tool_container", ScrollableContainer)
             container.remove_children()
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
         self._tools.clear()
         self.tool_count = 0
         self.add_class("hidden")
@@ -356,8 +369,8 @@ class ReasoningSection(Vertical):
         try:
             header = self.query_one("#reasoning_header", Static)
             header.update(self._build_header())
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def watch_item_count(self, count: int) -> None:
         """Update header when item count changes."""
@@ -369,8 +382,8 @@ class ReasoningSection(Vertical):
         try:
             header = self.query_one("#reasoning_header", Static)
             header.update(self._build_header())
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def on_click(self, event) -> None:
         """Toggle collapsed state on header click."""
@@ -378,8 +391,8 @@ class ReasoningSection(Vertical):
             header = self.query_one("#reasoning_header", Static)
             if event.widget == header or event.widget == self:
                 self.is_collapsed = not self.is_collapsed
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def add_content(self, content: str) -> None:
         """Add reasoning content.
@@ -412,16 +425,16 @@ class ReasoningSection(Vertical):
             if self.item_count > self.COLLAPSE_THRESHOLD and not self.is_collapsed:
                 self.is_collapsed = True
 
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def clear(self) -> None:
         """Clear all reasoning content."""
         try:
             container = self.query_one("#reasoning_content", ScrollableContainer)
             container.remove_children()
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
         self._items.clear()
         self.item_count = 0
         self.add_class("hidden")
@@ -560,6 +573,7 @@ class TimelineSection(ScrollableContainer):
         self._tools: Dict[str, ToolCallCard] = {}
         self._batches: Dict[str, ToolBatchCard] = {}  # batch_id -> ToolBatchCard
         self._tool_to_batch: Dict[str, str] = {}  # tool_id -> batch_id mapping
+        self._tool_rounds: Dict[str, int] = {}  # tool_id -> round_number
         self._item_count = 0
         self._reasoning_section_id = f"reasoning_{id}" if id else "reasoning_section"
         # Scroll mode: when True, auto-scroll is paused (user is reading history)
@@ -590,6 +604,10 @@ class TimelineSection(ScrollableContainer):
         self._locked_card_id: Optional[str] = None
         # Track if Round 1 banner has been shown
         self._round_1_shown = False
+        # Track highest round separator shown (for dedup)
+        self._last_round_shown = 0
+        # Track pending round separators to avoid duplicates before mount completes
+        self._pending_round_separators: set[int] = set()
 
     def compose(self) -> ComposeResult:
         # Scroll mode indicator (hidden by default)
@@ -598,9 +616,51 @@ class TimelineSection(ScrollableContainer):
 
     def _ensure_round_1_shown(self) -> None:
         """Ensure Round 1 banner is shown before any content."""
-        if not self._round_1_shown:
+        has_banner = self._has_round_banner(1)
+        try:
+            from massgen.frontend.displays.shared.tui_debug import tui_log
+
+            tui_log(
+                f"[ROUND_DEBUG] ensure_round_1_shown panel={self.id} round_1_shown={self._round_1_shown} has_banner={has_banner}",
+                level="info",
+            )
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
+
+        if has_banner:
             self._round_1_shown = True
-            self.add_separator("Round 1", round_number=1)
+            self._last_round_shown = max(self._last_round_shown, 1)
+            return
+        if self._round_1_shown:
+            return
+        if 1 in self._pending_round_separators:
+            return
+        self._round_1_shown = True
+        insert_before = self._first_content_child()
+        self.add_separator("Round 1", round_number=1, before=insert_before)
+
+    def _has_round_banner(self, round_number: int) -> bool:
+        """Check if a RestartBanner exists for the given round."""
+        try:
+            for widget in self.query(f".round-{round_number}"):
+                if isinstance(widget, RestartBanner):
+                    return True
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
+        return False
+
+    def _first_content_child(self) -> Optional[Any]:
+        """Get the first timeline child after the scroll indicator, if any."""
+        try:
+            indicator = self.query_one("#scroll_mode_indicator", Static)
+        except Exception:
+            indicator = None
+
+        for child in self.children:
+            if indicator is not None and child is indicator:
+                continue
+            return child
+        return None
 
     def _log(self, msg: str) -> None:
         """Debug logging helper."""
@@ -684,8 +744,8 @@ class TimelineSection(ScrollableContainer):
                 indicator.remove_class("hidden")
             else:
                 indicator.add_class("hidden")
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def _auto_scroll(self) -> None:
         """Scroll to end only if not in scroll mode."""
@@ -758,8 +818,8 @@ class TimelineSection(ScrollableContainer):
             if self._scroll_timer is not None:
                 try:
                     self._scroll_timer.stop()
-                except Exception:
-                    pass  # Timer may have already completed
+                except Exception as e:
+                    tui_log(f"[ContentSections] {e}")  # Timer may have already completed
             self._scroll_timer = self.set_timer(
                 duration + 0.1 if use_animation else 0.1,
                 self._reset_auto_scroll,
@@ -800,8 +860,8 @@ class TimelineSection(ScrollableContainer):
             if target:
                 # Scroll so the widget is at the top
                 target.scroll_visible(top=True, animate=False)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     @property
     def in_scroll_mode(self) -> bool:
@@ -942,11 +1002,23 @@ class TimelineSection(ScrollableContainer):
         # Close any open reasoning batch when tool arrives
         self._close_reasoning_batch()
 
+        # Debug logging - include widget ID to identify which panel
+        widget_id = self.id or "unknown"
+        from massgen.frontend.displays.shared.tui_debug import tui_log
+
+        tui_log(f"TimelineSection.add_tool: panel={widget_id}, tool={tool_data.tool_name}, round={round_number}, viewed={self._viewed_round}")
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_tool
+
+            record_tool(tool_data, round_number, action="add")
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
+
         card = ToolCallCard(
             tool_name=tool_data.tool_name,
             tool_type=tool_data.tool_type,
             call_id=tool_data.tool_id,
-            id=f"tl_card_{tool_data.tool_id}",
+            id=f"tl_card_{_sanitize_widget_id(tool_data.tool_id)}",
         )
 
         if tool_data.args_summary:
@@ -956,6 +1028,7 @@ class TimelineSection(ScrollableContainer):
         card.add_class(f"round-{round_number}")
 
         self._tools[tool_data.tool_id] = card
+        self._tool_rounds[tool_data.tool_id] = round_number
         self._item_count += 1
 
         try:
@@ -967,8 +1040,8 @@ class TimelineSection(ScrollableContainer):
                 self._auto_scroll()
 
             self.call_after_refresh(trim_and_scroll)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         return card
 
@@ -981,6 +1054,13 @@ class TimelineSection(ScrollableContainer):
         """
         if tool_id not in self._tools:
             return
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_tool
+
+            round_number = self._tool_rounds.get(tool_id, self._viewed_round)
+            record_tool(tool_data, round_number, action="update")
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         card = self._tools[tool_id]
 
@@ -1065,6 +1145,12 @@ class TimelineSection(ScrollableContainer):
 
         self._batches[batch_id] = card
         self._item_count += 1
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_batch
+
+            record_batch(round_number, "start", batch_id, server_name)
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         try:
             self.mount(card)
@@ -1075,8 +1161,8 @@ class TimelineSection(ScrollableContainer):
                 self._auto_scroll()
 
             self.call_after_refresh(trim_and_scroll)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         return card
 
@@ -1112,7 +1198,15 @@ class TimelineSection(ScrollableContainer):
 
         batch_card.add_tool(item)
         self._tool_to_batch[tool_data.tool_id] = batch_id
+        self._tool_rounds[tool_data.tool_id] = self._viewed_round
         self._auto_scroll()
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_batch_tool
+
+            round_number = self._tool_rounds.get(tool_data.tool_id, self._viewed_round)
+            record_batch_tool(tool_data, round_number, batch_id, "add")
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def update_tool_in_batch(self, tool_id: str, tool_data: ToolDisplayData) -> bool:
         """Update a tool within a batch card.
@@ -1155,6 +1249,13 @@ class TimelineSection(ScrollableContainer):
 
         batch_card.update_tool(tool_id, item)
         self._auto_scroll()
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_batch_tool
+
+            round_number = self._tool_rounds.get(tool_id, self._viewed_round)
+            record_batch_tool(tool_data, round_number, batch_id, "update")
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
         return True
 
     def get_batch(self, batch_id: str) -> Optional[ToolBatchCard]:
@@ -1237,6 +1338,17 @@ class TimelineSection(ScrollableContainer):
         self._batches[batch_id] = batch_card
         self._tool_to_batch[pending_tool_id] = batch_id
         self._tool_to_batch[new_tool_data.tool_id] = batch_id
+        self._tool_rounds[new_tool_data.tool_id] = round_number
+        try:
+            from massgen.frontend.displays.timeline_transcript import (
+                record_batch,
+                record_batch_tool,
+            )
+
+            record_batch(round_number, "convert", batch_id, server_name)
+            record_batch_tool(new_tool_data, round_number, batch_id, "add")
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         # Mount batch card right after the existing tool card, then remove the old card
         try:
@@ -1250,8 +1362,8 @@ class TimelineSection(ScrollableContainer):
                 self._auto_scroll()
 
             self.call_after_refresh(trim_and_scroll)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         return batch_card
 
@@ -1367,6 +1479,13 @@ class TimelineSection(ScrollableContainer):
                 # Short content - simple inline display
                 widget = Static(content, id=widget_id, classes=classes)
 
+            try:
+                from massgen.frontend.displays.timeline_transcript import record_text
+
+                record_text(content, text_class or "text", round_number)
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
+
             # Tag with round class for navigation (scroll-to behavior)
             widget.add_class(f"round-{round_number}")
 
@@ -1378,21 +1497,56 @@ class TimelineSection(ScrollableContainer):
                 self._auto_scroll()
 
             self.call_after_refresh(trim_and_scroll)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
-    def add_separator(self, label: str = "", round_number: int = 1, subtitle: str = "") -> None:
+    def add_separator(
+        self,
+        label: str = "",
+        round_number: int = 1,
+        subtitle: str = "",
+        *,
+        before: Optional[Any] = None,
+        after: Optional[Any] = None,
+    ) -> None:
         """Add a visual separator to the timeline.
 
         Args:
             label: Optional label for the separator
             round_number: The round this content belongs to (for view switching)
             subtitle: Optional subtitle (e.g., "Restart • Context cleared")
+            before: Optional widget to insert before
+            after: Optional widget to insert after
         """
         from massgen.logger_config import logger
 
+        try:
+            from massgen.frontend.displays.shared.tui_debug import tui_log
+
+            tui_log(
+                f"[ROUND_DEBUG] add_separator panel={self.id} label='{label}' round={round_number} before={bool(before)} after={bool(after)}",
+                level="info",
+            )
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
+
         # Close any open reasoning batch
         self._close_reasoning_batch()
+
+        # Deduplicate round separators — multiple round_start events per round
+        if label.startswith("Round "):
+            if round_number in self._pending_round_separators or round_number <= self._last_round_shown:
+                try:
+                    from massgen.frontend.displays.shared.tui_debug import tui_log
+
+                    tui_log(
+                        f"[ROUND_DEBUG] add_separator_dedup panel={self.id} label='{label}' round={round_number}",
+                        level="info",
+                    )
+                except Exception as e:
+                    tui_log(f"[ContentSections] {e}")
+                return
+            self._pending_round_separators.add(round_number)
 
         self._item_count += 1
         widget_id = f"tl_sep_{self._item_count}"
@@ -1433,8 +1587,18 @@ class TimelineSection(ScrollableContainer):
 
             self.call_after_refresh(trim_and_scroll)
             logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
+            try:
+                from massgen.frontend.displays.timeline_transcript import (
+                    record_separator,
+                )
+
+                record_separator(label, round_number, subtitle)
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
         except Exception as e:
             # Log the error but don't crash
+            if label.startswith("Round "):
+                self._pending_round_separators.discard(round_number)
             logger.error(f"TimelineSection.add_separator failed: {e}")
 
     def _close_reasoning_batch(self) -> None:
@@ -1462,6 +1626,19 @@ class TimelineSection(ScrollableContainer):
         if not content.strip():
             return
 
+        # Debug logging for reasoning batching
+        content_preview = content[:50].replace("\n", "\\n")
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(
+                f"DEBUG add_reasoning: label={label}, current_card={self._current_reasoning_card is not None}, " f"current_label={self._current_batch_label}, content_preview={content_preview}\n",
+            )
+        try:
+            from massgen.frontend.displays.timeline_transcript import record_text
+
+            record_text(content, f"reasoning-{label.lower()}", round_number)
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
+
         # Ensure Round 1 banner is shown before first content
         self._ensure_round_1_shown()
 
@@ -1471,8 +1648,8 @@ class TimelineSection(ScrollableContainer):
                 self._close_reasoning_batch()
 
             if self._current_reasoning_card is not None:
-                # Append to existing batch
-                self._current_reasoning_card.append_content(content)
+                # Append to existing batch (streaming tokens)
+                self._current_reasoning_card.append_content(content, streaming=True)
                 # Just scroll for append case (no mount, no trim needed)
                 self._auto_scroll()
             else:
@@ -1496,8 +1673,8 @@ class TimelineSection(ScrollableContainer):
                     self._auto_scroll()
 
                 self.call_after_refresh(trim_and_scroll)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def add_widget(self, widget, round_number: int = 1) -> None:
         """Add a generic widget to the timeline.
@@ -1520,8 +1697,8 @@ class TimelineSection(ScrollableContainer):
             self._trim_old_items()  # Keep timeline size bounded (do before scroll)
             # Defer scroll to ensure trim's layout refresh completes first
             self.call_after_refresh(self._auto_scroll)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def clear(self, add_round_1: bool = True) -> None:
         """Clear all timeline content.
@@ -1541,8 +1718,8 @@ class TimelineSection(ScrollableContainer):
             indicator = None
             try:
                 indicator = self.query_one("#scroll_mode_indicator", Static)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
             child_count_before = len(self.children)
             self.remove_children()
             logger.info(f"[TimelineSection] Removed {child_count_before} children")
@@ -1561,7 +1738,7 @@ class TimelineSection(ScrollableContainer):
         if hasattr(self, "_truncation_shown_rounds"):
             self._truncation_shown_rounds.clear()
 
-        # Reset Round 1 shown flag
+        # Reset round tracking flags
         self._round_1_shown = False
         logger.info("[TimelineSection] Set _round_1_shown = False")
 
@@ -1776,8 +1953,8 @@ class ThinkingSection(Vertical):
         try:
             header = self.query_one("#thinking_header", Static)
             header.update(self._build_header())
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def on_click(self, event) -> None:
         """Toggle collapsed state on header click."""
@@ -1786,8 +1963,8 @@ class ThinkingSection(Vertical):
             # Check if click was on header area
             if event.widget == header or (hasattr(event, "widget") and event.widget.id == "thinking_header"):
                 self.is_collapsed = not self.is_collapsed
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def append(self, content: str, style: str = "") -> None:
         """Append content to the thinking log.
@@ -1816,11 +1993,11 @@ class ThinkingSection(Vertical):
             try:
                 header = self.query_one("#thinking_header", Static)
                 header.update(self._build_header())
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
 
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def append_text(self, text: Text) -> None:
         """Append a Rich Text object.
@@ -1845,11 +2022,11 @@ class ThinkingSection(Vertical):
             try:
                 header = self.query_one("#thinking_header", Static)
                 header.update(self._build_header())
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
 
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def clear(self) -> None:
         """Clear the thinking log."""
@@ -1860,8 +2037,8 @@ class ThinkingSection(Vertical):
             self._auto_collapsed = False
             self.is_collapsed = False
             self.add_class("hidden")
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     @property
     def line_count(self) -> int:
@@ -1961,8 +2138,8 @@ class ResponseSection(Vertical):
                     container.mount(Static(content))
             else:
                 self.add_class("hidden")
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def append_content(self, content: str, style: str = "") -> None:
         """Append to response content.
@@ -1982,8 +2159,8 @@ class ResponseSection(Vertical):
 
             # Auto-scroll to bottom
             container.scroll_end(animate=False)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def clear(self) -> None:
         """Clear response content."""
@@ -1991,8 +2168,8 @@ class ResponseSection(Vertical):
             container = self.query_one("#response_content", ScrollableContainer)
             container.remove_children()
             self.add_class("hidden")
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
 
 class StatusBadge(Static):
@@ -2336,8 +2513,16 @@ class FinalPresentationCard(Vertical):
         margin-bottom: 1;
     }
 
-    FinalPresentationCard #final_card_content {
+    FinalPresentationCard #final_card_body {
         width: 100%;
+        height: auto;
+        max-height: 30;
+        layout: horizontal;
+    }
+
+    FinalPresentationCard #final_card_content {
+        width: 1fr;
+        min-width: 0;
         height: auto;
         max-height: 30;
         padding: 1 2 0 2;
@@ -2350,6 +2535,20 @@ class FinalPresentationCard(Vertical):
         height: auto;
         background: transparent;
         color: #e6e6e6;
+        margin: 0 1;
+    }
+
+    FinalPresentationCard #final_card_text MarkdownH1,
+    FinalPresentationCard #final_card_text MarkdownH2,
+    FinalPresentationCard #final_card_text MarkdownH3 {
+        background: transparent;
+        color: #fab387;
+        margin: 1 0 0 0;
+    }
+
+    FinalPresentationCard #final_card_text MarkdownFence {
+        background: #161b22;
+        margin: 1 0;
     }
 
     FinalPresentationCard #final_card_post_eval {
@@ -2541,6 +2740,11 @@ class FinalPresentationCard(Vertical):
         height: 1;
     }
 
+    FinalPresentationCard.locked-mode #final_card_body {
+        height: 1fr;
+        max-height: 999;
+    }
+
     FinalPresentationCard.locked-mode #final_card_content {
         height: 1fr;
         max-height: 999;
@@ -2557,6 +2761,7 @@ class FinalPresentationCard(Vertical):
         model_name: str = "",
         vote_results: Optional[Dict] = None,
         context_paths: Optional[Dict] = None,
+        workspace_path: Optional[str] = None,
         completion_only: bool = False,
         id: Optional[str] = None,
     ) -> None:
@@ -2565,6 +2770,7 @@ class FinalPresentationCard(Vertical):
         self.model_name = model_name
         self.vote_results = vote_results or {}
         self.context_paths = context_paths or {}
+        self.workspace_path = workspace_path
         self._final_content: list = []
         self._post_eval_content: list = []
         self._is_streaming = not completion_only
@@ -2585,12 +2791,22 @@ class FinalPresentationCard(Vertical):
             yield Label(self._build_title(), id="final_card_title")
             yield Label(self._build_vote_summary(), id="final_card_votes")
 
-        # Content section with Static text (scrollable)
-        # NOTE: markup=False to avoid Rich markup parsing issues with special characters
-        # Store direct reference for faster updates
-        self._text_widget = Static("", id="final_card_text", markup=False)
-        with ScrollableContainer(id="final_card_content"):
-            yield self._text_widget
+        # Body: horizontal container for content + file explorer
+        from textual.widgets import Markdown
+
+        from massgen.frontend.displays.textual_widgets.file_explorer_panel import (
+            FileExplorerPanel,
+        )
+
+        self._text_widget = Markdown("", id="final_card_text")
+        with Horizontal(id="final_card_body"):
+            with ScrollableContainer(id="final_card_content"):
+                yield self._text_widget
+            yield FileExplorerPanel(
+                context_paths=self.context_paths,
+                workspace_path=self.workspace_path,
+                id="file_explorer_panel",
+            )
 
         # Post-evaluation section (hidden until post-eval content arrives)
         with Vertical(id="final_card_post_eval", classes="hidden"):
@@ -2669,8 +2885,8 @@ class FinalPresentationCard(Vertical):
                     # Compose hasn't run - try to trigger it
                     self.recompose()
                 self.set_timer(0.1, self._try_update_text)
-            except Exception:
-                pass  # Ignore if timer/recompose can't be set
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")  # Ignore if timer/recompose can't be set
 
     def _try_update_text(self) -> bool:
         """Try to update the text widget with accumulated content.
@@ -2691,28 +2907,31 @@ class FinalPresentationCard(Vertical):
                 self._text_widget.update(full_text)
                 self._text_widget.refresh()
                 return True
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
 
         # Fallback to query
         try:
-            text_widget = self.query_one("#final_card_text", Static)
+            from textual.widgets import Markdown
+
+            text_widget = self.query_one("#final_card_text", Markdown)
             text_widget.update(full_text)
             text_widget.refresh()
             return True
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         # Last resort: manually create the text widget if compose didn't run
         try:
+            from textual.widgets import Markdown
+
             # Check if we have any children at all
             if not list(self.children):
-                # Create a simple Static widget directly
-                self._text_widget = Static(full_text, id="final_card_text_manual", markup=False)
+                self._text_widget = Markdown(full_text, id="final_card_text_manual")
                 self.mount(self._text_widget)
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         return False
 
@@ -2725,6 +2944,11 @@ class FinalPresentationCard(Vertical):
         # (content has already been shown through the normal pipeline)
         if self.has_class("completion-only"):
             self.complete()
+
+        # Show file explorer if set_locked_mode was called before mount
+        if getattr(self, "_pending_file_explorer", False):
+            self._pending_file_explorer = False
+            self._show_file_explorer(True)
 
     def _on_compose(self) -> None:
         """Called after compose() completes - use this to flush content."""
@@ -2749,15 +2973,15 @@ class FinalPresentationCard(Vertical):
         try:
             title = self.query_one("#final_card_title", Label)
             title.update("✅ FINAL ANSWER")
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
         # Show footer with buttons and continue message
         try:
             footer = self.query_one("#final_card_footer")
             footer.remove_class("hidden")
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def get_content(self) -> str:
         """Get the full content for copy operation."""
@@ -2789,8 +3013,8 @@ class FinalPresentationCard(Vertical):
             toggle = self.query_one("#post_eval_toggle", Label)
             if toggle.region.contains(event.x, event.y):
                 self._toggle_post_eval_details()
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def _toggle_post_eval_details(self) -> None:
         """Toggle the post-evaluation details visibility."""
@@ -2809,8 +3033,8 @@ class FinalPresentationCard(Vertical):
                 details.remove_class("collapsed")
                 toggle.update("▾ Hide Details")
                 self._post_eval_expanded = True
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def _toggle_lock(self) -> None:
         """Toggle between locked (answer-only) and unlocked (full timeline) view."""
@@ -2835,13 +3059,15 @@ class FinalPresentationCard(Vertical):
                 timeline.unlock_final_answer()
                 self.remove_class("locked-mode")
                 link.update("⎯ Answer Only")
+                self._show_file_explorer(False)
             else:
                 # Lock: show only final answer
                 timeline.lock_to_final_answer(self.id or "final_presentation_card")
                 self.add_class("locked-mode")
                 link.update("↩ Previous Work")
-        except Exception:
-            pass
+                self._show_file_explorer(True)
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def set_locked_mode(self, locked: bool) -> None:
         """Set the locked mode state programmatically.
@@ -2857,16 +3083,108 @@ class FinalPresentationCard(Vertical):
                 link = self.query_one("#final_card_unlock_btn", Static)
                 link.display = True
                 link.update("↩ Previous Work")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
+            # Show file explorer directly (called after 0.1s timer, card should be mounted)
+            self._show_file_explorer(True)
+            # Also set flag for on_mount fallback in case we're not mounted yet
+            self._pending_file_explorer = True
         else:
             self.remove_class("locked-mode")
             try:
                 link = self.query_one("#final_card_unlock_btn", Static)
                 link.display = False
                 link.update("⎯ Answer Only")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[ContentSections] {e}")
+            self._show_file_explorer(False)
+
+    def _show_file_explorer(self, show: bool) -> None:
+        """Show or hide the file explorer side panel."""
+        try:
+            from massgen.frontend.displays.textual_widgets.file_explorer_panel import (
+                FileExplorerPanel,
+            )
+
+            panel = self.query_one("#file_explorer_panel", FileExplorerPanel)
+
+            if not show:
+                panel.remove_class("visible")
+                return
+
+            # Lazy-resolve workspace path from log directory
+            if not panel.has_files():
+                self._resolve_workspace_path(panel)
+                if panel.workspace_path and Path(panel.workspace_path).exists():
+                    panel._scan_workspace()
+                    if panel.has_files():
+
+                        def _apply():
+                            try:
+                                p = self.query_one("#file_explorer_panel", FileExplorerPanel)
+                                p.rebuild_tree()
+                                p.add_class("visible")
+                                p.auto_preview(self.get_content())
+                                p.refresh(layout=True)
+                            except Exception as e:
+                                tui_log(f"[ContentSections] {e}")
+
+                        self.call_later(_apply)
+                        return
+
+            if panel.has_files():
+                panel.add_class("visible")
+                try:
+                    self.query_one("#final_card_context_paths").add_class("hidden")
+                except Exception as e:
+                    tui_log(f"[ContentSections] {e}")
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
+
+    def _resolve_workspace_path(self, panel) -> None:
+        """Resolve the workspace path from the log session directory."""
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_dir = get_log_session_dir()
+            if not log_dir:
+                return
+
+            candidate = self._find_final_workspace(log_dir, self.agent_id)
+            if candidate is None:
+                # log_dir may be the session root; scan turn/attempt subdirs
+                for turn_dir in sorted(log_dir.glob("turn_*"), reverse=True):
+                    for attempt_dir in sorted(turn_dir.glob("attempt_*"), reverse=True):
+                        candidate = self._find_final_workspace(attempt_dir, self.agent_id)
+                        if candidate is not None:
+                            break
+                    if candidate is not None:
+                        break
+
+            if candidate is not None and candidate.exists():
+                panel.workspace_path = str(candidate)
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
+
+    @staticmethod
+    def _find_final_workspace(base_dir: Path, agent_id: str) -> Optional[Path]:
+        """Look for final/<agent_id>/workspace under base_dir."""
+        final_dir = base_dir / "final"
+        if not final_dir.exists() or not final_dir.is_dir():
+            return None
+        ws = final_dir / agent_id / "workspace"
+        if ws.exists():
+            return ws
+        agent_dir = final_dir / agent_id
+        if agent_dir.exists():
+            return agent_dir
+        # Single-agent fallback
+        agent_dirs = [d for d in final_dir.iterdir() if d.is_dir()]
+        if len(agent_dirs) == 1:
+            lone = agent_dirs[0]
+            ws = lone / "workspace"
+            return ws if ws.exists() else lone
+        return None
 
     def _copy_to_clipboard(self) -> None:
         """Copy final answer to system clipboard."""
@@ -2948,8 +3266,8 @@ class FinalPresentationCard(Vertical):
                 full_content = "\n".join(self._post_eval_content)
                 post_eval_static.update(full_content)
 
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[ContentSections] {e}")
 
     def add_post_evaluation(self, content: str) -> None:
         """Add post-evaluation content to the card (legacy method).

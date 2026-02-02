@@ -311,7 +311,11 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
         # Present your final coordinated answer in the most helpful and complete way possible."""
 
         presentation_instructions = """You have been selected as the winning presenter in a coordination process.
-Present the best possible coordinated answer by combining the strengths from all participants.\n\n"""
+Present the best possible coordinated answer by combining the strengths from all participants.
+
+Present your answer using markdown formatting where it aids readability.
+
+When you have composed your final answer, submit it using the `new_answer` tool. Only include the markdown-formatted answer in the tool call. This will be the official final deliverable.\n\n"""
 
         # Add image generation instructions only if enabled
         if enable_image_generation:
@@ -503,7 +507,7 @@ Present the best possible coordinated answer by combining the strengths from all
         else:
             return presentation_instructions
 
-    def format_restart_context(self, reason: str, instructions: str, previous_answer: Optional[str] = None) -> str:
+    def format_restart_context(self, reason: str, instructions: str, previous_answer: Optional[str] = None, workspace_populated: bool = False) -> str:
         """Format restart context for subsequent orchestration attempts.
 
         This context is added to agent messages (like multi-turn context) on restart attempts.
@@ -512,6 +516,7 @@ Present the best possible coordinated answer by combining the strengths from all
             reason: Why the previous attempt was insufficient
             instructions: Detailed guidance for improvement
             previous_answer: The winning answer from the previous attempt (optional)
+            workspace_populated: Whether the workspace still has files from previous attempt
         """
         if "format_restart_context" in self._template_overrides:
             override = self._template_overrides["format_restart_context"]
@@ -532,6 +537,12 @@ The previous orchestration attempt was restarted because:
 
 **Previous attempt's winning answer (for reference):**
 {previous_answer}"""
+
+        if workspace_populated:
+            base_context += """
+
+**Previous attempt's workspace is still available in your working directory.**
+Check your deliverable/ and scratch/ directories for files from the previous attempt."""
 
         base_context += """
 
