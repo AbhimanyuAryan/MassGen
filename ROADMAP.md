@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.45
+**Current Version:** v0.1.46
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** January 31, 2026
+**Last Updated:** February 2, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,39 +42,14 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.46** | 02/02/26 | Fix TUI Scrolling Problem | @ncrispino | Fix blank space issues and timeline truncation in TUI ([#824](https://github.com/Leezekun/MassGen/issues/824)) |
 | **v0.1.47** | 02/04/26 | OpenAI Responses /compact Endpoint | @ncrispino | Use OpenAI's native compact endpoint instead of custom summarization ([#739](https://github.com/massgen/MassGen/issues/739)) |
 | | | Add Model Selector for Log Analysis | @ncrispino | Choose model for `massgen logs analyze` self-analysis mode ([#766](https://github.com/massgen/MassGen/issues/766)) |
-| **v0.1.48** | 02/06/26 | Improve Subagent Display in TUI | @ncrispino | Stream and view subagents with full timeline in TUI ([#821](https://github.com/Leezekun/MassGen/issues/821)) |
+| **v0.1.48** | 02/06/26 | Fix TUI Scrolling Problem | @ncrispino | Fix blank space issues and timeline truncation in TUI ([#824](https://github.com/Leezekun/MassGen/issues/824)) |
 | | | Refactor ask_others for Targeted Agent Queries | @ncrispino | Support targeted agent queries via subagent for more efficient coordination ([#809](https://github.com/massgen/MassGen/issues/809)) |
+| **v0.1.49** | 02/09/26 | [FEATURE] Support dragging screenshots into TUI bar on Mac | @ncrispino | Enable drag-and-drop screenshot functionality in TUI input bar ([#831](https://github.com/massgen/MassGen/issues/831)) |
+| | | Screenshot upload functionality | @ncrispino | Add screenshot upload capability to TUI ([#832](https://github.com/massgen/MassGen/issues/832)) |
 
 *All releases ship on MWF @ 9am PT when ready*
-
----
-
-## ✅ v0.1.45 - TUI Default & Config Migration (COMPLETED)
-
-**Released: January 30, 2026**
-
-### Features
-
-- **TUI as Default Display**: Textual Terminal is now the default display mode for all users
-  - All new installations use TUI by default
-  - Existing configs with `rich_terminal` automatically migrate with deprecation warning
-  - 160+ example configs updated to use `textual_terminal`
-  - Use `--display rich` flag to explicitly request legacy Rich display
-
-- **Enhanced Setup & First-Run Experience**
-  - Setup wizard (`--setup`, `--quickstart`) generates TUI configs by default
-  - Clear documentation highlighting TUI benefits for new users
-  - Prominent TUI feature descriptions throughout docs
-
-### Bug Fixes
-- Fixed case study page paths for proper documentation rendering
-- Added missing files to MANIFEST.in for complete PyPI package distribution
-- Updated ReadTheDocs configuration with Python 3.12
-
-*See [Ongoing Work](#-ongoing-work--continuous-releases) section for detailed track information.*
 
 ---
 
