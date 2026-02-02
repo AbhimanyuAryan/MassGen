@@ -63,7 +63,7 @@ class StreamChunk:
     hook_info: Optional[Dict[str, Any]] = None  # Hook execution details for display
     tool_call_id: Optional[str] = None  # ID of tool call this hook is attached to
 
-    # Display flag - set to False for verbose diagnostic messages that shouldn't be shown in TUI
+    # Display flag - reserved for future use (not yet consumed by any handler)
     display: bool = True
 
 

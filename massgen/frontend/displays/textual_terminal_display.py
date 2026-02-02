@@ -5,7 +5,6 @@ Textual Terminal Display for MassGen Coordination
 """
 
 import functools
-import logging
 import os
 import re
 import threading
@@ -20,7 +19,7 @@ if TYPE_CHECKING:
         PlanApprovalResult,
     )
 
-from massgen.logger_config import get_log_session_dir, logger
+from massgen.logger_config import get_event_emitter, get_log_session_dir, logger
 
 from .terminal_display import TerminalDisplay
 
@@ -99,45 +98,8 @@ try:
 except ImportError:
     TEXTUAL_AVAILABLE = False
 
-# TUI Debug logger - writes to /tmp/massgen_tui_debug.log
-_tui_debug_logger: Optional[logging.Logger] = None
-
-
-def get_tui_debug_logger() -> logging.Logger:
-    """Get or create a debug logger for TUI that writes to /tmp."""
-    global _tui_debug_logger
-    if _tui_debug_logger is None:
-        _tui_debug_logger = logging.getLogger("massgen.tui.debug")
-        _tui_debug_logger.setLevel(logging.DEBUG)
-        # Prevent propagation to root logger
-        _tui_debug_logger.propagate = False
-        # File handler to /tmp
-        handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-        handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter(
-            "%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
-            datefmt="%H:%M:%S",
-        )
-        handler.setFormatter(formatter)
-        _tui_debug_logger.addHandler(handler)
-        # Write startup marker
-        _tui_debug_logger.info("=" * 60)
-        _tui_debug_logger.info("TUI Debug Session Started")
-        _tui_debug_logger.info("=" * 60)
-    return _tui_debug_logger
-
-
-def tui_log(msg: str, level: str = "debug") -> None:
-    """Log a debug message to /tmp/massgen_tui_debug.log."""
-    log = get_tui_debug_logger()
-    if level == "error":
-        log.error(msg)
-    elif level == "warning":
-        log.warning(msg)
-    elif level == "info":
-        log.info(msg)
-    else:
-        log.debug(msg)
+# TUI Debug logger - use shared implementation
+from .shared.tui_debug import tui_log  # noqa: E402
 
 
 def _process_line_buffer(
@@ -416,8 +378,8 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app:
             try:
                 self._app.reset_turn_state()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
     def _detect_emoji_support(self) -> bool:
         """Detect if terminal supports emoji."""
@@ -437,8 +399,8 @@ class TextualTerminalDisplay(TerminalDisplay):
             encoding = locale.getpreferredencoding()
             if encoding.lower() in ["utf-8", "utf8"]:
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[TextualDisplay] {e}")
 
         lang = os.environ.get("LANG", "")
         if "UTF-8" in lang or "utf8" in lang:
@@ -552,8 +514,8 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._app:
             try:
                 self._app.set_input_handler(handler)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
     def set_human_input_hook(self, hook) -> None:
         """Set the human input hook for injecting user input during execution.
@@ -1007,8 +969,8 @@ class TextualTerminalDisplay(TerminalDisplay):
             logger.info(
                 f"[FinalAnswer] show_final_answer: selected_agent={selected_agent} " f"answer_len={len(display_answer)} vote_keys={list((vote_results or {}).keys())}",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[TextualDisplay] {e}")
 
         # Add context path writes footer if any files were written
         context_writes_footer = self._get_context_path_writes_footer()
@@ -1867,8 +1829,8 @@ if TEXTUAL_AVAILABLE:
                     cwd_widget.update(f"[green]📁 {cwd_short} \\[read+write][/]")
                 else:
                     cwd_widget.update(f"[dim]📁[/] {cwd_short}")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             # Post message to notify app of the toggle
             self.post_message(StatusBarCwdClicked(str(cwd), self._cwd_context_mode))
 
@@ -1889,8 +1851,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 phase_widget = self.query_one("#status_phase", Static)
                 phase_widget.update(display_text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
             # Update hints based on phase - always show ?:help, add q:cancel during coordination
             try:
@@ -1900,8 +1862,8 @@ if TEXTUAL_AVAILABLE:
                 else:
                     hints_widget.update("[dim]q:cancel • ?:help[/]")
                 hints_widget.remove_class("hidden")  # Always visible
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
             # Update phase-based styling
             self.remove_class("phase-idle")
@@ -1925,8 +1887,8 @@ if TEXTUAL_AVAILABLE:
                     mcp_widget.update(f"🔌 {server_count}s/{tool_count}t")
                 else:
                     mcp_widget.update("")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def update_running_tools(self, count: int) -> None:
             """Update running tools counter in status bar."""
@@ -1938,8 +1900,8 @@ if TEXTUAL_AVAILABLE:
                 else:
                     tools_widget.update("")
                     tools_widget.add_class("hidden")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def update_progress(
             self,
@@ -1976,8 +1938,8 @@ if TEXTUAL_AVAILABLE:
                     text = " | ".join(parts) if parts else ""
 
                 progress_widget.update(text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def add_vote(self, voted_for: str, voter: str = "") -> None:
             """Increment vote count for an agent and track history."""
@@ -2036,16 +1998,16 @@ if TEXTUAL_AVAILABLE:
                         votes_widget.add_class("leader-changed")
                     # Remove animation classes after delay
                     self.set_timer(0.5, lambda: self._remove_vote_animation(votes_widget))
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def _remove_vote_animation(self, widget: Static) -> None:
             """Remove animation classes from vote widget."""
             try:
                 widget.remove_class("vote-updated")
                 widget.remove_class("leader-changed")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def get_standings_text(self) -> str:
             """Get current vote standings as text."""
@@ -2076,8 +2038,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 events_widget = self.query_one("#status_events", Static)
                 events_widget.update(display_text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def start_timer(self) -> None:
             """Start the elapsed timer."""
@@ -2100,8 +2062,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 timer_widget = self.query_one("#status_timer", Static)
                 timer_widget.update(display_text)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def stop_timer(self) -> None:
             """Stop the timer updates."""
@@ -2121,8 +2083,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 timer_widget = self.query_one("#status_timer", Static)
                 timer_widget.update("⏱️ 0:00")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def show_cancel_button(self, show: bool = True) -> None:
             """Show or hide the cancel button."""
@@ -2133,8 +2095,8 @@ if TEXTUAL_AVAILABLE:
                     cancel_widget.remove_class("hidden")
                 else:
                     cancel_widget.add_class("hidden")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def show_restart_count(self, attempt: int, max_attempts: int) -> None:
             """Show restart count in the phase indicator."""
@@ -2142,16 +2104,16 @@ if TEXTUAL_AVAILABLE:
                 phase_widget = self.query_one("#status_phase", Static)
                 phase_widget.update(f"🔄 Restart {attempt}/{max_attempts}")
                 phase_widget.add_class("restart-active")
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def clear_restart_indicator(self) -> None:
             """Clear the restart indicator."""
             try:
                 phase_widget = self.query_one("#status_phase", Static)
                 phase_widget.remove_class("restart-active")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def set_agent_working(self, agent_id: str, working: bool = True) -> None:
             """Mark an agent as working or not working.
@@ -2215,8 +2177,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 activity_widget = self.query_one("#status_activity", Static)
                 activity_widget.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Start animation interval (update every 100ms for smooth animation)
             self._spinner_interval = self.set_interval(0.1, self._animate_spinner)
@@ -2232,8 +2194,8 @@ if TEXTUAL_AVAILABLE:
                 activity_widget = self.query_one("#status_activity", Static)
                 activity_widget.add_class("hidden")
                 activity_widget.update("")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _animate_spinner(self) -> None:
             """Animate the spinner to next frame."""
@@ -2284,8 +2246,8 @@ if TEXTUAL_AVAILABLE:
                     activity_widget.remove_class("hidden")
                 else:
                     activity_widget.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
     # BaseModal is now imported from .textual package
 
@@ -2463,8 +2425,8 @@ if TEXTUAL_AVAILABLE:
                 try:
                     self._queued_input_banner.remove()
                     self._queued_input_banner = None
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
             # Agent pulsing - stop all pulse animations
             self._pulsing_agents.clear()
@@ -2835,8 +2797,8 @@ if TEXTUAL_AVAILABLE:
                 icon_map = {"dark": "D", "light": "L", "transparent": "T"}
                 icon = f"[dim]{icon_map.get(theme, 'D')}[/]"
                 theme_widget.update(icon)
-            except Exception:
-                pass  # Widget not mounted yet
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
         def set_input_handler(self, handler: Callable[[str], None]) -> None:
             """Set the input handler callback for controller integration."""
@@ -2865,8 +2827,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 main_container = self.query_one("#main_container", Container)
                 main_container.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def on_key(self, event: events.Key) -> None:
             """Handle key events for agent shortcuts and @ autocomplete.
@@ -2971,8 +2933,6 @@ if TEXTUAL_AVAILABLE:
                 tui_log("[_register_event_listener] SKIP: already registered")
                 return
 
-            from massgen.logger_config import get_event_emitter
-
             emitter = get_event_emitter()
             if emitter is None:
                 tui_log("[_register_event_listener] SKIP: emitter is None")
@@ -3024,8 +2984,8 @@ if TEXTUAL_AVAILABLE:
 
             try:
                 self.call_from_thread(self._route_event_batch, batch)
-            except Exception:
-                pass  # Don't crash for display issues
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Don't crash for display issues
 
         def _route_event_batch(self, events) -> None:
             """Route a batch of events to their agent TimelineEventAdapters.
@@ -3222,8 +3182,8 @@ if TEXTUAL_AVAILABLE:
                 if hasattr(self, "update_agent_context"):
                     try:
                         self.update_agent_context(agent_id, context_labels)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def _is_execution_in_progress(self) -> bool:
             """Check if agents are currently executing.
@@ -3401,8 +3361,8 @@ if TEXTUAL_AVAILABLE:
                         main_container.remove_class("hidden")
                         if self.header_widget:
                             self.header_widget.update_question(text)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                 return
 
             if text.startswith("/"):
@@ -3437,8 +3397,8 @@ if TEXTUAL_AVAILABLE:
             try:
                 main_container = self.query_one("#main_container", Container)
                 main_container.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Submit through the input handler
             if self._input_handler:
@@ -3677,8 +3637,8 @@ Type your question and press Enter to ask the agents.
                 if agent_id in self._event_adapters:
                     try:
                         self._event_adapters[agent_id].reset()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                 # Reset round state when doing full reset
                 if hasattr(widget, "reset_round_state"):
                     widget.reset_round_state()
@@ -3960,8 +3920,8 @@ Type your question and press Enter to ask the agents.
                 log_dir = get_log_session_dir()
                 if log_dir:
                     subagent_logs_base = log_dir / "subagents"
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Create SubagentDisplayData for each task (all pending/running)
             subagents = []
@@ -4006,8 +3966,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         for old_card in list(timeline.query(SubagentCard)):
                             old_card.remove()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
                     # Create and add SubagentCard to timeline
                     card = SubagentCard(
@@ -4083,8 +4043,8 @@ Type your question and press Enter to ask the agents.
                 logger.info(
                     f"[FinalAnswer] _add_final_completion_card: agent_id={agent_id} " f"answer_len={len(answer)} vote_keys={list(vote_results.keys())}",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Prevent duplicate cards
             if hasattr(self, "_final_completion_added") and self._final_completion_added:
@@ -4158,8 +4118,8 @@ Type your question and press Enter to ask the agents.
                 try:
                     existing_card = timeline.query_one("#final_presentation_card", FinalPresentationCard)
                     existing_card.remove()
-                except Exception:
-                    pass  # No existing card, that's fine
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")  # No existing card, that's fine
 
                 # Create the final answer card with content
                 card = FinalPresentationCard(
@@ -4184,8 +4144,8 @@ Type your question and press Enter to ask the agents.
                     logger.info(
                         f"[FinalAnswer] Timeline children after card add: {len(list(timeline.children))} " f"current_round={current_round}",
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
                 # Set the answer content and mark as complete
                 def set_content_and_complete():
@@ -4196,8 +4156,8 @@ Type your question and press Enter to ask the agents.
                         logger.info(
                             "[FinalAnswer] Card completed and locked to timeline",
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                     # Auto-lock timeline to show only final answer
                     timeline.lock_to_final_answer("final_presentation_card")
                     card.set_locked_mode(True)
@@ -4322,8 +4282,8 @@ Type your question and press Enter to ask the agents.
                         # Update input placeholder to encourage follow-up
                         if hasattr(self, "question_input"):
                             self.question_input.placeholder = "Type your follow-up question..."
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
                 # Phase 12.4: Store final answer for view-based navigation
                 if agent_id in self.agent_widgets:
@@ -4351,8 +4311,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         timeline._auto_scroll()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def begin_final_stream(self, agent_id: str, vote_results: Dict[str, Any]):
             """DEPRECATED: Start final presentation streaming.
@@ -4376,8 +4336,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         self._final_stream_timeline = timeline
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
                 return
 
             # Store the winner agent for routing chunks
@@ -4613,8 +4573,8 @@ Type your question and press Enter to ask the agents.
                             # Update input placeholder to encourage follow-up
                             if hasattr(self, "question_input"):
                                 self.question_input.placeholder = "Type your follow-up question..."
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            tui_log(f"[TextualDisplay] {e}")
 
                     self.set_timer(0.1, auto_lock_after_add)
 
@@ -4739,8 +4699,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
                         timeline.scroll_home()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
             logger.info(f"[TUI-App] prepare_for_new_turn() complete for turn {turn}")
 
@@ -4758,8 +4718,8 @@ Type your question and press Enter to ask the agents.
             try:
                 main_container = self.query_one("#main_container", Container)
                 main_container.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             # Update tab bar session info (turn + question)
             if self._tab_bar:
                 self._tab_bar.update_turn(turn)
@@ -4819,8 +4779,8 @@ Type your question and press Enter to ask the agents.
                 logger.error(f"Error in set_input_enabled: {e}")
                 try:
                     self._mode_state.unlock()
-                except Exception:
-                    pass  # Best effort to recover
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")  # Best effort to recover
                 raise
 
             # Update mode bar enabled state
@@ -4879,8 +4839,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         adapter.set_round_number(attempt)
                         adapter.flush()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def show_restart_context(self, reason: str, instructions: str):
             """Show restart context."""
@@ -4908,8 +4868,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         adapter.set_round_number(round_num)
                         adapter.flush()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
         def show_final_presentation_start(self, agent_id: str, vote_counts: Optional[Dict[str, int]] = None, answer_labels: Optional[Dict[str, str]] = None):
             """Show that the final presentation is starting for the winning agent.
@@ -5047,8 +5007,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         timeline = new_panel.query_one(f"#{new_panel._timeline_section_id}", TimelineSection)
                         timeline._scroll_to_end(animate=False, force=True)
-                    except Exception:
-                        pass  # Timeline may not exist yet
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")  # Timeline may not exist yet
                 else:
                     tui_log(f"  Panel not found for: {agent_id}", level="warning")
                     # Agent panel doesn't exist yet, just update state
@@ -5655,8 +5615,8 @@ Type your question and press Enter to ask the agents.
                     tl = panel._get_timeline()
                     if tl:
                         timeline_count_before = len(tl.children)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             def _on_screen_dismiss(result: object = None) -> None:
                 """Show badge if new timeline items appeared while in subagent view."""
@@ -5675,8 +5635,8 @@ Type your question and press Enter to ask the agents.
                                 )
                                 # Scroll to bottom to show new content
                                 tl.scroll_end(animate=True)
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
             screen = SubagentScreen(
                 subagent=event.subagent,
@@ -6157,8 +6117,8 @@ Type your question and press Enter to ask the agents.
                         cwd_widget.update(f"[green]📁 {cwd_short} \\[read+write][/]")
                     else:
                         cwd_widget.update(f"[dim]📁[/] {cwd_short}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
             # Update welcome screen hint if showing
             self._update_cwd_hint()
@@ -6176,8 +6136,8 @@ Type your question and press Enter to ask the agents.
                     hint_widget.update(f"[green]● Ctrl+P: File access to {cwd_short} \\[rw][/][dim]{at_hint}[/]")
                 else:
                     hint_widget.update(f"[dim]○ Ctrl+P: File access to {cwd_short}{at_hint}[/]")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _update_status_bar_restart_info(self) -> None:
             """Update StatusBar to show restart count."""
@@ -6188,8 +6148,8 @@ Type your question and press Enter to ask the agents.
                 attempt = self._current_restart.get("attempt", 1)
                 max_attempts = self._current_restart.get("max_attempts", 3)
                 self._status_bar.show_restart_count(attempt, max_attempts)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         # === Status Bar Notification Methods ===
 
@@ -6312,8 +6272,8 @@ Type your question and press Enter to ask the agents.
                         # NOTE: Vote separator banner disabled - clutters UI
                         # sep_label = f"🗳️ VOTED → {target_short}"
                         # timeline.add_separator(sep_label, round_number=current_round)
-                except Exception:
-                    pass  # Silently ignore if panel not found
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")  # Silently ignore if panel not found
 
         def notify_new_answer(
             self,
@@ -6512,8 +6472,8 @@ Type your question and press Enter to ask the agents.
                     if getattr(tab, "agent_id", "") == winner_id:
                         tab.add_class("winner")
                         break
-            except Exception:
-                pass  # Tab bar might not be available
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Tab bar might not be available
 
             # 3. Enhanced toast notification for winner
             winner_display = f"{winner_id}" + (f" ({model_name})" if model_name else "")
@@ -6664,8 +6624,8 @@ Type your question and press Enter to ask the agents.
                                 parts.append(f"⏱ {secs}s")
 
                     self._execution_status.update("  |  ".join(parts))
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _show_cancelled_status(self) -> None:
             """Stop execution status updates and show cancelled state with PERSISTENT visual feedback.
@@ -6731,10 +6691,10 @@ Type your question and press Enter to ask the agents.
                     self.notify("Execution cancelled - type to continue", severity="warning", timeout=3)
 
                     # NO auto-dismiss timer - state persists until user provides new input
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _clear_cancelled_state(self) -> None:
             """Clear the persistent cancelled state when user starts a new turn."""
@@ -6747,14 +6707,14 @@ Type your question and press Enter to ask the agents.
                 try:
                     main = self.query_one("#main_container")
                     main.remove_class("cancelled-state")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
                 # Restore default placeholder
                 if hasattr(self, "question_input"):
                     self.question_input.placeholder = "Enter to submit • Shift+Enter for newline • @ for files • Ctrl+G help"
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         # =====================================================================
         # Agent Pulsing Animation
@@ -6791,8 +6751,8 @@ Type your question and press Enter to ask the agents.
                 panel = self.agent_widgets.get(agent_id)
                 if panel:
                     panel.remove_class("pulse-bright", "pulse-normal")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Stop the timer if no agents are pulsing
             if not self._pulsing_agents and self._pulse_timer:
@@ -6966,8 +6926,8 @@ Type your question and press Enter to ask the agents.
                 for timeline in self.query(TimelineSection):
                     if timeline.in_scroll_mode:
                         return True
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             return False
 
         def _exit_scroll_mode(self) -> None:
@@ -6978,8 +6938,8 @@ Type your question and press Enter to ask the agents.
                     if timeline.in_scroll_mode:
                         timeline.exit_scroll_mode()
                         exited = True
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             if exited:
                 self.notify("Resumed auto-scroll", severity="information", timeout=1)
 
@@ -6994,8 +6954,8 @@ Type your question and press Enter to ask the agents.
             try:
                 if path.exists():
                     content = path.read_text(encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
             if not content:
                 content = "Content unavailable."
             self._show_modal_async(TextContentModal(title, content))
@@ -7007,8 +6967,8 @@ Type your question and press Enter to ask the agents.
             if status_path and Path(status_path).exists():
                 try:
                     content = Path(status_path).read_text(encoding="utf-8")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
             if not content:
                 content = "System status log is empty or unavailable."
             self._show_modal_async(SystemStatusModal(content))
@@ -7089,8 +7049,8 @@ Type your question and press Enter to ask the agents.
             if self._resize_debounce_handle:
                 try:
                     self._resize_debounce_handle.cancel()
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
             debounce_time = 0.15 if self.coordination_display._terminal_type in ("vscode", "windows_terminal") else 0.05
             try:
@@ -7375,24 +7335,24 @@ Type your question and press Enter to ask the agents.
                     # Hide container
                     loading = self.query_one(f"#{self._loading_id}")
                     loading.add_class("hidden")
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
         def _update_loading_text(self, text: str):
             """Update the loading indicator text."""
             try:
                 progress = self.query_one(f"#progress_{self._dom_safe_id}")
                 progress.message = text
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _start_loading_spinner(self, message: str = "Waiting for agent..."):
             """Start the loading spinner with a message."""
             try:
                 progress = self.query_one(f"#progress_{self._dom_safe_id}")
                 progress.start_spinner(message)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def on_mount(self) -> None:
             """Start the loading spinner when the panel is mounted."""
@@ -7441,8 +7401,8 @@ Type your question and press Enter to ask the agents.
                     overlay.add_class("hidden")
                 else:
                     overlay.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def is_in_use(self) -> bool:
             """Check if this panel is currently in use."""
@@ -7481,8 +7441,8 @@ Type your question and press Enter to ask the agents.
                 else:
                     context_label.update("")
                     context_label.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def update_task_plan(self, tasks: List[Dict[str, Any]], plan_id: str = None, operation: str = "create") -> None:
             """Update the active task plan for this agent.
@@ -7597,8 +7557,8 @@ Type your question and press Enter to ask the agents.
                 timeline.query_one(f"#{card_id}", SubagentCard)
                 tui_log(f"_show_subagent_card_from_args: card {card_id} already exists, skipping")
                 return
-            except Exception:
-                pass  # Card doesn't exist, continue to create it
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")  # Card doesn't exist, continue to create it
 
             # Also check if a card for THIS tool call already exists under a different ID
             # (callback path might use a different ID scheme)
@@ -7607,8 +7567,8 @@ Type your question and press Enter to ask the agents.
                     if getattr(existing_card, "tool_call_id", None) == tool_data.tool_id:
                         tui_log(f"_show_subagent_card_from_args: card for tool {tool_data.tool_id} already exists ({existing_card.id}), skipping")
                         return
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Parse args to get task list
             args = tool_data.args_full
@@ -7641,8 +7601,8 @@ Type your question and press Enter to ask the agents.
                 log_dir = get_log_session_dir()
                 if log_dir:
                     subagent_logs_base = log_dir / "subagents"
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Create SubagentDisplayData for each task (all pending/running)
             subagents = []
@@ -7705,8 +7665,8 @@ Type your question and press Enter to ask the agents.
                     try:
                         card = timeline.query_one(f"#{alt_id}", SubagentCard)
                         tui_log(f"_update_subagent_card_with_results: found card by tool_call_id: {alt_id}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
                 # Try finding ANY SubagentCard in the timeline
                 if card is None:
@@ -7715,8 +7675,8 @@ Type your question and press Enter to ask the agents.
                         if cards:
                             card = cards[0]  # Use first matching card
                             tui_log(f"_update_subagent_card_with_results: found card by query: {card.id}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
 
             if card is None:
                 tui_log(f"_update_subagent_card_with_results: no card found (tried {card_id}), skipping duplicate creation")
@@ -7737,16 +7697,16 @@ Type your question and press Enter to ask the agents.
             if not isinstance(result_data, dict):
                 return
 
-            # Remove card on failed spawn (e.g., too many tasks)
-            if not result_data.get("success", True):
-                try:
-                    card.remove()
-                except Exception:
-                    pass
-                return
-
             # Extract spawned subagents list
             spawned = result_data.get("results", result_data.get("spawned_subagents", result_data.get("subagents", [])))
+
+            # Remove card only on true spawn failure (no results at all)
+            if not result_data.get("success", True) and not spawned:
+                try:
+                    card.remove()
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
+                return
             if not spawned:
                 return
 
@@ -7780,8 +7740,8 @@ Type your question and press Enter to ask the agents.
                     if workspace.exists():
                         try:
                             file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            tui_log(f"[TextualDisplay] {e}")
 
                 # Try to get task from original card data
                 task = sa_data.get("task", "")
@@ -7881,8 +7841,8 @@ Type your question and press Enter to ask the agents.
                     if workspace.exists():
                         try:
                             file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            tui_log(f"[TextualDisplay] {e}")
 
                 subagents.append(
                     SubagentDisplayData(
@@ -7929,8 +7889,8 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.clear()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Reset per-round state
             self._reset_round_state()
@@ -7944,8 +7904,8 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.clear_tools_tracking()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Refresh header to hide badges (bg shells will be killed by orchestrator)
             self._refresh_header()
@@ -7956,24 +7916,24 @@ Type your question and press Enter to ask the agents.
             try:
                 tool_section = self.query_one(f"#{self._tool_section_id}", ToolSection)
                 tool_section.clear()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _show_completion_footer(self):
             """Show the completion footer."""
             try:
                 footer = self.query_one(f"#{self._completion_footer_id}", CompletionFooter)
                 footer.show_completed()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def _hide_completion_footer(self):
             """Hide the completion footer."""
             try:
                 footer = self.query_one(f"#{self._completion_footer_id}", CompletionFooter)
                 footer.hide()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         # ========================================================================
         # Phase 12: CSS-based round navigation
@@ -8141,8 +8101,8 @@ Type your question and press Enter to ask the agents.
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     # Mark this as a final presentation round - shows "F" instead of "R{n}"
                     app._status_ribbon.set_round(self.agent_id, new_round, is_final_presentation=True)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             logger.debug("AgentPanel.start_final_presentation: completed")
 
@@ -8153,8 +8113,8 @@ Type your question and press Enter to ask the agents.
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_round(self.agent_id, round_number, is_context_reset)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def switch_to_round(self, round_number: int) -> None:
             """Scroll to a specific round in the unified timeline.
@@ -8172,16 +8132,16 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.switch_to_round(round_number)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Update ribbon to show we're viewing this round
             try:
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_viewed_round(self.agent_id, round_number)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Restore context display for this round
             self._restore_context_for_round(round_number)
@@ -8216,8 +8176,8 @@ Type your question and press Enter to ask the agents.
                 else:
                     context_label.update("")
                     context_label.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def switch_to_final_answer(self) -> None:
             """Switch the view to display the final answer."""
@@ -8229,8 +8189,8 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Show the final answer view and update its content
             try:
@@ -8248,8 +8208,8 @@ Type your question and press Enter to ask the agents.
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_viewing_final_answer(self.agent_id, True)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def switch_from_final_answer(self) -> None:
             """Switch back from final answer view to round view."""
@@ -8261,22 +8221,22 @@ Type your question and press Enter to ask the agents.
             try:
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             try:
                 final_view = self.query_one(f"#{self._final_answer_view_id}", FinalAnswerView)
                 final_view.hide()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Update ribbon
             try:
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_viewing_final_answer(self.agent_id, False)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def set_final_answer(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
             """Store the final answer content for this agent.
@@ -8293,8 +8253,8 @@ Type your question and press Enter to ask the agents.
                 app = self.app
                 if hasattr(app, "_status_ribbon") and app._status_ribbon:
                     app._status_ribbon.set_final_answer_available(self.agent_id, True)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def get_current_round(self) -> int:
             """Get the current round number being received."""
@@ -8391,8 +8351,8 @@ Type your question and press Enter to ask the agents.
             except Exception:
                 try:
                     self.content_log.scroll_end()
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
 
         def add_hook_to_tool(self, tool_call_id: Optional[str], hook_info: Dict[str, Any]):
             """Route hook execution info to the TimelineSection's tool card.
@@ -8730,15 +8690,15 @@ Type your question and press Enter to ask the agents.
             # Hide footer during streaming (will show when complete)
             try:
                 self.query_one("#final_stream_footer").add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Hide the main input area when final answer is displayed (webui parity)
             try:
                 input_area = self.app.query_one("#input_area")
                 input_area.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def append_chunk(self, chunk: str):
             """Append streaming text with buffering."""
@@ -8778,8 +8738,8 @@ Type your question and press Enter to ask the agents.
                 # Focus the follow-up input
                 followup_input = self.query_one("#followup_input", Input)
                 followup_input.focus()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             """Handle action button presses."""
@@ -8806,8 +8766,8 @@ Type your question and press Enter to ask the agents.
             try:
                 input_area = self.app.query_one("#input_area")
                 input_area.remove_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
 
             # Submit the follow-up question through the app
             if hasattr(self.app, "_submit_followup_question"):

@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 
 from .content_normalizer import ContentNormalizer, NormalizedContent
 from .shared import get_tool_category as shared_get_tool_category
+from .shared.tool_registry import format_tool_display_name  # noqa: F401 - re-export
 
 
 def get_mcp_server_name(tool_name: str) -> Optional[str]:
@@ -103,24 +104,6 @@ def get_tool_category(tool_name: str) -> Dict[str, str]:
     }
     result["icon"] = icon_map.get(result.get("category", "tool"), "🔧")
     return result
-
-
-def format_tool_display_name(tool_name: str) -> str:
-    """Format tool name for display."""
-    # Handle MCP tools: mcp__server__tool -> server/tool
-    # Custom tools have extra segments: mcp__server__custom_tool__actual_name
-    if tool_name.startswith("mcp__"):
-        parts = tool_name.split("__")
-        if len(parts) >= 4 and parts[2] == "custom_tool":
-            # mcp__server__custom_tool__name -> server/name
-            return f"{parts[1]}/{'__'.join(parts[3:])}"
-        elif len(parts) >= 3:
-            return f"{parts[1]}/{parts[2]}"
-        elif len(parts) == 2:
-            return parts[1]
-
-    # Handle snake_case
-    return tool_name.replace("_", " ").title()
 
 
 def summarize_args(args: Dict[str, Any], max_len: int = 80) -> str:

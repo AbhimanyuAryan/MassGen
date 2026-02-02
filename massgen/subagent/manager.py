@@ -950,8 +950,17 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         except Exception as e:
                             logger.debug(f"[SubagentManager] Error processing event: {e}")
 
-            # Stream events with timeout
+            # Drain stderr concurrently to prevent pipe buffer deadlock
+            stderr_chunks: list[bytes] = []
+
+            async def drain_stderr():
+                if process.stderr:
+                    async for line in process.stderr:
+                        stderr_chunks.append(line)
+
+            # Stream events with timeout, draining stderr concurrently
             timeout = self._clamp_timeout(config.timeout_seconds)
+            stderr_task = asyncio.create_task(drain_stderr())
             try:
                 await asyncio.wait_for(stream_events(), timeout=timeout)
                 # Wait for process to complete after streaming is done
@@ -966,6 +975,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     await process.wait()
                 raise
             finally:
+                # Clean up stderr drain task
+                stderr_task.cancel()
+                try:
+                    await stderr_task
+                except asyncio.CancelledError:
+                    pass
                 # Remove from active processes
                 self._active_processes.pop(config.id, None)
 
@@ -1001,8 +1016,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     warning=context_warning,
                 )
             else:
-                stderr = await process.stderr.read() if process.stderr else b""
-                stderr_text = stderr.decode() if stderr else ""
+                stderr_text = b"".join(stderr_chunks).decode(errors="replace")
                 error_msg = stderr_text.strip() or f"Subprocess exited with code {process.returncode}"
 
                 logger.error(f"[SubagentManager] Subagent {config.id} failed: {error_msg}")
@@ -1031,13 +1045,16 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
         except asyncio.TimeoutError:
             log_dir = self._get_subagent_log_dir(config.id)
-            return self._create_timeout_result_with_recovery(
+            result = self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
                 workspace=workspace,
                 timeout_seconds=config.timeout_seconds or self.default_timeout,
                 log_path=str(log_dir) if log_dir else None,
                 warning=context_warning,
             )
+            state.status = "timeout"
+            state.result = result
+            return result
 
         except asyncio.CancelledError:
             logger.warning(f"[SubagentManager] Subagent {config.id} cancelled")
@@ -1049,18 +1066,21 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     process.kill()
             self._active_processes.pop(config.id, None)
             log_dir = self._get_subagent_log_dir(config.id)
-            return self._create_timeout_result_with_recovery(
+            result = self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
                 workspace=workspace,
                 timeout_seconds=time.time() - start_time,
                 log_path=str(log_dir) if log_dir else None,
                 warning=context_warning,
             )
+            state.status = "cancelled"
+            state.result = result
+            return result
 
         except Exception as e:
             logger.error(f"[SubagentManager] Subagent {config.id} error: {e}")
             log_dir = self._get_subagent_log_dir(config.id)
-            return SubagentResult.create_error(
+            result = SubagentResult.create_error(
                 subagent_id=config.id,
                 error=str(e),
                 workspace_path=str(workspace),
@@ -1068,6 +1088,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 log_path=str(log_dir) if log_dir else None,
                 warning=context_warning,
             )
+            state.status = "failed"
+            state.result = result
+            return result
 
     def _generate_subagent_yaml_config(
         self,

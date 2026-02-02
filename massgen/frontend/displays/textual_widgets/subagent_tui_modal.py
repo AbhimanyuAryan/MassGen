@@ -28,6 +28,7 @@ from massgen.logger_config import get_log_session_dir
 from massgen.subagent.models import SubagentDisplayData
 
 from ..content_processor import ContentOutput, ContentProcessor
+from ..shared.tui_debug import tui_log
 from .content_sections import TimelineSection
 
 
@@ -85,8 +86,8 @@ class SubagentFinalAnswerCard(Vertical):
         try:
             md = self.query_one("#final_answer_text", Markdown)
             md.update(content)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentTuiModal] {e}")
 
 
 class SubagentTuiModal(ModalScreen[None]):
@@ -413,8 +414,8 @@ class SubagentTuiModal(ModalScreen[None]):
                     if item.output_type == "separator" and item.round_number:
                         self._round_number = item.round_number
                     self._apply_output_to_timeline(timeline, item)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[SubagentTuiModal] {e}")
 
         # Update status ribbon
         self._update_status_ribbon()
@@ -490,10 +491,10 @@ class SubagentTuiModal(ModalScreen[None]):
         debug_lines.append(f"Final events_file: {events_file}")
         debug_lines.append(f"events_file exists: {events_file.exists() if events_file else 'N/A'}")
 
-        # Write debug log
+        # Write debug log via shared logger
         try:
-            with open("/tmp/subagent_modal_debug.log", "a") as f:
-                f.write("\n".join(debug_lines) + "\n\n")
+            for line in debug_lines:
+                tui_log(f"[SubagentTuiModal] {line}")
         except Exception:
             pass
 
@@ -508,8 +509,8 @@ class SubagentTuiModal(ModalScreen[None]):
             try:
                 timeline = self.query_one("#subagent-timeline", TimelineSection)
                 timeline.mount(Static("No events available yet...", classes="empty-timeline"))
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[SubagentTuiModal] {e}")
             return
 
         events = self._event_reader.read_all()
@@ -538,8 +539,8 @@ class SubagentTuiModal(ModalScreen[None]):
             if final_output:
                 self._apply_output_to_timeline(timeline, final_output)
 
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentTuiModal] {e}")
 
     def _apply_output_to_timeline(self, timeline: TimelineSection, output: ContentOutput) -> None:
         """Apply a ContentOutput to the timeline.
@@ -697,15 +698,15 @@ class SubagentTuiModal(ModalScreen[None]):
             self.query_one("#modal-title", Static).update(self._build_title())
             self.query_one("#modal-status", Static).update(self._build_status())
             self.query_one("#metadata", Static).update(self._build_metadata())
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentTuiModal] {e}")
 
     def _update_status_ribbon(self) -> None:
         """Update the status ribbon."""
         try:
             self.query_one("#status-ribbon", Static).update(self._build_status_ribbon())
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentTuiModal] {e}")
 
     def _build_title(self) -> Text:
         """Build the modal title."""
@@ -788,8 +789,8 @@ class SubagentTuiModal(ModalScreen[None]):
                 timeline = self.query_one("#subagent-timeline", TimelineSection)
                 timeline.clear()
                 self._load_initial_events()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[SubagentTuiModal] {e}")
 
             # Refresh header
             self._refresh_header()
@@ -797,8 +798,8 @@ class SubagentTuiModal(ModalScreen[None]):
             # Update nav text
             try:
                 self.query_one("#nav-text", Static).update(self._build_nav_text())
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[SubagentTuiModal] {e}")
 
             # Restart polling if needed
             if self._subagent.status in ("running", "pending") and not self._poll_timer:

@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional
 from massgen.events import MassGenEvent
 
 from .content_processor import ContentOutput, ContentProcessor
+from .shared.tui_debug import tui_log
 
 
 class TimelineEventAdapter:
@@ -95,8 +96,8 @@ class TimelineEventAdapter:
         if hasattr(self._panel, "_hide_loading"):
             try:
                 self._panel._hide_loading()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
 
         round_number = output.round_number or self._round_number
 
@@ -112,15 +113,15 @@ class TimelineEventAdapter:
                     timeline.add_tool_to_batch(batch_id, tool_data)
                     if tool_data.status in ("success", "error"):
                         timeline.update_tool_in_batch(tool_data.tool_id, tool_data)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
         elif output.output_type == "thinking_done":
             # Close the current reasoning batch so the next summary starts fresh
             try:
                 if hasattr(timeline, "_close_reasoning_batch"):
                     timeline._close_reasoning_batch()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
         elif output.output_type in ("thinking", "text", "status", "presentation") and output.text_content:
             # Skip "Evaluation complete" status — already shown in FinalPresentationCard header
             if output.text_class == "status" and "Evaluation complete" in output.text_content:
@@ -132,20 +133,20 @@ class TimelineEventAdapter:
                     text_class=output.text_class or "content-inline",
                     round_number=round_number,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
         elif output.output_type == "hook":
             if output.hook_tool_call_id and output.hook_info:
                 try:
                     timeline.add_hook_to_tool(output.hook_tool_call_id, output.hook_info)
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
         elif output.output_type == "injection":
             if output.normalized is not None and hasattr(self._panel, "_add_injection_content"):
                 try:
                     self._panel._add_injection_content(output.normalized)
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
             elif output.text_content:
                 try:
                     timeline.add_text(
@@ -154,14 +155,14 @@ class TimelineEventAdapter:
                         text_class=output.text_class or "injection",
                         round_number=round_number,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
         elif output.output_type == "reminder":
             if output.normalized is not None and hasattr(self._panel, "_add_reminder_content"):
                 try:
                     self._panel._add_reminder_content(output.normalized)
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
             elif output.text_content:
                 try:
                     timeline.add_text(
@@ -170,8 +171,8 @@ class TimelineEventAdapter:
                         text_class=output.text_class or "reminder",
                         round_number=round_number,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
         elif output.output_type == "separator":
             round_number = output.round_number or self._round_number
             label = output.separator_label or ""
@@ -183,8 +184,8 @@ class TimelineEventAdapter:
             if hasattr(self._panel, "start_new_round"):
                 try:
                     self._panel.start_new_round(self._round_number, is_context_reset=False)
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
             else:
                 try:
                     timeline.add_separator(
@@ -192,8 +193,8 @@ class TimelineEventAdapter:
                         round_number=self._round_number,
                         subtitle=output.separator_subtitle,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
         elif output.output_type == "final_answer" and output.text_content:
             # Store for retrieval but don't render inline — a dedicated
             # final answer card handles display separately.
@@ -212,8 +213,8 @@ class TimelineEventAdapter:
         if self._on_output_applied:
             try:
                 self._on_output_applied(output)
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
 
     def _apply_tool_output(self, output: ContentOutput, round_number: int, timeline: Any) -> None:
         tool_data = output.tool_data
@@ -250,18 +251,18 @@ class TimelineEventAdapter:
                 if tool_data.args_summary:
                     try:
                         existing_card.set_params(tool_data.args_summary, tool_data.args_full)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TimelineEventAdapter] {e}")
             elif existing_batch:
                 try:
                     timeline.update_tool_in_batch(tool_data.tool_id, tool_data)
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
             elif is_subagent_tool and hasattr(self._panel, "_show_subagent_card_from_args"):
                 try:
                     self._panel._show_subagent_card_from_args(tool_data, timeline)
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
             elif is_planning_tool:
                 pass
             else:
@@ -307,33 +308,33 @@ class TimelineEventAdapter:
                 if hasattr(self._panel, "_check_and_display_task_plan"):
                     try:
                         self._panel._check_and_display_task_plan(tool_data, timeline)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TimelineEventAdapter] {e}")
                 if is_subagent_tool and hasattr(self._panel, "_update_subagent_card_with_results"):
                     try:
                         self._panel._update_subagent_card_with_results(tool_data, timeline)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        tui_log(f"[TimelineEventAdapter] {e}")
 
                 tool_name_lower = tool_data.tool_name.lower()
                 if "new_answer" in tool_name_lower or "vote" in tool_name_lower:
                     if hasattr(self._panel, "mark_terminal_tool_complete"):
                         try:
                             self._panel.mark_terminal_tool_complete()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            tui_log(f"[TimelineEventAdapter] {e}")
 
             if tool_data.status == "background" and hasattr(self._panel, "_refresh_header"):
                 try:
                     self._panel._refresh_header()
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
 
         if hasattr(self._panel, "_update_running_tools_count"):
             try:
                 self._panel._update_running_tools_count()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
 
     # --- Final presentation / answer lock handlers ---
 
@@ -388,8 +389,8 @@ class TimelineEventAdapter:
                 # Update round tracking so subsequent content (tool calls,
                 # text, thinking) is tagged with the final-presentation round
                 self._round_number = new_round
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
 
     def _apply_final_presentation_chunk(self, output: ContentOutput) -> None:
         """No-op — content will be applied from self._final_answer at card creation."""
@@ -449,8 +450,8 @@ class TimelineEventAdapter:
                     text_class="orchestrator-timeout",
                     round_number=round_number,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
 
     def finalize_if_incomplete(self) -> None:
         """Populate an empty FinalPresentationCard from the stored final answer.
@@ -466,16 +467,16 @@ class TimelineEventAdapter:
         try:
             if getattr(card, "_final_content", []):
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[TimelineEventAdapter] {e}")
         # Use stored final answer as fallback
         if self._final_answer:
             try:
                 card.append_chunk(self._final_answer)
                 card.set_post_eval_status("verified")
                 card.complete()
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[TimelineEventAdapter] {e}")
 
     def _apply_answer_locked(self, output: ContentOutput, timeline: Any) -> None:
         """Create the FinalPresentationCard (if deferred) and lock the timeline."""
@@ -514,8 +515,8 @@ class TimelineEventAdapter:
 
                     tl.mount(card)
                     self._final_presentation_card = card
-                except Exception:
-                    pass
+                except Exception as e:
+                    tui_log(f"[TimelineEventAdapter] {e}")
 
         card = getattr(self, "_final_presentation_card", None)
         try:
@@ -530,5 +531,5 @@ class TimelineEventAdapter:
             panel = self._panel
             if hasattr(panel, "_task_plan_host"):
                 panel._task_plan_host.collapse()
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[TimelineEventAdapter] {e}")

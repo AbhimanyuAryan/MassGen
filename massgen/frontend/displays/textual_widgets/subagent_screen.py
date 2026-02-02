@@ -48,6 +48,7 @@ from massgen.events import EventReader, MassGenEvent
 from massgen.subagent.models import SubagentDisplayData, SubagentResult
 
 from ..base_tui_layout import BaseTUILayoutMixin
+from ..shared.tui_debug import tui_log
 from ..tui_event_pipeline import TimelineEventAdapter
 from .agent_status_ribbon import AgentStatusRibbon
 from .content_sections import FinalPresentationCard, TimelineSection
@@ -113,8 +114,8 @@ class SubagentHeader(Horizontal):
         self._subagent = subagent
         try:
             self.query_one("#header_title", Static).update(f"Subagent: {subagent.id}")
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
 
 class _FooterAction(Static, can_focus=True):
@@ -397,8 +398,8 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
             try:
                 self.query_one(f"#{widget_id}")
                 continue
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[SubagentScreen] {e}")
             tl = TimelineSection(id=widget_id)
             if i > 0:
                 tl.add_class("hidden")
@@ -418,8 +419,8 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
             try:
                 old = self.query_one(f"#{self._active_timeline_id}", TimelineSection)
                 old.add_class("hidden")
-            except Exception:
-                pass
+            except Exception as e:
+                tui_log(f"[SubagentScreen] {e}")
         # Hide current task plan host
         if self._active_task_plan_agent and self._active_task_plan_agent in self._task_plan_hosts:
             self._task_plan_hosts[self._active_task_plan_agent].add_class("hidden")
@@ -429,8 +430,8 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
             new.remove_class("hidden")
             new._scroll_to_end(animate=False, force=True)
             self._active_timeline_id = new_id
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
         # Show new task plan host (only if it has content — check if it was ever unhidden)
         self._active_task_plan_agent = agent_id
         if agent_id in self._task_plan_hosts:
@@ -485,8 +486,8 @@ class SubagentPanel(Container, BaseTUILayoutMixin):
                     operation=operation,
                     show_notification=show_notification,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
     def toggle_task_plan(self) -> None:
         """Toggle the active agent's task plan between collapsed and expanded."""
@@ -660,27 +661,27 @@ class SubagentView(Container):
             self._header = self.query_one("#subagent-header", SubagentHeader)
             self._panel = self.query_one("#subagent-panel", SubagentPanel)
             self._status_line = self.query_one("#subagent-status-line", SubagentStatusLine)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
         try:
             self._ribbon = self.query_one("#subagent-ribbon", AgentStatusRibbon)
             if self._panel and self._ribbon:
                 self._panel.set_ribbon(self._ribbon)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
         try:
             self._tab_bar = self.query_one("#subagent-tab-bar", AgentTabBar)
             if self._tab_bar:
                 self._tab_bar.set_active(self._subagent.id)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
         try:
             self._inner_tab_bar = self.query_one("#inner-agent-tabs", AgentTabBar)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
         # Initialize event reader
         self._init_event_reader()
@@ -859,8 +860,8 @@ class SubagentView(Container):
             resolved = SubagentResult.resolve_events_path(subagent_logs)
             if resolved:
                 return Path(resolved)
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
         return None
 
@@ -878,8 +879,8 @@ class SubagentView(Container):
         # Advance reader to end so polling only reads new events
         try:
             self._event_reader._last_position = self._event_reader._file_path.stat().st_size  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
     @staticmethod
     def _display_round(event: MassGenEvent) -> MassGenEvent:
@@ -1162,8 +1163,8 @@ class SubagentView(Container):
         try:
             existing = timeline.query_one(f"#{card_id}", FinalPresentationCard)
             existing.remove()
-        except Exception:
-            pass
+        except Exception as e:
+            tui_log(f"[SubagentScreen] {e}")
 
         # Create the final answer card
         card = FinalPresentationCard(

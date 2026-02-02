@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from massgen.events import EventType, MassGenEvent
+from massgen.logger_config import get_event_emitter, get_log_session_dir
 
 
 class AgentOutputWriter:
@@ -105,7 +106,6 @@ def create_agent_output_writer(
     Returns:
         The writer instance, or None if no emitter is available.
     """
-    from massgen.logger_config import get_event_emitter, get_log_session_dir
 
     emitter = get_event_emitter()
     if emitter is None:

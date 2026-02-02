@@ -3,7 +3,7 @@
 Unified Event System for MassGen.
 
 This module provides a structured event system that:
-1. Replaces streaming_debug.log with a machine-readable events.jsonl format
+1. Supplements streaming_debug.log with a machine-readable events.jsonl format
 2. Enables TUI reconstruction for subagent modals
 3. Provides debugging capabilities with explicit event types
 
@@ -12,15 +12,7 @@ Event Schema:
 - Events are appended atomically to events.jsonl
 - Events can be read/streamed for live display or post-hoc analysis
 
-Event Types:
-- tool_start: Tool invocation started
-- tool_complete: Tool invocation completed with result
-- thinking: Reasoning/thinking content
-- text: Response text content
-- status: Status update message
-- round_start: Coordination round started
-- final_answer: Final answer produced
-- workspace_action: Workspace action (new_answer, vote, etc.)
+See the ``EventType`` class for the full list of event types.
 """
 
 from __future__ import annotations
@@ -154,7 +146,7 @@ class EventType:
 class EventEmitter:
     """Writes structured events to events.jsonl.
 
-    Thread-safe, append-only event logging that replaces streaming_debug.log.
+    Thread-safe, append-only event logging that supplements streaming_debug.log.
     Events are written atomically to ensure file integrity.
 
     Usage:
@@ -252,15 +244,19 @@ class EventEmitter:
                 try:
                     self._file_handle.write(event.to_json() + "\n")
                     self._file_handle.flush()
-                except Exception:
-                    pass  # Don't fail main execution for logging issues
+                except Exception as e:
+                    import logging as _logging
 
-        # Notify listeners
-        for listener in self._listeners:
+                    _logging.getLogger(__name__).debug("EventEmitter file write failed: %s", e)
+
+        # Notify listeners (copy to avoid concurrent modification)
+        for listener in list(self._listeners):
             try:
                 listener(event)
-            except Exception:
-                pass  # Don't fail for listener issues
+            except Exception as e:
+                import logging as _logging
+
+                _logging.getLogger(__name__).debug("Event listener %s failed: %s", listener, e)
 
     def emit_raw(self, event_type: str, **kwargs: Any) -> None:
         """Emit an event with automatic timestamp and context.
