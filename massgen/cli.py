@@ -143,6 +143,64 @@ def _setup_logfire_observability() -> bool:
     return True
 
 
+def _setup_event_streaming() -> None:
+    """Configure event streaming to stdout for subprocess-based TUI display.
+
+    When --stream-events is passed, this adds a listener to the EventEmitter
+    that writes all events as JSON lines to stdout. This enables parent processes
+    (like the TUI subagent modal) to receive real-time updates by reading stdout.
+
+    Events are written in JSONL format (one JSON object per line), flushed
+    immediately for real-time streaming.
+    """
+    from .events import get_event_emitter
+
+    def stream_to_stdout(event):
+        """Write event as JSON line to stdout."""
+        sys.stdout.write(event.to_json() + "\n")
+        sys.stdout.flush()
+
+    # Get the event emitter (initialized by setup_logging)
+    emitter = get_event_emitter()
+    if emitter:
+        emitter.add_listener(stream_to_stdout)
+
+
+def _setup_timeline_event_recording() -> None:
+    """Emit timeline_entry events derived from streaming events (env-gated)."""
+    import os
+
+    if not os.environ.get("MASSGEN_TUI_TIMELINE_EVENTS"):
+        return
+
+    from .events import get_event_emitter
+    from .frontend.displays.timeline_event_recorder import TimelineEventRecorder
+
+    emitter = get_event_emitter()
+    if not emitter:
+        return
+
+    def emit_line(line: str) -> None:
+        emitter.emit_raw("timeline_entry", line=line)
+
+    recorder = TimelineEventRecorder(emit_line)
+
+    def record_event(event):
+        try:
+            recorder.handle_event(event)
+        except Exception:
+            pass
+
+    emitter.add_listener(record_event)
+
+    try:
+        import atexit
+
+        atexit.register(recorder.flush)
+    except Exception:
+        pass
+
+
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -5743,6 +5801,8 @@ async def run_textual_interactive_mode(
         # Signal shutdown
         controller.stop()
         orch_thread.join(timeout=5)
+        # Restore terminal to canonical mode (echo + line editing)
+        _restore_terminal_for_input()
 
     print("✅ Textual session ended")
 
@@ -7085,6 +7145,14 @@ async def main(args):
     # Setup logging (only for actual agent runs, not special commands)
     setup_logging(debug=args.debug)
 
+    # Configure event streaming to stdout if requested
+    # This enables parent processes (TUI subagent modal) to receive real-time updates
+    if getattr(args, "stream_events", False):
+        # --stream-events implies --automation
+        args.automation = True
+        _setup_event_streaming()
+        _setup_timeline_event_recording()
+
     # Configure Logfire observability if requested
     if getattr(args, "logfire", False):
         _setup_logfire_observability()
@@ -7849,6 +7917,15 @@ async def main(args):
                         for future in as_completed(futures):
                             pass  # Just wait for completion
 
+        # Cleanup MCP servers → terminates subagent processes
+        if "agents" in locals() and agents:
+            for agent_id, agent in agents.items():
+                if hasattr(agent, "backend") and hasattr(agent.backend, "cleanup_mcp"):
+                    try:
+                        await agent.backend.cleanup_mcp()
+                    except Exception:
+                        pass
+
         rich_console.print("[green]👋 Goodbye![/green]")
         sys.exit(EXIT_INTERRUPTED)
     except TimeoutError as e:
@@ -8326,6 +8403,11 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--stream-events",
+        action="store_true",
+        help="Stream events to stdout as JSON lines. Used by parent processes (e.g., TUI subagent modal) " "to receive real-time updates. Implies --automation.",
     )
     parser.add_argument(
         "--plan",
@@ -9280,7 +9362,7 @@ Environment Variables:
         asyncio.run(main(args))
     except KeyboardInterrupt:
         # User pressed Ctrl+C - exit gracefully without traceback
-        pass
+        _restore_terminal_for_input()
 
 
 if __name__ == "__main__":

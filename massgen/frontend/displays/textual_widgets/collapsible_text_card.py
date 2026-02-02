@@ -45,6 +45,9 @@ class CollapsibleTextCard(Static):
     # Chunks visible when collapsed - shows the tail (newest content)
     COLLAPSED_CHUNK_COUNT = 3
 
+    # Max lines shown per chunk when collapsed (tail shown, oldest trimmed)
+    COLLAPSED_MAX_LINES = 8
+
     can_focus = True
 
     @staticmethod
@@ -101,6 +104,17 @@ class CollapsibleTextCard(Static):
             if line:  # Skip completely empty lines
                 text.append(f"\n{line}", style="dim #9ca3af")
 
+    def _render_chunk_truncated(self, text: Text, chunk: str) -> None:
+        """Render a chunk, truncating to last COLLAPSED_MAX_LINES lines if too long."""
+        lines = [line for line in chunk.split("\n") if line]
+        if len(lines) > self.COLLAPSED_MAX_LINES:
+            hidden = len(lines) - self.COLLAPSED_MAX_LINES
+            text.append(f"\n(+{hidden} lines above)", style="dim italic #6e7681")
+            for line in lines[-self.COLLAPSED_MAX_LINES :]:
+                text.append(f"\n{line}", style="dim #9ca3af")
+        else:
+            self._render_chunk(text, chunk)
+
     def _build_content(self) -> Text:
         """Build the Rich Text content for display."""
         text = Text()
@@ -145,7 +159,7 @@ class CollapsibleTextCard(Static):
                     else:
                         # Blank line between content chunks for readability
                         text.append("\n")
-                self._render_chunk(text, chunk)
+                self._render_chunk_truncated(text, chunk)
 
         return text
 
@@ -178,21 +192,26 @@ class CollapsibleTextCard(Static):
         """Get the total number of chunks."""
         return len(self._chunks)
 
-    def append_content(self, new_content: str) -> None:
-        """Append additional content as a new chunk.
-
-        Used for batching consecutive reasoning statements into one card.
-        Each append creates a new chunk, separated visually.
+    def append_content(self, new_content: str, streaming: bool = False) -> None:
+        """Append additional content to the card.
 
         Args:
-            new_content: Text to append as a new chunk.
+            new_content: Text to append.
+            streaming: If True, concatenate directly to the last chunk (for
+                token-by-token streaming). If False, add as a new visually
+                separated chunk.
         """
         # Clean and validate content
         cleaned = self._clean_content(new_content)
         if not cleaned:
             return
 
-        # Add as new chunk
-        self._chunks.append(cleaned)
-        self._content += "\n" + self.CHUNK_SEPARATOR + "\n" + cleaned
+        if streaming and self._chunks:
+            # Concatenate to last chunk (streaming tokens)
+            self._chunks[-1] += cleaned
+            self._content += cleaned
+        else:
+            # Add as new separated chunk
+            self._chunks.append(cleaned)
+            self._content += "\n" + self.CHUNK_SEPARATOR + "\n" + cleaned
         self.refresh()

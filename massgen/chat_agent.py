@@ -865,7 +865,7 @@ class SingleAgent(ChatAgent):
         )
 
         async for chunk in self._process_stream(backend_stream, tools):
-            log_streaming_debug(chunk)  # Full repr goes to streaming_debug.log
+            log_streaming_debug(chunk, agent_id=self.agent_id)  # Full repr goes to streaming_debug.log
             yield chunk
 
     def _get_backend_params(self) -> Dict[str, Any]:

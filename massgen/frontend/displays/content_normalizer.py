@@ -79,41 +79,23 @@ COMPILED_GLOBAL_STRIP_PATTERNS = [(re.compile(p, re.DOTALL | re.MULTILINE), r) f
 # Compiled regex patterns for performance
 COMPILED_STRIP_PATTERNS = [(re.compile(p), r) for p, r in STRIP_PATTERNS]
 
-# Patterns for detecting tool events
-# NOTE: The first pattern uses negative lookbehind to avoid matching
-# "Results for Calling" or "Arguments for Calling" as start events
-TOOL_START_PATTERNS = [
-    r"(?<!Results for )(?<!Arguments for )Calling (?:tool )?['\"]?([^\s'\"\.]+)['\"]?",
-    r"Tool call: (\w+)",
-    r"Executing (\w+)",
-    r"Starting tool[:\s]+(\w+)",
+# MCP status messages to filter out (noise - connection/tool count info)
+# These are informational and clutter the timeline
+MCP_NOISE_PATTERNS = [
+    r"Connected to \d+ servers?",
+    r"\d+ tools? available",
+    r"\[MCP\].*Connected",
+    r"\[MCP\].*\d+ tools",
+    r"MCP.*Connected to \d+",
+    r"MCP.*\d+ tools? available",
+    # Task planning noise (verbose internal coordination)
+    r"create_task_plan",
+    r"task_plan.*completed",
+    r"Arguments for Calling.*task_plan",
+    r"Results for Calling.*task_plan",
+    r"\[MCP Tool\].*task_plan",
 ]
-
-# Pattern to match "Arguments for Calling tool_name: {args}"
-TOOL_ARGS_PATTERNS = [
-    r"Arguments for Calling ([^\s:]+):\s*(.+)",
-]
-
-TOOL_COMPLETE_PATTERNS = [
-    r"Tool ['\"]?(\w+)['\"]? (?:completed|finished|succeeded)",
-    r"^(\w+) completed",  # Tool name at start of line (not "Status changed to completed")
-    r"Result from (\w+)",
-    r"Results for Calling ([^\s:]+):\s*(.+)",  # MCP result pattern - capture tool name and result
-    r"[✅❌]\s*(mcp__\S+)\s+(?:completed|failed)",  # Claude Code backend completion format
-]
-
-TOOL_FAILED_PATTERNS = [
-    r"Tool ['\"]?(\w+)['\"]? failed",
-    r"Error (?:in|from) (\w+)",
-    r"(\w+) failed",
-    r"[❌]\s*(mcp__\S+)\s+failed",  # Claude Code backend failure format
-]
-
-TOOL_INFO_PATTERNS = [
-    r"Registered (\d+) tools?",
-    r"Connected to (\d+) (?:MCP )?servers?",
-    r"Tools initialized",
-]
+COMPILED_MCP_NOISE = [re.compile(p, re.IGNORECASE) for p in MCP_NOISE_PATTERNS]
 
 # Minimal JSON noise patterns - just obvious fragments that are never useful
 JSON_NOISE_PATTERNS = [
@@ -250,86 +232,6 @@ class ContentNormalizer:
         return result.strip()
 
     @staticmethod
-    def _extract_args_from_content(content: str, tool_name: str) -> Optional[str]:
-        """Try to extract args summary from tool content."""
-        patterns = [
-            rf"{re.escape(tool_name)}\s*(?:with\s*)?\{{([^}}]+)\}}",  # tool {args}
-            rf"{re.escape(tool_name)}\s*\(([^)]+)\)",  # tool(args)
-            rf"{re.escape(tool_name)}[:\s]+(.+?)(?:\s*$|\s*\n)",  # tool: args
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                args_str = match.group(1).strip()
-                if args_str and len(args_str) > 2:
-                    return args_str
-
-        # Try to find key:value pairs after tool name
-        idx = content.lower().find(tool_name.lower())
-        if idx >= 0:
-            after = content[idx + len(tool_name) :].strip()
-            kv_match = re.search(r'(\w+)[=:]\s*["\']?([^"\'\s,]+)', after)
-            if kv_match:
-                return f"{kv_match.group(1)}={kv_match.group(2)}"
-
-        return None
-
-    @staticmethod
-    def detect_tool_event(content: str) -> Optional[ToolMetadata]:
-        """Detect if content is a tool event and extract metadata."""
-        # Check for tool args message FIRST
-        for pattern in TOOL_ARGS_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
-            if match:
-                tool_name = match.group(1) if len(match.groups()) >= 1 else "unknown"
-                args_str = match.group(2).strip() if len(match.groups()) >= 2 else ""
-                return ToolMetadata(
-                    tool_name=tool_name,
-                    event="args",
-                    args={"summary": args_str} if args_str else None,
-                )
-
-        # Check for tool start
-        for pattern in TOOL_START_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                tool_name = match.group(1) if match.groups() else "unknown"
-                tool_type = "mcp" if "mcp__" in content.lower() else "custom"
-                args_str = ContentNormalizer._extract_args_from_content(content, tool_name)
-                return ToolMetadata(
-                    tool_name=tool_name,
-                    tool_type=tool_type,
-                    event="start",
-                    args={"summary": args_str} if args_str else None,
-                )
-
-        # Check for tool complete
-        for pattern in TOOL_COMPLETE_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
-            if match:
-                tool_name = match.group(1) if len(match.groups()) >= 1 else "unknown"
-                # Extract result if captured (e.g., "Results for Calling tool: result_text")
-                result_text = match.group(2).strip() if len(match.groups()) >= 2 else None
-                return ToolMetadata(tool_name=tool_name, event="complete", result=result_text)
-
-        # Check for tool failed
-        for pattern in TOOL_FAILED_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                tool_name = match.group(1) if match.groups() else "unknown"
-                return ToolMetadata(tool_name=tool_name, event="failed")
-
-        # Check for tool info
-        for pattern in TOOL_INFO_PATTERNS:
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                count = int(match.group(1)) if match.groups() else None
-                return ToolMetadata(tool_name="system", event="info", tool_count=count)
-
-        return None
-
-    @staticmethod
     def is_json_noise(content: str) -> bool:
         """Check if content is pure JSON noise that should be filtered."""
         content_stripped = content.strip()
@@ -344,6 +246,40 @@ class ContentNormalizer:
                 return True
 
         return False
+
+    @staticmethod
+    def is_mcp_noise(content: str) -> bool:
+        """Check if content is MCP connection noise that should be filtered.
+
+        This filters out informational messages like:
+        - "[MCP] Connected to 4 servers"
+        - "[MCP] 17 tools available"
+
+        These messages clutter the timeline without providing useful context.
+        """
+        return any(p.search(content) for p in COMPILED_MCP_NOISE)
+
+    @staticmethod
+    def is_filtered_tool(tool_name: str) -> bool:
+        """Check if a tool should be filtered from display.
+
+        Some tools are internal coordination tools that clutter the timeline:
+        - task_plan tools (create_task_plan, etc.)
+        - planning tools (planning__agent_name)
+
+        Args:
+            tool_name: The tool name to check
+
+        Returns:
+            True if the tool should be filtered out
+        """
+        filtered_patterns = [
+            "task_plan",
+            "create_task_plan",
+            "planning__",  # Filter out planning tools like planning__dylan_discog
+        ]
+        tool_lower = tool_name.lower()
+        return any(pattern in tool_lower for pattern in filtered_patterns)
 
     @staticmethod
     def is_coordination_content(content: str) -> bool:
@@ -553,20 +489,6 @@ class ContentNormalizer:
             return "thinking"
 
         if raw_type == "content":
-            # Check if this "content" is actually a tool event (e.g., Claude Code
-            # backend emits tool completions as type="content")
-            tool_meta = ContentNormalizer.detect_tool_event(content)
-            if tool_meta:
-                if tool_meta.event == "start":
-                    return "tool_start"
-                elif tool_meta.event == "args":
-                    return "tool_args"
-                elif tool_meta.event == "complete":
-                    return "tool_complete"
-                elif tool_meta.event == "failed":
-                    return "tool_failed"
-                elif tool_meta.event == "info":
-                    return "tool_info"
             return "content"
 
         # Auto-detect from content
@@ -576,20 +498,6 @@ class ContentNormalizer:
 
         if "[REMINDER]" in content or "reminder" in raw_type_str:
             return "reminder"
-
-        # Check if it looks like a tool event
-        tool_meta = ContentNormalizer.detect_tool_event(content)
-        if tool_meta:
-            if tool_meta.event == "start":
-                return "tool_start"
-            elif tool_meta.event == "args":
-                return "tool_args"
-            elif tool_meta.event == "complete":
-                return "tool_complete"
-            elif tool_meta.event == "failed":
-                return "tool_failed"
-            elif tool_meta.event == "info":
-                return "tool_info"
 
         return "text"
 
@@ -618,13 +526,9 @@ class ContentNormalizer:
         # Detect actual type
         content_type = cls.detect_content_type(content, raw_type)
 
-        # Extract tool metadata if applicable
+        # Tool metadata is no longer populated via string parsing;
+        # structured TOOL_START/TOOL_COMPLETE events handle tools directly.
         tool_metadata = None
-        if content_type.startswith("tool_"):
-            tool_metadata = cls.detect_tool_event(content)
-            # Pass tool_call_id to metadata
-            if tool_metadata and tool_call_id:
-                tool_metadata.tool_call_id = tool_call_id
 
         # Check if this is coordination content (for grouping, not filtering)
         is_coordination = cls.is_coordination_content(content)
@@ -649,6 +553,11 @@ class ContentNormalizer:
             # Filter workspace state content (internal messages)
             # BUT: Don't filter tool content - tool args contain JSON that we need to display
             if not content_type.startswith("tool_") and cls.is_workspace_state_content(content):
+                should_display = False
+
+            # Filter MCP connection noise (single source of truth for both TUIs)
+            # This filters status messages like "[MCP] Connected to 4 servers"
+            if content_type == "status" and cls.is_mcp_noise(content):
                 should_display = False
 
         # Apply light cleaning
