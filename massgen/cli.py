@@ -143,6 +143,19 @@ def _setup_logfire_observability() -> bool:
     return True
 
 
+# Module-level flag: when True, stdout is reserved for JSONL events
+_stream_events_active = False
+
+
+def _automation_print(msg: str) -> None:
+    """Print automation-mode status lines (LOG_DIR, STATUS, OUTPUT_FILE, etc.).
+
+    When event streaming is active, stdout is reserved for JSONL, so these
+    lines are routed to stderr instead.
+    """
+    print(msg, file=sys.stderr if _stream_events_active else sys.stdout)
+
+
 def _setup_event_streaming() -> None:
     """Configure event streaming to stdout for subprocess-based TUI display.
 
@@ -153,6 +166,9 @@ def _setup_event_streaming() -> None:
     Events are written in JSONL format (one JSON object per line), flushed
     immediately for real-time streaming.
     """
+    global _stream_events_active
+    _stream_events_active = True
+
     from .events import get_event_emitter
 
     def stream_to_stdout(event):
@@ -3239,7 +3255,7 @@ async def run_single_question(
             output_path.write_text(final_response)
             logger.info(f"Wrote final answer to: {output_file}")
             # Print in automation mode for easy parsing
-            print(f"OUTPUT_FILE: {output_path.resolve()}")
+            _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
 
         if return_metadata:
             # Get comprehensive coordination result from orchestrator
@@ -7526,8 +7542,8 @@ async def main(args):
             # LOG_DIR is the main session directory, STATUS includes turn/attempt subdirectory
             if args.automation:
                 full_log_dir = get_log_session_dir()
-                print(f"LOG_DIR: {log_dir}")
-                print(f"STATUS: {full_log_dir / 'status.json'}")
+                _automation_print(f"LOG_DIR: {log_dir}")
+                _automation_print(f"STATUS: {full_log_dir / 'status.json'}")
 
             # Only register in global session registry if not suppressed (e.g., subagent runs)
             if not getattr(args, "no_session_registry", False):
@@ -7698,12 +7714,12 @@ async def main(args):
                 output_path = Path(args.output_file)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(final_answer)
-                print(f"OUTPUT_FILE: {output_path.resolve()}")
+                _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
 
             # Print plan location for automation mode
             if args.automation:
-                print(f"PLAN_DIR: {plan_session.plan_dir}")
-                print(f"PLAN_ID: {plan_session.plan_id}")
+                _automation_print(f"PLAN_DIR: {plan_session.plan_dir}")
+                _automation_print(f"PLAN_ID: {plan_session.plan_id}")
 
             sys.exit(0)
 
@@ -7730,12 +7746,12 @@ async def main(args):
                     output_path = Path(args.output_file)
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     output_path.write_text(final_answer)
-                    print(f"OUTPUT_FILE: {output_path.resolve()}")
+                    _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
 
                 # Print plan location for automation mode
                 if args.automation:
-                    print(f"PLAN_DIR: {plan_session.plan_dir}")
-                    print(f"PLAN_ID: {plan_session.plan_id}")
+                    _automation_print(f"PLAN_DIR: {plan_session.plan_dir}")
+                    _automation_print(f"PLAN_ID: {plan_session.plan_id}")
 
                 sys.exit(0)
 
@@ -7766,7 +7782,7 @@ async def main(args):
 
                         final_dir = get_log_session_dir() / "final"
                         if final_dir.exists():
-                            print(f"FINAL_DIR: {final_dir}")
+                            _automation_print(f"FINAL_DIR: {final_dir}")
                     except Exception:
                         pass  # Log paths not available
             else:

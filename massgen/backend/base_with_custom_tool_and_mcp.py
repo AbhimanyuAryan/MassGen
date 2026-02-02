@@ -56,7 +56,7 @@ from ..filesystem_manager._constants import (
     TOOL_RESULT_EVICTION_PREVIEW_TOKENS,
     TOOL_RESULT_EVICTION_THRESHOLD_TOKENS,
 )
-from ..logger_config import log_backend_activity, logger
+from ..logger_config import get_event_emitter, log_backend_activity, logger
 from ..mcp_tools.hooks import GeneralHookManager, HookType
 from ..mcp_tools.server_registry import get_auto_discovery_servers, get_registry_info
 from ..nlip.schema import (
@@ -1552,15 +1552,14 @@ class CustomToolAndMCPBackend(LLMBackend):
                     metric.input_chars = len(arguments_str)
 
             # Emit structured tool_start event for TUI event pipeline
-            from ..logger_config import get_event_emitter as _get_emitter
 
-            _emitter = _get_emitter()
-            if _emitter:
+            emitter = get_event_emitter()
+            if emitter:
                 try:
                     args_dict = json.loads(arguments_str) if arguments_str else {}
                 except (json.JSONDecodeError, TypeError):
                     args_dict = {"raw": arguments_str}
-                _emitter.emit_tool_start(
+                emitter.emit_tool_start(
                     tool_id=call_id,
                     tool_name=tool_name,
                     args=args_dict,
@@ -1704,8 +1703,8 @@ class CustomToolAndMCPBackend(LLMBackend):
                     tool_call_id=call_id,
                 )
                 # Emit structured tool_complete event for MCP failure
-                if _emitter:
-                    _emitter.emit_tool_complete(
+                if emitter:
+                    emitter.emit_tool_complete(
                         tool_id=call_id,
                         tool_name=tool_name,
                         result=error_msg,
@@ -1941,8 +1940,8 @@ class CustomToolAndMCPBackend(LLMBackend):
             )
 
             # Emit structured tool_complete event for TUI event pipeline
-            if _emitter:
-                _emitter.emit_tool_complete(
+            if emitter:
+                emitter.emit_tool_complete(
                     tool_id=call_id,
                     tool_name=tool_name,
                     result=display_result,
@@ -2017,8 +2016,8 @@ class CustomToolAndMCPBackend(LLMBackend):
             )
 
             # Emit structured tool_complete event for exception
-            if _emitter:
-                _emitter.emit_tool_complete(
+            if emitter:
+                emitter.emit_tool_complete(
                     tool_id=call_id,
                     tool_name=tool_name,
                     result=error_msg,

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 from .logger_config import get_log_session_dir  # Import to get log directory
 from .logger_config import logger  # Import logger directly for INFO logging
 from .logger_config import (
+    get_event_emitter,
     log_coordination_step,
     log_orchestrator_activity,
     log_orchestrator_agent_message,
@@ -3058,9 +3059,8 @@ Your answer:"""
         )
 
         # Emit voting complete status for TUI event pipeline
-        from massgen.logger_config import get_event_emitter as _get_event_emitter
 
-        _vote_emitter = _get_event_emitter()
+        _vote_emitter = get_event_emitter()
         if _vote_emitter and self._selected_agent:
             _vote_emitter.emit_status(
                 f"Voting complete - selected agent: {self._selected_agent}",
@@ -3359,7 +3359,6 @@ Your answer:"""
                             _answer_number = len(_ans_list)
                             _agent_num = self.coordination_tracker._get_agent_number(agent_id)
                             _answer_label = f"agent{_agent_num}.{_answer_number}"
-                            from massgen.events import get_event_emitter
 
                             _emitter = get_event_emitter()
                             if _emitter:
@@ -3503,7 +3502,6 @@ Your answer:"""
                                             reason=result_data.get("reason", ""),
                                         )
                                 # Emit vote event (unified pipeline for main + subagent TUI)
-                                from massgen.events import get_event_emitter
 
                                 _emitter = get_event_emitter()
                                 if _emitter:
@@ -4558,7 +4556,6 @@ Your answer:"""
             )
 
             # Emit injection_received event for TUI
-            from massgen.events import get_event_emitter
 
             _inj_emitter = get_event_emitter()
             if _inj_emitter:
@@ -4832,7 +4829,6 @@ Your answer:"""
             self.agent_states[agent_id].known_answer_ids.update(new_answers.keys())
 
             # Emit injection_received event for TUI
-            from massgen.events import get_event_emitter
 
             _inj_emitter = get_event_emitter()
             if _inj_emitter:
@@ -5747,7 +5743,6 @@ Your answer:"""
         round_type = "voting" if answers else "initial_answer"
 
         # Emit round_start event for TUI display (round banners)
-        from massgen.logger_config import get_event_emitter
 
         event_emitter = get_event_emitter()
         if event_emitter:
@@ -5927,7 +5922,6 @@ Your answer:"""
                 if context_labels and hasattr(self, "display") and self.display and hasattr(self.display, "notify_context_received"):
                     self.display.notify_context_received(agent_id, context_labels)
                 # Emit to events.jsonl for subagent TUI parity
-                from massgen.events import get_event_emitter
 
                 _emitter = get_event_emitter()
                 if _emitter:
@@ -6212,7 +6206,6 @@ Your answer:"""
                     ]:
                         # Emit structured event directly for TUI pipeline
                         from massgen.events import EventType
-                        from massgen.logger_config import get_event_emitter
 
                         _emitter = get_event_emitter()
                         if _emitter:
@@ -7242,7 +7235,6 @@ Your answer:"""
         vote_results = self._get_vote_results()
 
         # Emit status event for TUI event pipeline
-        from massgen.logger_config import get_event_emitter
 
         _emitter = get_event_emitter()
         if _emitter:
@@ -7306,7 +7298,6 @@ Your answer:"""
                 existing_answer = self.agent_states[self._selected_agent].answer
                 if existing_answer:
                     # Emit to events.jsonl for unified pipeline
-                    from massgen.events import get_event_emitter
 
                     _emitter = get_event_emitter()
                     if _emitter:
@@ -7450,7 +7441,6 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 return
 
         # No restart - emit answer_locked event now that answer is confirmed
-        from massgen.events import get_event_emitter
 
         _emitter = get_event_emitter()
         if _emitter:
@@ -7513,7 +7503,6 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             }
 
         # Emit structured event for TUI
-        from massgen.events import get_event_emitter
 
         _timeout_emitter = get_event_emitter()
         if _timeout_emitter:
@@ -7948,7 +7937,6 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         )
 
         # Emit event for unified pipeline
-        from massgen.events import get_event_emitter
 
         _fp_emitter = get_event_emitter()
         if _fp_emitter:
@@ -8292,9 +8280,8 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 self._final_presentation_content = _display_answer
 
                 # Emit final_answer event for TUI event pipeline
-                from massgen.logger_config import get_event_emitter as _get_fa_emitter
 
-                _fa_emitter = _get_fa_emitter()
+                _fa_emitter = get_event_emitter()
                 if _fa_emitter:
                     _fa_emitter.emit_final_answer(
                         self._final_presentation_content,
@@ -8482,7 +8469,6 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         )
 
         # Emit post_evaluation start event for unified pipeline
-        from massgen.events import get_event_emitter
 
         _pe_emitter = get_event_emitter()
         if _pe_emitter:

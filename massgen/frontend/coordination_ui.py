@@ -14,6 +14,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from ..cancellation import CancellationRequested
+from ..logger_config import get_event_emitter
 from .displays.base_display import BaseDisplay
 from .displays.content_normalizer import ContentNormalizer
 from .displays.none_display import NoneDisplay
@@ -211,7 +212,6 @@ class CoordinationUI:
             if self.display and hasattr(self.display, "show_restart_banner"):
                 self.display.show_restart_banner(reason, instructions, attempt, max_attempts)
             # Emit structured event
-            from massgen.logger_config import get_event_emitter
 
             _emitter = get_event_emitter()
             if _emitter:
@@ -232,7 +232,6 @@ class CoordinationUI:
                     if agent_id:
                         self.display.show_agent_restart(agent_id, round_num)
             # Emit structured event
-            from massgen.logger_config import get_event_emitter
 
             _emitter = get_event_emitter()
             if _emitter and data:
@@ -253,7 +252,6 @@ class CoordinationUI:
                             answer_labels=answer_labels,
                         )
             # Emit structured event
-            from massgen.logger_config import get_event_emitter
 
             _emitter = get_event_emitter()
             if _emitter and data:
@@ -347,7 +345,6 @@ class CoordinationUI:
                             tui_log(f"  Calling display.notify_phase('{current_phase}')")
                             self.display.notify_phase(current_phase)
                         # Emit structured event for phase changes
-                        from massgen.logger_config import get_event_emitter
 
                         _emitter = get_event_emitter()
                         if _emitter:
@@ -360,8 +357,6 @@ class CoordinationUI:
                         self.display.update_agent_status(source, status)
                     # Emit structured event
                     if source and status:
-                        from massgen.logger_config import get_event_emitter
-
                         _emitter = get_event_emitter()
                         if _emitter:
                             _emitter.emit_status(f"Agent status: {status}", agent_id=source)
@@ -378,7 +373,6 @@ class CoordinationUI:
                 elif chunk_type == "system_status":
                     if self.display and hasattr(self.display, "update_system_status"):
                         self.display.update_system_status(content)
-                    from massgen.logger_config import get_event_emitter
 
                     _emitter = get_event_emitter()
                     if _emitter and content:
@@ -453,8 +447,6 @@ class CoordinationUI:
                         _decision = hook_info.get("decision", "allow") if isinstance(hook_info, dict) else "allow"
                         _has_injection = bool(hook_info.get("injection_content")) if isinstance(hook_info, dict) else False
                         if _decision != "allow" or _has_injection:
-                            from massgen.logger_config import get_event_emitter
-
                             _emitter = get_event_emitter()
                             if _emitter:
                                 _emitter.emit_hook_execution(tool_call_id, hook_info, agent_id=source)
@@ -1004,7 +996,6 @@ class CoordinationUI:
                 elif chunk_type == "system_status":
                     if self.display and hasattr(self.display, "update_system_status"):
                         self.display.update_system_status(content)
-                    from massgen.logger_config import get_event_emitter
 
                     _emitter = get_event_emitter()
                     if _emitter and content:
@@ -1087,8 +1078,6 @@ class CoordinationUI:
                         _decision = hook_info.get("decision", "allow") if isinstance(hook_info, dict) else "allow"
                         _has_injection = bool(hook_info.get("injection_content")) if isinstance(hook_info, dict) else False
                         if _decision != "allow" or _has_injection:
-                            from massgen.logger_config import get_event_emitter
-
                             _emitter = get_event_emitter()
                             if _emitter:
                                 _emitter.emit_hook_execution(tool_call_id, hook_info, agent_id=source)
@@ -1538,7 +1527,6 @@ class CoordinationUI:
                 elif chunk_type == "system_status":
                     if self.display and hasattr(self.display, "update_system_status"):
                         self.display.update_system_status(content)
-                    from massgen.logger_config import get_event_emitter
 
                     _emitter = get_event_emitter()
                     if _emitter and content:
@@ -2029,7 +2017,6 @@ class CoordinationUI:
                             tool_msg += f" {params}"
                         self.logger.log_agent_content(agent_id, tool_msg, "tool")
                     # Emit structured event for the pipeline
-                    from massgen.logger_config import get_event_emitter
 
                     _emitter = get_event_emitter()
                     if _emitter:
@@ -2048,7 +2035,6 @@ class CoordinationUI:
                 if self.logger:
                     self.logger.log_agent_content(agent_id, tool_msg, "tool")
                 # Emit structured event for the pipeline
-                from massgen.logger_config import get_event_emitter
 
                 _emitter = get_event_emitter()
                 if _emitter:
@@ -2087,7 +2073,6 @@ class CoordinationUI:
             chunk_type = getattr(self, "_agent_chunk_types", {}).get(agent_id, "thinking")
 
         # Emit structured events for the unified event pipeline
-        from massgen.logger_config import get_event_emitter
 
         _emitter = get_event_emitter()
         if _emitter:
@@ -2195,7 +2180,6 @@ class CoordinationUI:
                         tool_msg = f"🔧 Calling workspace/{action_type}"
                         if params:
                             tool_msg += f" {params}"
-                        from massgen.logger_config import get_event_emitter
 
                         _emitter = get_event_emitter()
                         if _emitter:
@@ -2213,7 +2197,6 @@ class CoordinationUI:
                     tool_msg = f"🔧 Calling workspace/{action_type}"
                     if params:
                         tool_msg += f" {params}"
-                    from massgen.logger_config import get_event_emitter
 
                     _emitter = get_event_emitter()
                     if _emitter:

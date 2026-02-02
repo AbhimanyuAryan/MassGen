@@ -13,6 +13,8 @@ Design Philosophy:
 - Respect Timeline Chronology Rule: tools only batch when consecutive
 """
 
+import ast
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -247,8 +249,6 @@ class ContentProcessor:
         if isinstance(args, str):
             args_str = args
         elif isinstance(args, (dict, list)):
-            import json
-
             args_str = json.dumps(args)
         else:
             args_str = str(args)
@@ -606,8 +606,6 @@ class ContentProcessor:
         # hook_info may be a dict or a stringified dict (legacy JSONL logs)
         if isinstance(raw_hook_info, str):
             try:
-                import ast
-
                 raw_hook_info = ast.literal_eval(raw_hook_info)
             except Exception:
                 raw_hook_info = {}
@@ -796,8 +794,6 @@ class ContentProcessor:
         is_tie = False
         if vote_results_str:
             try:
-                import ast
-
                 vr = ast.literal_eval(vote_results_str)
                 if isinstance(vr, dict):
                     vote_counts = vr.get("vote_counts", {})
